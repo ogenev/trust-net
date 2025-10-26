@@ -1,0 +1,28 @@
+# Foundry artifacts
+.forge-cache/
+.forge-out/
+out/
+cache/
+
+# Foundry broadcast logs
+broadcast/
+
+# Libraries (Foundry dependencies - don't commit)
+lib/
+
+# Dotenv file
+.env
+.env.local
+.env.production
+
+# Coverage
+lcov.info
+
+# Scripts artifacts
+scripts/artifacts/
+
+# Node modules (if using npm for any tools)
+node_modules/
+
+# MacOS
+.DS_Store
