@@ -7,22 +7,11 @@ cache/
 # Foundry broadcast logs
 broadcast/
 
-# Libraries (Foundry dependencies - don't commit)
+# Libraries (Foundry dependencies - managed by forge)
 lib/
 
-# Dotenv file
-.env
-.env.local
-.env.production
-
-# Coverage
+# Coverage reports specific to Foundry
 lcov.info
 
 # Scripts artifacts
 scripts/artifacts/
-
-# Node modules (if using npm for any tools)
-node_modules/
-
-# MacOS
-.DS_Store

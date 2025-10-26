@@ -7,7 +7,7 @@ pragma solidity ^0.8.26;
  * @dev Part of TrustNet reputation layer for ERC-8004 agents
  *
  * RootRegistry stores the active graphRoot and epoch, enabling verifiers to
- * check TwoHop proofs against the latest trust graph state. The off-chain
+ * check TrustPathVerifier proofs against the latest trust graph state. The off-chain
  * Indexer builds the SMM from EdgeRated events and publishes roots here.
  *
  * Phase 1 (MVP) features:

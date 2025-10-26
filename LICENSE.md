@@ -15,7 +15,7 @@ The following components are licensed under [Apache License 2.0](./LICENSE):
 
 ### MIT License
 The following components are licensed under [MIT License](./LICENSE-MIT):
-- Smart contracts (TrustGraph, RootRegistry, TwoHop)
+- Smart contracts (TrustGraph, RootRegistry, TrustPathVerifier)
 - Contract interfaces and ABIs
 - On-chain verification libraries
 

@@ -217,7 +217,7 @@ Quantization mapping (from whitepaper §3.2):
 
 2. **No on-chain scoring** - this contract only emits events
    - Scores computed off-chain by indexer
-   - Verified on-chain by TwoHop library (separate contract)
+   - Verified on-chain by TrustPathVerifier library (separate contract)
 
 3. **Context binding** - always scope ratings to appropriate contexts
    - Don't use GLOBAL for sensitive capabilities
@@ -269,7 +269,7 @@ MIT - see [LICENSE](../LICENSE) for details.
 ## Related Contracts (TODO)
 
 - **RootRegistry** - Stores Merkle roots for proof verification
-- **TwoHop** - Verifies 2-hop proofs and computes scores
+- **TrustPathVerifier** - Verifies 2-hop proofs and computes scores
 - **SparseMerkleMap** - Merkle proof verification library
 
 ## References

@@ -114,7 +114,7 @@ A score from **Observer `O`** to **Target `T`** via **Hinge `Y`** in a **context
 - Membership **or** non‑membership for `O→T` (direct override)
 - All three **share the same `contextId`**
 
-**TwoHopProof (conceptual)**
+**TrustPathProof (conceptual)**
 ```json
 {
   "graphRoot": "0x..", "epoch": 123,
@@ -161,7 +161,7 @@ score          = clamp( scoreNumerator / 2 , −2, +2 )
 - Stores active `{graphRoot, epoch}` (monotonically increasing).
 - On chain anchor; verifiers check proofs against this root.
 
-### 6.3 TwoHop (library)
+### 6.3 TrustPathVerifier (library)
 - Verifies the three SMM paths against `graphRoot`.
 - Enforces **same context** across leaves.
 - Computes the **deterministic score**, or `require(score ≥ threshold)`.
@@ -216,7 +216,7 @@ This enables **independent recomputation** of the root from public logs.
 ### 8.2 Code‑exec (on‑chain PR run)
 - Require `≥ +2` from k‑of‑n `{SecOps, Platform, TeamLead}`.
 - `SecOps→Auditor +2`, `Auditor→RepoBot +2` ⇒ +2; others may be neutral.
-- Contract verifies TwoHop; caches admission for this epoch.
+- Contract verifies TrustPathVerifier; caches admission for this epoch.
 
 ### 8.3 DeFi re‑balance (on‑chain)
 - `ProtocolCouncil` as observer; require `≥ +1` in `defi-exec`.
@@ -253,7 +253,7 @@ This enables **independent recomputation** of the root from public logs.
 
 ## 11) Open‑Source Split
 
-- **Open (MIT/Apache‑2.0)**: contracts (TrustGraph, RootRegistry, TwoHop), SMM libs, SDKs, reference indexer & API, spec & test vectors.
+- **Open (MIT/Apache‑2.0)**: contracts (TrustGraph, RootRegistry, TrustPathVerifier), SMM libs, SDKs, reference indexer & API, spec & test vectors.
 - **Commercial add‑ons**: HA indexer, proof compression/multiproofs, Policy Studio UI, managed Score API with SLAs, premium risk connectors, ZK proving service.
 
 ---

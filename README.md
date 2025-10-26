@@ -24,7 +24,7 @@ and always show a short **“Why?”** (two edges + direct override).
 ## 🔐 Contracts (MVP)
 -	**TrustGraph** — emit EdgeRated(rater, target, level, contextId); no storage.
 -	**RootRegistry** — setGraphRoot(bytes32 root, uint64 epoch) (owner‑only; strictly increasing).
--	**TwoHop** — verifies three SMM paths against graphRoot, computes score, requireAtLeast(threshold).
+-	**TrustPathVerifier** — verifies three SMM paths against graphRoot, computes score, requireAtLeast(threshold).
 
 We ship Foundry tests + vectors to ensure Solidity and Rust verifiers produce identical results.
 
