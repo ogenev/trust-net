@@ -6,3 +6,23 @@ license = "MIT OR Apache-2.0"
 description = "Core types, constants, hashing utilities, and quantizer for TrustNet"
 
 [dependencies]
+# Ethereum types and crypto
+alloy-primitives = { version = "0.8", features = ["serde"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Error handling
+thiserror = "2.0"
+anyhow = "1.0"
+
+[dev-dependencies]
+# Testing
+proptest = "1.5"
+criterion = "0.5"
+
+# Benchmarks will be added later
+# [[bench]]
+# name = "hashing"
+# harness = false
