@@ -34,27 +34,37 @@ impl Storage {
     ///
     /// # Arguments
     /// * `database_url` - SQLite database URL (e.g., "sqlite://trustnet.db")
+    /// * `max_connections` - Maximum number of connections in the pool (default: 5)
+    /// * `min_connections` - Minimum number of connections in the pool (default: 1)
     ///
     /// # Example
     /// ```no_run
     /// # use trustnet_indexer::storage::Storage;
     /// # async fn example() -> anyhow::Result<()> {
-    /// let storage = Storage::new("sqlite://trustnet.db").await?;
+    /// let storage = Storage::new("sqlite://trustnet.db", None, None).await?;
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn new(database_url: &str) -> Result<Self> {
+    pub async fn new(
+        database_url: &str,
+        max_connections: Option<u32>,
+        min_connections: Option<u32>,
+    ) -> Result<Self> {
+        let max_conn = max_connections.unwrap_or(5);
+        let min_conn = min_connections.unwrap_or(1);
+
         info!("Connecting to database: {}", database_url);
+        info!("Pool settings: max={}, min={}", max_conn, min_conn);
 
         // Parse connection options
         let options = SqliteConnectOptions::from_str(database_url)?
             .create_if_missing(true)
             .foreign_keys(true);
 
-        // Create connection pool
+        // Create connection pool with configured limits
         let pool = SqlitePoolOptions::new()
-            .max_connections(5)
-            .min_connections(1)
+            .max_connections(max_conn)
+            .min_connections(min_conn)
             .connect_with(options)
             .await
             .context("Failed to connect to database")?;
@@ -68,10 +78,16 @@ impl Storage {
     ///
     /// # Arguments
     /// * `path` - Path to the SQLite database file
-    pub async fn new_with_path<P: AsRef<Path>>(path: P) -> Result<Self> {
+    /// * `max_connections` - Maximum number of connections in the pool (default: 5)
+    /// * `min_connections` - Minimum number of connections in the pool (default: 1)
+    pub async fn new_with_path<P: AsRef<Path>>(
+        path: P,
+        max_connections: Option<u32>,
+        min_connections: Option<u32>,
+    ) -> Result<Self> {
         let path = path.as_ref();
         let database_url = format!("sqlite://{}", path.display());
-        Self::new(&database_url).await
+        Self::new(&database_url, max_connections, min_connections).await
     }
 
     /// Run database migrations.
@@ -165,7 +181,7 @@ mod tests {
         let _temp_db = NamedTempFile::new().unwrap();
         let db_path = _temp_db.path();
 
-        let storage = Storage::new_with_path(db_path).await.unwrap();
+        let storage = Storage::new_with_path(db_path, None, None).await.unwrap();
         storage.run_migrations().await.unwrap();
 
         // Verify connection works
@@ -179,7 +195,7 @@ mod tests {
         let _temp_db = NamedTempFile::new().unwrap();
         let db_path = _temp_db.path();
 
-        let storage = Storage::new_with_path(db_path).await.unwrap();
+        let storage = Storage::new_with_path(db_path, None, None).await.unwrap();
         storage.run_migrations().await.unwrap();
 
         let stats = storage.stats().await.unwrap();

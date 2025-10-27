@@ -178,7 +178,9 @@ mod tests {
 
     async fn setup_storage() -> (Storage, NamedTempFile) {
         let temp_db = NamedTempFile::new().unwrap();
-        let storage = Storage::new_with_path(temp_db.path()).await.unwrap();
+        let storage = Storage::new_with_path(temp_db.path(), None, None)
+            .await
+            .unwrap();
         storage.run_migrations().await.unwrap();
         (storage, temp_db)
     }

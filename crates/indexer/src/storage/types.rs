@@ -174,7 +174,10 @@ mod tests {
         assert_eq!(EdgeSource::TrustGraph.as_str(), "trust_graph");
         assert_eq!(EdgeSource::Erc8004.as_str(), "erc8004");
 
-        assert_eq!(EdgeSource::from_str("trust_graph"), Some(EdgeSource::TrustGraph));
+        assert_eq!(
+            EdgeSource::from_str("trust_graph"),
+            Some(EdgeSource::TrustGraph)
+        );
         assert_eq!(EdgeSource::from_str("erc8004"), Some(EdgeSource::Erc8004));
         assert_eq!(EdgeSource::from_str("invalid"), None);
     }

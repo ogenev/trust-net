@@ -122,7 +122,9 @@ impl Storage {
         .fetch_all(&self.pool)
         .await?;
 
-        rows.into_iter().map(|row| Self::row_to_edge_record(row)).collect()
+        rows.into_iter()
+            .map(|row| Self::row_to_edge_record(row))
+            .collect()
     }
 
     /// Get all edges to a specific target in a context.
@@ -149,7 +151,9 @@ impl Storage {
         .fetch_all(&self.pool)
         .await?;
 
-        rows.into_iter().map(|row| Self::row_to_edge_record(row)).collect()
+        rows.into_iter()
+            .map(|row| Self::row_to_edge_record(row))
+            .collect()
     }
 
     /// Get all edges in a specific context.
@@ -173,7 +177,9 @@ impl Storage {
         .fetch_all(&self.pool)
         .await?;
 
-        rows.into_iter().map(|row| Self::row_to_edge_record(row)).collect()
+        rows.into_iter()
+            .map(|row| Self::row_to_edge_record(row))
+            .collect()
     }
 
     /// Get all edges (for building the complete SMM).
@@ -190,7 +196,9 @@ impl Storage {
         .fetch_all(&self.pool)
         .await?;
 
-        rows.into_iter().map(|row| Self::row_to_edge_record(row)).collect()
+        rows.into_iter()
+            .map(|row| Self::row_to_edge_record(row))
+            .collect()
     }
 
     /// Count total edges in the database.
@@ -225,8 +233,8 @@ impl Storage {
         let target = Address::from_slice(&target_bytes);
         let context_id = ContextId::from(<[u8; 32]>::try_from(context_bytes.as_slice())?);
         let level = Level::new(level as i8)?;
-        let source = EdgeSource::from_str(&source_str)
-            .context("Invalid edge source in database")?;
+        let source =
+            EdgeSource::from_str(&source_str).context("Invalid edge source in database")?;
         let tx_hash = tx_hash_bytes.map(|bytes| B256::from_slice(&bytes));
 
         Ok(EdgeRecord {
@@ -252,7 +260,9 @@ mod tests {
 
     async fn setup_storage() -> (Storage, NamedTempFile) {
         let temp_db = NamedTempFile::new().unwrap();
-        let storage = Storage::new_with_path(temp_db.path()).await.unwrap();
+        let storage = Storage::new_with_path(temp_db.path(), None, None)
+            .await
+            .unwrap();
         storage.run_migrations().await.unwrap();
         (storage, temp_db) // Keep temp_db alive
     }
@@ -285,7 +295,11 @@ mod tests {
         assert!(inserted);
 
         // Retrieve and verify
-        let retrieved = storage.get_edge(&rater, &target, &context_id).await.unwrap().unwrap();
+        let retrieved = storage
+            .get_edge(&rater, &target, &context_id)
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(retrieved.level, edge.level);
         assert_eq!(retrieved.block_number, 100);
 
@@ -331,7 +345,11 @@ mod tests {
         assert!(!updated, "Older edge should be rejected (return false)");
 
         // Should still have the first edge
-        let retrieved = storage.get_edge(&rater, &target, &context_id).await.unwrap().unwrap();
+        let retrieved = storage
+            .get_edge(&rater, &target, &context_id)
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(retrieved.level, Level::positive());
         assert_eq!(retrieved.block_number, 100);
 
@@ -348,7 +366,11 @@ mod tests {
         assert!(updated, "Newer edge should be accepted (return true)");
 
         // Should have the new edge
-        let retrieved = storage.get_edge(&rater, &target, &context_id).await.unwrap().unwrap();
+        let retrieved = storage
+            .get_edge(&rater, &target, &context_id)
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(retrieved.level, Level::strong_positive());
         assert_eq!(retrieved.block_number, 101);
 
@@ -397,7 +419,10 @@ mod tests {
         storage.upsert_edge(&edge2).await.unwrap();
 
         // Query edges from rater
-        let edges = storage.get_edges_from_rater(&rater, &context_id).await.unwrap();
+        let edges = storage
+            .get_edges_from_rater(&rater, &context_id)
+            .await
+            .unwrap();
         assert_eq!(edges.len(), 2);
 
         storage.close().await;

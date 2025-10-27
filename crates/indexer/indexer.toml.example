@@ -1,0 +1,78 @@
+# TrustNet Indexer Configuration Example
+# Copy this to indexer.toml and customize for your deployment
+
+[network]
+# Ethereum RPC endpoint
+rpc_url = "https://sepolia.infura.io/v3/YOUR_API_KEY"
+# or use WebSocket for real-time updates:
+# rpc_url = "wss://sepolia.infura.io/ws/v3/YOUR_API_KEY"
+
+# Chain ID (11155111 = Sepolia)
+chain_id = 11155111
+
+# Number of confirmations to wait before processing blocks (reorg safety)
+confirmations = 6
+
+[contracts]
+# TrustGraph contract address (EdgeRated events)
+trust_graph = "0x0000000000000000000000000000000000000000"
+
+# RootRegistry contract address (for publishing roots)
+root_registry = "0x0000000000000000000000000000000000000000"
+
+# ERC-8004 Reputation contract address (NewFeedback events)
+erc8004_reputation = "0x0000000000000000000000000000000000000000"
+
+# ERC-8004 Identity contract address (optional, for agentWallet lookup)
+erc8004_identity = "0x0000000000000000000000000000000000000000"
+
+[database]
+# SQLite database file path
+url = "sqlite://trustnet.db"
+
+# Connection pool settings
+max_connections = 5
+min_connections = 1
+
+[sync]
+# Block number to start syncing from (0 = from genesis, or specify block)
+start_block = 0
+
+# Polling interval in seconds for new blocks
+poll_interval_secs = 12
+
+# Batch size for historical sync (number of blocks per batch)
+batch_size = 1000
+
+[publisher]
+# Enable automatic root publishing
+auto_publish = true
+
+# Publish interval in seconds (3600 = 1 hour)
+publish_interval_secs = 3600
+
+# Private key for publisher account (signs transactions to RootRegistry)
+# WARNING: Keep this secure! Use environment variable in production
+# Example: Load from env with: private_key = "${PUBLISHER_PRIVATE_KEY}"
+private_key = "0x0000000000000000000000000000000000000000000000000000000000000000"
+
+# Gas settings
+max_fee_per_gas_gwei = 50
+max_priority_fee_per_gas_gwei = 2
+
+[quantizer]
+# ERC-8004 score quantization buckets (0-100 → -2 to +2)
+# [80, 60, 40, 20] means:
+#   80-100 → +2
+#   60-79  → +1
+#   40-59  →  0
+#   20-39  → -1
+#   0-19   → -2
+buckets = [80, 60, 40, 20]
+
+[logging]
+# Log level: trace, debug, info, warn, error
+level = "info"
+
+# Log format: json or pretty
+format = "pretty"

@@ -82,7 +82,7 @@
 pub mod storage;
 
 // Phase 3: Configuration
-// pub mod config;
+pub mod config;
 
 // Phase 4: Event listening
 // pub mod listener;

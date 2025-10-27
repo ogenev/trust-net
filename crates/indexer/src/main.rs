@@ -89,53 +89,133 @@ fn init_logging(debug: bool) -> Result<()> {
 
 /// Main indexer service - runs event sync and root publishing
 async fn run_indexer(config_path: &str) -> Result<()> {
+    use trustnet_indexer::config::Config;
+    use trustnet_indexer::storage::Storage;
+
     info!("Starting indexer service with config: {}", config_path);
 
-    // TODO: Load configuration
-    // TODO: Initialize database
+    // Load configuration
+    let config = Config::from_file(config_path).context("Failed to load configuration")?;
+
+    info!("Configuration loaded successfully");
+    info!("  Chain ID: {}", config.network.chain_id);
+    info!("  RPC URL: {}", config.network.rpc_url);
+    info!("  Database: {}", config.database.url);
+    info!("  Start block: {}", config.sync.start_block);
+
+    // Initialize database with configured pool settings
+    let storage = Storage::new(
+        &config.database.url,
+        Some(config.database.max_connections),
+        Some(config.database.min_connections),
+    )
+    .await
+    .context("Failed to connect to database")?;
+
+    storage
+        .run_migrations()
+        .await
+        .context("Failed to run migrations")?;
+
+    info!("Database initialized");
+
     // TODO: Spawn event listener task
     // TODO: Spawn root publisher task (hourly + manual trigger)
-    // TODO: Wait for shutdown signal
 
     info!("Indexer is running. Press Ctrl+C to stop.");
     info!("For API queries, run the trustnet-api service separately.");
 
-    // Placeholder: wait for Ctrl+C
+    // Wait for Ctrl+C
     tokio::signal::ctrl_c()
         .await
         .context("Failed to listen for Ctrl+C")?;
 
     info!("Received shutdown signal, gracefully shutting down...");
 
+    // Clean shutdown
+    storage.close().await;
+
     Ok(())
 }
 
 /// Manually trigger root publishing
 async fn publish_root_manual(config_path: &str) -> Result<()> {
-    info!("Manual root publishing triggered");
-    info!("Config: {}", config_path);
+    use trustnet_indexer::config::Config;
+    use trustnet_indexer::storage::Storage;
 
-    // TODO: Load configuration
-    // TODO: Connect to database
+    info!("Manual root publishing triggered");
+
+    // Load configuration
+    let config = Config::from_file(config_path).context("Failed to load configuration")?;
+
+    info!("Configuration loaded successfully");
+
+    // Connect to database with configured pool settings
+    let storage = Storage::new(
+        &config.database.url,
+        Some(config.database.max_connections),
+        Some(config.database.min_connections),
+    )
+    .await
+    .context("Failed to connect to database")?;
+
+    storage
+        .run_migrations()
+        .await
+        .context("Failed to run migrations")?;
+
+    info!("Database connected");
+
     // TODO: Build SMM from current edges
     // TODO: Publish root to RootRegistry
 
     warn!("Manual root publishing not yet implemented");
 
+    storage.close().await;
+
     Ok(())
 }
 
 /// Show indexer status and sync progress
-async fn show_status(_config_path: &str) -> Result<()> {
+async fn show_status(config_path: &str) -> Result<()> {
+    use trustnet_indexer::config::Config;
     use trustnet_indexer::storage::Storage;
 
     info!("Checking indexer status");
 
-    // TODO: Load configuration (for now, use default database)
-    let database_url = "sqlite://trustnet.db";
+    // Try to load configuration, fall back to default database ONLY if file doesn't exist
+    let (database_url, max_conn, min_conn) = match Config::from_file(config_path) {
+        Ok(config) => {
+            info!("Using database from config: {}", config.database.url);
+            (
+                config.database.url,
+                Some(config.database.max_connections),
+                Some(config.database.min_connections),
+            )
+        }
+        Err(e) => {
+            // Check if the root cause is a "file not found" error
+            // We need to walk the error chain because Config::from_file wraps errors with context
+            let is_not_found = e.chain().any(|cause| {
+                if let Some(io_err) = cause.downcast_ref::<std::io::Error>() {
+                    io_err.kind() == std::io::ErrorKind::NotFound
+                } else {
+                    false
+                }
+            });
 
-    // Connect to database
-    let storage = Storage::new(database_url)
+            if is_not_found {
+                info!("Config file not found, using default database: sqlite://trustnet.db");
+                ("sqlite://trustnet.db".to_string(), None, None)
+            } else {
+                // Other errors (permission denied, parse errors, validation errors, etc.)
+                return Err(e).context("Failed to load config file");
+            }
+        }
+    };
+
+    // Connect to database with configured pool settings
+    let storage = Storage::new(&database_url, max_conn, min_conn)
         .await
         .context("Failed to connect to database")?;
 
@@ -197,8 +277,8 @@ async fn init_database(database_url: &str) -> Result<()> {
 
     info!("Initializing database: {}", database_url);
 
-    // Connect to database
-    let storage = Storage::new(database_url)
+    // Connect to database with default pool settings
+    let storage = Storage::new(database_url, None, None)
         .await
         .context("Failed to connect to database")?;
 
