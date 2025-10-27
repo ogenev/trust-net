@@ -1,0 +1,10 @@
+[package]
+name = "trustnet-prover"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Proof assembly (Observer→Target, Curator→Target, Observer→Curator→Target) from snapshot for TrustNet"
+
+[dependencies]
+trustnet-core = { path = "../core" }
+trustnet-smm = { path = "../smm" }

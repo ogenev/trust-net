@@ -1,0 +1,8 @@
+[package]
+name = "trustnet-core"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Core types, constants, hashing utilities, and quantizer for TrustNet"
+
+[dependencies]
