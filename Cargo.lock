@@ -1797,6 +1797,12 @@ dependencies = [
 name = "trustnet-smm"
 version = "0.1.0"
 dependencies = [
+ "alloy-primitives",
+ "criterion",
+ "proptest",
+ "serde",
+ "serde_json",
+ "thiserror",
  "trustnet-core",
 ]
 
