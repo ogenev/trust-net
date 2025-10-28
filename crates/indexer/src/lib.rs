@@ -90,8 +90,8 @@ pub mod listener;
 // Phase 5: Event processing
 // pub mod processor;
 
-// Phase 6: SMM building
-// pub mod builder;
+// Phase 6: SMM service (periodic tree building)
+pub mod smm_service;
 
 // Phase 7: Root publishing
 // pub mod publisher;

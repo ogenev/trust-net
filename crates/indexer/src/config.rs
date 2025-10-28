@@ -25,6 +25,10 @@ pub struct Config {
     /// Sync configuration
     pub sync: SyncConfig,
 
+    /// SMM builder configuration
+    #[serde(default)]
+    pub builder: BuilderConfig,
+
     /// Publisher configuration
     pub publisher: PublisherConfig,
 
@@ -95,6 +99,24 @@ pub struct SyncConfig {
     pub confirmations: u64,
 }
 
+/// SMM builder configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BuilderConfig {
+    /// Rebuild interval in seconds (300 = 5 minutes).
+    ///
+    /// **Must be > 0** - Zero will cause a panic in tokio::time::interval.
+    #[serde(default = "default_rebuild_interval_secs")]
+    pub rebuild_interval_secs: u64,
+}
+
+impl Default for BuilderConfig {
+    fn default() -> Self {
+        Self {
+            rebuild_interval_secs: default_rebuild_interval_secs(),
+        }
+    }
+}
+
 /// Publisher configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PublisherConfig {
@@ -149,6 +171,10 @@ fn default_poll_interval_secs() -> u64 {
 
 fn default_batch_size() -> u64 {
     1000
+}
+
+fn default_rebuild_interval_secs() -> u64 {
+    300 // 5 minutes
 }
 
 fn default_auto_publish() -> bool {
@@ -259,6 +285,13 @@ impl Config {
         }
         if self.sync.batch_size == 0 {
             anyhow::bail!("Sync batch_size must be > 0");
+        }
+
+        // Validate builder settings
+        if self.builder.rebuild_interval_secs == 0 {
+            anyhow::bail!(
+                "Builder rebuild_interval_secs must be > 0 (tokio interval cannot be zero)"
+            );
         }
 
         // Validate publisher settings
@@ -581,6 +614,41 @@ private_key = "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
     }
 
     #[test]
+    fn test_validation_zero_rebuild_interval() {
+        let toml = r#"
+[network]
+rpc_url = "http://localhost:8545"
+chain_id = 1
+
+[contracts]
+trust_graph = "0x1111111111111111111111111111111111111111"
+root_registry = "0x2222222222222222222222222222222222222222"
+erc8004_reputation = "0x3333333333333333333333333333333333333333"
+
+[database]
+url = "sqlite://test.db"
+
+[sync]
+start_block = 0
+
+[builder]
+rebuild_interval_secs = 0
+
+[publisher]
+private_key = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+        "#;
+
+        let result = Config::from_toml_str(toml);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("rebuild_interval_secs") && err.contains("must be > 0"),
+            "Expected error about rebuild_interval_secs, got: {}",
+            err
+        );
+    }
+
+    #[test]
     fn test_default_values() {
         let toml = r#"
 [network]
@@ -610,6 +678,7 @@ private_key = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
         assert_eq!(config.database.min_connections, 1);
         assert_eq!(config.sync.poll_interval_secs, 12);
         assert_eq!(config.sync.batch_size, 1000);
+        assert_eq!(config.builder.rebuild_interval_secs, 300);
         assert!(config.publisher.auto_publish);
         assert_eq!(config.publisher.publish_interval_secs, 3600);
         assert_eq!(config.logging.level, "info");

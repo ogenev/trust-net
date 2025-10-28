@@ -162,12 +162,28 @@ async fn run_indexer(config_path: &str) -> Result<()> {
 
     info!("Event listener started");
 
+    // Create and spawn SMM service task
+    use trustnet_indexer::smm_service::PeriodicSmmBuilder;
+    let smm_service = PeriodicSmmBuilder::new(
+        storage.clone(),
+        std::time::Duration::from_secs(config.builder.rebuild_interval_secs),
+    );
+    let smm_handle = tokio::spawn({
+        let smm_service = smm_service.clone();
+        async move { smm_service.run().await }
+    });
+
+    info!(
+        "SMM service started (rebuild interval: {}s)",
+        config.builder.rebuild_interval_secs
+    );
+
     // TODO: Spawn root publisher task (hourly + manual trigger)
 
     info!("Indexer is running. Press Ctrl+C to stop.");
     info!("For API queries, run the trustnet-api service separately.");
 
-    // Wait for either Ctrl+C or sync task failure
+    // Wait for either Ctrl+C, sync task failure, or SMM service failure
     tokio::select! {
         result = sync_handle => {
             // Sync task completed (either error or unexpected exit)
@@ -185,6 +201,25 @@ async fn run_indexer(config_path: &str) -> Result<()> {
                 Err(e) => {
                     // Join error (task panicked)
                     Err(anyhow::anyhow!("Sync task panicked: {}", e))
+                }
+            }
+        }
+        result = smm_handle => {
+            // SMM service task completed (either error or unexpected exit)
+            storage.close().await;
+            match result {
+                Ok(Ok(())) => {
+                    // SMM service completed successfully (should never happen - run() is infinite loop)
+                    warn!("SMM service exited unexpectedly");
+                    Ok(())
+                }
+                Ok(Err(e)) => {
+                    // SMM service returned an error - propagate it to cause service restart
+                    Err(e).context("SMM service failed")
+                }
+                Err(e) => {
+                    // Join error (task panicked)
+                    Err(anyhow::anyhow!("SMM service task panicked: {}", e))
                 }
             }
         }

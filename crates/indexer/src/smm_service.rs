@@ -1,0 +1,325 @@
+//! Sparse Merkle Map service for TrustNet indexer.
+//!
+//! This module provides a service that periodically builds SMMs from stored edges
+//! and caches the root for fast access during root publishing.
+
+use anyhow::{Context, Result};
+use std::sync::Arc;
+use std::time::Duration;
+use tokio::sync::RwLock;
+use tracing::{info, warn};
+use trustnet_core::hashing::compute_edge_key;
+use trustnet_smm::SmmBuilder;
+
+use crate::storage::Storage;
+
+/// Cached SMM state.
+#[derive(Debug, Clone)]
+pub struct SmmState {
+    /// The Merkle root of the SMM.
+    pub root: alloy::primitives::B256,
+    /// Number of edges included in this SMM.
+    pub edge_count: u64,
+    /// Block number at which this SMM was built.
+    pub built_at_block: u64,
+    /// Timestamp when this SMM was built (Unix timestamp).
+    pub built_at: i64,
+}
+
+/// Periodic SMM builder that rebuilds the tree at a configured interval.
+///
+/// This builder runs in a background task and periodically:
+/// 1. Fetches all edges from storage
+/// 2. Builds a complete SMM
+/// 3. Caches the root for fast access
+///
+/// Root publishers and other components can read the cached state
+/// without blocking or rebuilding.
+#[derive(Clone)]
+pub struct PeriodicSmmBuilder {
+    storage: Storage,
+    interval: Duration,
+    current_state: Arc<RwLock<Option<SmmState>>>,
+}
+
+impl PeriodicSmmBuilder {
+    /// Create a new periodic SMM builder.
+    ///
+    /// # Arguments
+    ///
+    /// * `storage` - Storage instance to fetch edges from
+    /// * `interval` - How often to rebuild the SMM
+    pub fn new(storage: Storage, interval: Duration) -> Self {
+        Self {
+            storage,
+            interval,
+            current_state: Arc::new(RwLock::new(None)),
+        }
+    }
+
+    /// Run the periodic builder loop.
+    ///
+    /// This method runs indefinitely, building the SMM at the configured interval.
+    /// It should be spawned as a background task.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - Storage operations fail
+    /// - SMM building fails
+    pub async fn run(&self) -> Result<()> {
+        info!("SMM builder starting with interval: {:?}", self.interval);
+
+        // Build immediately on startup
+        if let Err(e) = self.rebuild_smm().await {
+            warn!("Initial SMM build failed: {}", e);
+            // Continue anyway - will retry on next interval
+        }
+
+        // Then rebuild periodically
+        let mut interval = tokio::time::interval(self.interval);
+        interval.tick().await; // First tick completes immediately, skip it
+
+        loop {
+            interval.tick().await;
+
+            if let Err(e) = self.rebuild_smm().await {
+                warn!("SMM rebuild failed: {}", e);
+                // Continue running - will retry on next interval
+            }
+        }
+    }
+
+    /// Get the current cached SMM state.
+    ///
+    /// Returns `None` if no SMM has been built yet.
+    pub async fn get_current_state(&self) -> Option<SmmState> {
+        self.current_state.read().await.clone()
+    }
+
+    /// Rebuild the SMM from current storage state.
+    async fn rebuild_smm(&self) -> Result<()> {
+        info!("Building SMM from current edges...");
+
+        // Fetch all edges
+        let edges = self
+            .storage
+            .get_all_edges()
+            .await
+            .context("Failed to fetch edges from storage")?;
+
+        if edges.is_empty() {
+            info!("No edges found, SMM root will be zero");
+            let state = SmmState {
+                root: alloy::primitives::B256::ZERO,
+                edge_count: 0,
+                built_at_block: self.storage.get_sync_state().await?.last_block_number,
+                built_at: chrono::Utc::now().timestamp(),
+            };
+            *self.current_state.write().await = Some(state);
+            return Ok(());
+        }
+
+        info!("Building SMM from {} edges", edges.len());
+
+        // Build SMM
+        let mut builder = SmmBuilder::new();
+        for edge in &edges {
+            let key = compute_edge_key(&edge.rater, &edge.target, &edge.context_id);
+            let smm_value = edge.level.to_smm_value();
+            builder
+                .insert(key, smm_value)
+                .context("Failed to insert edge into SMM builder")?;
+        }
+
+        let smm = builder.build();
+        let root = smm.root();
+
+        // Get current block number
+        let sync_state = self.storage.get_sync_state().await?;
+
+        // Create and cache state
+        let state = SmmState {
+            root,
+            edge_count: edges.len() as u64,
+            built_at_block: sync_state.last_block_number,
+            built_at: chrono::Utc::now().timestamp(),
+        };
+
+        info!(
+            "SMM built successfully: root=0x{}, edges={}, block={}",
+            hex::encode(state.root),
+            state.edge_count,
+            state.built_at_block
+        );
+
+        // Update cached state
+        *self.current_state.write().await = Some(state);
+
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::storage::EdgeRecord;
+    use alloy::primitives::Address;
+    use tempfile::NamedTempFile;
+    use trustnet_core::types::{ContextId, Level};
+
+    async fn setup_storage_with_edges() -> (Storage, NamedTempFile) {
+        let temp_db = NamedTempFile::new().unwrap();
+        let storage = Storage::new_with_path(temp_db.path(), None, None)
+            .await
+            .unwrap();
+        storage.run_migrations().await.unwrap();
+
+        // Insert some test edges
+        let rater1 = Address::from([0x11; 20]);
+        let rater2 = Address::from([0x22; 20]);
+        let target1 = Address::from([0xaa; 20]);
+        let target2 = Address::from([0xbb; 20]);
+        let context = ContextId::from([0x01; 32]);
+
+        let edge1 = EdgeRecord {
+            rater: rater1,
+            target: target1,
+            context_id: context,
+            level: Level::positive(),
+            block_number: 100,
+            tx_index: 0,
+            log_index: 0,
+            ingested_at: 1234567890,
+            source: crate::storage::EdgeSource::TrustGraph,
+            tx_hash: None,
+        };
+
+        let edge2 = EdgeRecord {
+            rater: rater2,
+            target: target2,
+            context_id: context,
+            level: Level::strong_positive(),
+            block_number: 101,
+            tx_index: 0,
+            log_index: 0,
+            ingested_at: 1234567891,
+            source: crate::storage::EdgeSource::TrustGraph,
+            tx_hash: None,
+        };
+
+        storage.upsert_edge(&edge1).await.unwrap();
+        storage.upsert_edge(&edge2).await.unwrap();
+
+        (storage, temp_db)
+    }
+
+    #[tokio::test]
+    async fn test_builder_empty_edges() {
+        let temp_db = NamedTempFile::new().unwrap();
+        let storage = Storage::new_with_path(temp_db.path(), None, None)
+            .await
+            .unwrap();
+        storage.run_migrations().await.unwrap();
+
+        let builder = PeriodicSmmBuilder::new(storage.clone(), Duration::from_secs(60));
+
+        // Build with no edges
+        builder.rebuild_smm().await.unwrap();
+
+        let state = builder.get_current_state().await.unwrap();
+        assert_eq!(state.root, alloy::primitives::B256::ZERO);
+        assert_eq!(state.edge_count, 0);
+
+        storage.close().await;
+    }
+
+    #[tokio::test]
+    async fn test_builder_with_edges() {
+        let (storage, _temp_db) = setup_storage_with_edges().await;
+
+        let builder = PeriodicSmmBuilder::new(storage.clone(), Duration::from_secs(60));
+
+        // Build with edges
+        builder.rebuild_smm().await.unwrap();
+
+        let state = builder.get_current_state().await.unwrap();
+        assert_ne!(state.root, alloy::primitives::B256::ZERO);
+        assert_eq!(state.edge_count, 2);
+
+        storage.close().await;
+    }
+
+    #[tokio::test]
+    async fn test_builder_deterministic() {
+        let (storage, _temp_db) = setup_storage_with_edges().await;
+
+        let builder = PeriodicSmmBuilder::new(storage.clone(), Duration::from_secs(60));
+
+        // Build twice
+        builder.rebuild_smm().await.unwrap();
+        let state1 = builder.get_current_state().await.unwrap();
+
+        builder.rebuild_smm().await.unwrap();
+        let state2 = builder.get_current_state().await.unwrap();
+
+        // Should produce same root
+        assert_eq!(state1.root, state2.root);
+        assert_eq!(state1.edge_count, state2.edge_count);
+
+        storage.close().await;
+    }
+
+    #[tokio::test]
+    async fn test_get_state_before_build() {
+        let temp_db = NamedTempFile::new().unwrap();
+        let storage = Storage::new_with_path(temp_db.path(), None, None)
+            .await
+            .unwrap();
+        storage.run_migrations().await.unwrap();
+
+        let builder = PeriodicSmmBuilder::new(storage.clone(), Duration::from_secs(60));
+
+        // Should return None before first build
+        assert!(builder.get_current_state().await.is_none());
+
+        storage.close().await;
+    }
+
+    #[tokio::test]
+    async fn test_builder_updates_after_new_edges() {
+        let (storage, _temp_db) = setup_storage_with_edges().await;
+
+        let builder = PeriodicSmmBuilder::new(storage.clone(), Duration::from_secs(60));
+
+        // Initial build
+        builder.rebuild_smm().await.unwrap();
+        let state1 = builder.get_current_state().await.unwrap();
+        assert_eq!(state1.edge_count, 2);
+
+        // Add another edge
+        let edge3 = EdgeRecord {
+            rater: Address::from([0x33; 20]),
+            target: Address::from([0xcc; 20]),
+            context_id: ContextId::from([0x01; 32]),
+            level: Level::negative(),
+            block_number: 102,
+            tx_index: 0,
+            log_index: 0,
+            ingested_at: 1234567892,
+            source: crate::storage::EdgeSource::TrustGraph,
+            tx_hash: None,
+        };
+        storage.upsert_edge(&edge3).await.unwrap();
+
+        // Rebuild
+        builder.rebuild_smm().await.unwrap();
+        let state2 = builder.get_current_state().await.unwrap();
+
+        // Should have new edge count and different root
+        assert_eq!(state2.edge_count, 3);
+        assert_ne!(state1.root, state2.root);
+
+        storage.close().await;
+    }
+}
