@@ -85,7 +85,7 @@ pub mod storage;
 pub mod config;
 
 // Phase 4: Event listening
-// pub mod listener;
+pub mod listener;
 
 // Phase 5: Event processing
 // pub mod processor;

@@ -119,23 +119,82 @@ async fn run_indexer(config_path: &str) -> Result<()> {
 
     info!("Database initialized");
 
-    // TODO: Spawn event listener task
+    // Initialize sync state if this is a fresh database
+    let sync_state = storage.get_sync_state().await?;
+    if sync_state.last_block_number == 0 && sync_state.chain_id == 0 {
+        // Set last_block to (start_block - 1) so the first sync loop processes start_block
+        // Since sync engine fetches logs starting at (last_synced + 1), this ensures
+        // the configured start_block is included in the first batch.
+        let initial_block = config.sync.start_block.saturating_sub(1);
+        info!(
+            "Fresh database detected, initializing sync state with chain_id={} initial_block={} (will start syncing from block {})",
+            config.network.chain_id, initial_block, config.sync.start_block
+        );
+        storage
+            .initialize_sync_state(
+                config.network.chain_id,
+                initial_block,
+                alloy::primitives::B256::ZERO,
+            )
+            .await
+            .context("Failed to initialize sync state")?;
+        info!("Sync state initialized");
+    } else {
+        info!(
+            "Existing sync state found: chain_id={} last_block={}",
+            sync_state.chain_id, sync_state.last_block_number
+        );
+    }
+
+    // Create RPC provider
+    use trustnet_indexer::listener::{RpcProvider, SyncEngine};
+    let provider = RpcProvider::new(&config.network.rpc_url, config.contracts.erc8004_reputation)
+        .await
+        .context("Failed to create RPC provider")?;
+
+    info!("RPC provider initialized");
+
+    // Create sync engine (uses core quantizer with fixed buckets)
+    let sync_engine = SyncEngine::new(provider, storage.clone(), config.sync.clone());
+
+    // Spawn event listener task
+    let sync_handle = tokio::spawn(async move { sync_engine.run().await });
+
+    info!("Event listener started");
+
     // TODO: Spawn root publisher task (hourly + manual trigger)
 
     info!("Indexer is running. Press Ctrl+C to stop.");
     info!("For API queries, run the trustnet-api service separately.");
 
-    // Wait for Ctrl+C
-    tokio::signal::ctrl_c()
-        .await
-        .context("Failed to listen for Ctrl+C")?;
-
-    info!("Received shutdown signal, gracefully shutting down...");
-
-    // Clean shutdown
-    storage.close().await;
-
-    Ok(())
+    // Wait for either Ctrl+C or sync task failure
+    tokio::select! {
+        result = sync_handle => {
+            // Sync task completed (either error or unexpected exit)
+            storage.close().await;
+            match result {
+                Ok(Ok(())) => {
+                    // Sync task completed successfully (should never happen - run() is infinite loop)
+                    warn!("Sync engine exited unexpectedly");
+                    Ok(())
+                }
+                Ok(Err(e)) => {
+                    // Sync task returned an error - propagate it to cause service restart
+                    Err(e).context("Sync engine failed")
+                }
+                Err(e) => {
+                    // Join error (task panicked)
+                    Err(anyhow::anyhow!("Sync task panicked: {}", e))
+                }
+            }
+        }
+        result = tokio::signal::ctrl_c() => {
+            result.context("Failed to listen for Ctrl+C")?;
+            info!("Received shutdown signal, gracefully shutting down...");
+            storage.close().await;
+            Ok(())
+        }
+    }
 }
 
 /// Manually trigger root publishing

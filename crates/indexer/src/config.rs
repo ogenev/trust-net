@@ -28,9 +28,6 @@ pub struct Config {
     /// Publisher configuration
     pub publisher: PublisherConfig,
 
-    /// Quantizer configuration
-    pub quantizer: QuantizerConfig,
-
     /// Logging configuration
     #[serde(default)]
     pub logging: LoggingConfig,
@@ -44,10 +41,6 @@ pub struct NetworkConfig {
 
     /// Chain ID (e.g., 11155111 for Sepolia)
     pub chain_id: u64,
-
-    /// Number of confirmations to wait before processing blocks
-    #[serde(default = "default_confirmations")]
-    pub confirmations: u64,
 }
 
 /// Contract addresses configuration.
@@ -96,6 +89,10 @@ pub struct SyncConfig {
     /// Batch size for historical sync (number of blocks per batch)
     #[serde(default = "default_batch_size")]
     pub batch_size: u64,
+
+    /// Number of confirmations to wait before processing blocks
+    #[serde(default = "default_confirmations")]
+    pub confirmations: u64,
 }
 
 /// Publisher configuration.
@@ -119,20 +116,6 @@ pub struct PublisherConfig {
     /// Maximum priority fee per gas in gwei
     #[serde(default = "default_max_priority_fee_per_gas_gwei")]
     pub max_priority_fee_per_gas_gwei: u64,
-}
-
-/// Quantizer configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct QuantizerConfig {
-    /// Score buckets for quantization (0-100 → -2 to +2)
-    /// Default: [80, 60, 40, 20] means:
-    ///   80-100 → +2
-    ///   60-79  → +1
-    ///   40-59  →  0
-    ///   20-39  → -1
-    ///   0-19   → -2
-    #[serde(default = "default_buckets")]
-    pub buckets: Vec<u8>,
 }
 
 /// Logging configuration.
@@ -182,10 +165,6 @@ fn default_max_fee_per_gas_gwei() -> u64 {
 
 fn default_max_priority_fee_per_gas_gwei() -> u64 {
     2
-}
-
-fn default_buckets() -> Vec<u8> {
-    vec![80, 60, 40, 20]
 }
 
 fn default_log_level() -> String {
@@ -301,32 +280,6 @@ impl Config {
 
         if self.publisher.publish_interval_secs == 0 {
             anyhow::bail!("Publisher publish_interval_secs must be > 0");
-        }
-
-        // Validate quantizer buckets
-        if self.quantizer.buckets.len() != 4 {
-            anyhow::bail!(
-                "Quantizer buckets must have exactly 4 elements (got {})",
-                self.quantizer.buckets.len()
-            );
-        }
-
-        // Check buckets are in descending order
-        for i in 0..self.quantizer.buckets.len() - 1 {
-            if self.quantizer.buckets[i] <= self.quantizer.buckets[i + 1] {
-                anyhow::bail!(
-                    "Quantizer buckets must be in descending order (got {:?})",
-                    self.quantizer.buckets
-                );
-            }
-        }
-
-        // Check all buckets are <= 100
-        if self.quantizer.buckets[0] > 100 {
-            anyhow::bail!(
-                "Quantizer buckets must be <= 100 (got {})",
-                self.quantizer.buckets[0]
-            );
         }
 
         // Validate logging level
@@ -534,9 +487,6 @@ private_key = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 max_fee_per_gas_gwei = 50
 max_priority_fee_per_gas_gwei = 2
 
-[quantizer]
-buckets = [80, 60, 40, 20]
-
 [logging]
 level = "info"
 format = "pretty"
@@ -545,7 +495,6 @@ format = "pretty"
         let config = Config::from_toml_str(toml).unwrap();
         assert_eq!(config.network.chain_id, 11155111);
         assert_eq!(config.database.url, "sqlite://trustnet.db");
-        assert_eq!(config.quantizer.buckets, vec![80, 60, 40, 20]);
     }
 
     #[test]
@@ -568,9 +517,6 @@ start_block = 0
 
 [publisher]
 private_key = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-
-[quantizer]
-buckets = [80, 60, 40, 20]
         "#;
 
         let result = Config::from_toml_str(toml);
@@ -598,44 +544,11 @@ start_block = 0
 
 [publisher]
 private_key = "invalid"
-
-[quantizer]
-buckets = [80, 60, 40, 20]
         "#;
 
         let result = Config::from_toml_str(toml);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("private_key"));
-    }
-
-    #[test]
-    fn test_validation_invalid_buckets() {
-        let toml = r#"
-[network]
-rpc_url = "http://localhost:8545"
-chain_id = 1
-
-[contracts]
-trust_graph = "0x1111111111111111111111111111111111111111"
-root_registry = "0x2222222222222222222222222222222222222222"
-erc8004_reputation = "0x3333333333333333333333333333333333333333"
-
-[database]
-url = "sqlite://test.db"
-
-[sync]
-start_block = 0
-
-[publisher]
-private_key = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-
-[quantizer]
-buckets = [20, 40, 60, 80]  # Wrong order (ascending instead of descending)
-        "#;
-
-        let result = Config::from_toml_str(toml);
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("descending"));
     }
 
     #[test]
@@ -658,9 +571,6 @@ start_block = 0
 
 [publisher]
 private_key = "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
-
-[quantizer]
-buckets = [80, 60, 40, 20]
         "#;
 
         let config = Config::from_toml_str(toml).unwrap();
@@ -690,20 +600,17 @@ start_block = 0
 
 [publisher]
 private_key = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-
-[quantizer]
-buckets = [80, 60, 40, 20]
         "#;
 
         let config = Config::from_toml_str(toml).unwrap();
 
         // Check defaults are applied
-        assert_eq!(config.network.confirmations, 6);
+        assert_eq!(config.sync.confirmations, 6);
         assert_eq!(config.database.max_connections, 5);
         assert_eq!(config.database.min_connections, 1);
         assert_eq!(config.sync.poll_interval_secs, 12);
         assert_eq!(config.sync.batch_size, 1000);
-        assert_eq!(config.publisher.auto_publish, true);
+        assert!(config.publisher.auto_publish);
         assert_eq!(config.publisher.publish_interval_secs, 3600);
         assert_eq!(config.logging.level, "info");
         assert_eq!(config.logging.format, "pretty");
@@ -786,9 +693,6 @@ start_block = 0
 
 [publisher]
 private_key = "${TEST_PRIVATE_KEY}"
-
-[quantizer]
-buckets = [80, 60, 40, 20]
         "#;
 
         // Expand env vars manually (simulating from_file behavior)
@@ -886,9 +790,6 @@ start_block = 0
 # WARNING: Keep this secure! Use environment variable in production
 # Example: Load from env with: private_key = "${PUBLISHER_PRIVATE_KEY}"
 private_key = "${REAL_KEY}"
-
-[quantizer]
-buckets = [80, 60, 40, 20]
         "#;
 
         // This should succeed because comment examples are ignored

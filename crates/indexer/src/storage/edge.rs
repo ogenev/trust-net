@@ -122,9 +122,7 @@ impl Storage {
         .fetch_all(&self.pool)
         .await?;
 
-        rows.into_iter()
-            .map(|row| Self::row_to_edge_record(row))
-            .collect()
+        rows.into_iter().map(Self::row_to_edge_record).collect()
     }
 
     /// Get all edges to a specific target in a context.
@@ -151,9 +149,7 @@ impl Storage {
         .fetch_all(&self.pool)
         .await?;
 
-        rows.into_iter()
-            .map(|row| Self::row_to_edge_record(row))
-            .collect()
+        rows.into_iter().map(Self::row_to_edge_record).collect()
     }
 
     /// Get all edges in a specific context.
@@ -177,9 +173,7 @@ impl Storage {
         .fetch_all(&self.pool)
         .await?;
 
-        rows.into_iter()
-            .map(|row| Self::row_to_edge_record(row))
-            .collect()
+        rows.into_iter().map(Self::row_to_edge_record).collect()
     }
 
     /// Get all edges (for building the complete SMM).
@@ -196,9 +190,7 @@ impl Storage {
         .fetch_all(&self.pool)
         .await?;
 
-        rows.into_iter()
-            .map(|row| Self::row_to_edge_record(row))
-            .collect()
+        rows.into_iter().map(Self::row_to_edge_record).collect()
     }
 
     /// Count total edges in the database.
@@ -233,8 +225,9 @@ impl Storage {
         let target = Address::from_slice(&target_bytes);
         let context_id = ContextId::from(<[u8; 32]>::try_from(context_bytes.as_slice())?);
         let level = Level::new(level as i8)?;
-        let source =
-            EdgeSource::from_str(&source_str).context("Invalid edge source in database")?;
+        let source = source_str
+            .parse::<EdgeSource>()
+            .map_err(|e| anyhow::anyhow!("Invalid edge source in database: {}", e))?;
         let tx_hash = tx_hash_bytes.map(|bytes| B256::from_slice(&bytes));
 
         Ok(EdgeRecord {

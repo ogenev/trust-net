@@ -60,13 +60,16 @@ impl EdgeSource {
             EdgeSource::Erc8004 => "erc8004",
         }
     }
+}
 
-    /// Parse from database string representation.
-    pub fn from_str(s: &str) -> Option<Self> {
+impl std::str::FromStr for EdgeSource {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
-            "trust_graph" => Some(EdgeSource::TrustGraph),
-            "erc8004" => Some(EdgeSource::Erc8004),
-            _ => None,
+            "trust_graph" => Ok(EdgeSource::TrustGraph),
+            "erc8004" => Ok(EdgeSource::Erc8004),
+            _ => Err(format!("Unknown edge source: {}", s)),
         }
     }
 }
@@ -175,11 +178,14 @@ mod tests {
         assert_eq!(EdgeSource::Erc8004.as_str(), "erc8004");
 
         assert_eq!(
-            EdgeSource::from_str("trust_graph"),
-            Some(EdgeSource::TrustGraph)
+            "trust_graph".parse::<EdgeSource>().unwrap(),
+            EdgeSource::TrustGraph
         );
-        assert_eq!(EdgeSource::from_str("erc8004"), Some(EdgeSource::Erc8004));
-        assert_eq!(EdgeSource::from_str("invalid"), None);
+        assert_eq!(
+            "erc8004".parse::<EdgeSource>().unwrap(),
+            EdgeSource::Erc8004
+        );
+        assert!("invalid".parse::<EdgeSource>().is_err());
     }
 
     #[test]

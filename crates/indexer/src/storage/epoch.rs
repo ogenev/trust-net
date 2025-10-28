@@ -111,9 +111,7 @@ impl Storage {
         .fetch_all(&self.pool)
         .await?;
 
-        rows.into_iter()
-            .map(|row| Self::row_to_epoch_record(row))
-            .collect()
+        rows.into_iter().map(Self::row_to_epoch_record).collect()
     }
 
     /// Get epochs in a specific range.
@@ -136,9 +134,7 @@ impl Storage {
         .fetch_all(&self.pool)
         .await?;
 
-        rows.into_iter()
-            .map(|row| Self::row_to_epoch_record(row))
-            .collect()
+        rows.into_iter().map(Self::row_to_epoch_record).collect()
     }
 
     /// Count total epochs.
