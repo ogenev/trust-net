@@ -36,6 +36,42 @@ impl Storage {
         Ok(())
     }
 
+    /// Update an existing epoch's transaction metadata.
+    ///
+    /// This is used when republishing an epoch due to chain reorgs or lag.
+    /// The root and edge count remain the same, but the transaction details
+    /// (block number, tx hash, timestamp) are updated to reflect the new publish.
+    pub async fn update_epoch_metadata(&self, epoch: &EpochRecord) -> Result<()> {
+        let tx_hash_bytes = epoch.tx_hash.as_ref().map(|h| h.as_slice());
+
+        let rows_affected = sqlx::query(
+            r#"
+            UPDATE epochs
+            SET published_at_block = ?,
+                published_at = ?,
+                tx_hash = ?
+            WHERE epoch = ?
+            "#,
+        )
+        .bind(epoch.published_at_block as i64)
+        .bind(epoch.published_at)
+        .bind(tx_hash_bytes)
+        .bind(epoch.epoch as i64)
+        .execute(&self.pool)
+        .await
+        .context("Failed to update epoch metadata")?
+        .rows_affected();
+
+        if rows_affected == 0 {
+            return Err(anyhow::anyhow!(
+                "Failed to update epoch {}: record not found",
+                epoch.epoch
+            ));
+        }
+
+        Ok(())
+    }
+
     /// Get the latest epoch.
     pub async fn get_latest_epoch(&self) -> Result<Option<EpochRecord>> {
         let row = sqlx::query(

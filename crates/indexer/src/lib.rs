@@ -78,23 +78,15 @@
 
 // Module declarations (will be implemented in phases)
 
-// Phase 2: Database and storage
 pub mod storage;
 
-// Phase 3: Configuration
 pub mod config;
 
-// Phase 4: Event listening
 pub mod listener;
 
-// Phase 5: Event processing
-// pub mod processor;
-
-// Phase 6: SMM service (periodic tree building)
 pub mod smm_service;
 
-// Phase 7: Root publishing
-// pub mod publisher;
+pub mod publisher;
 
 // Re-export common types
 pub use trustnet_core::{types::*, *};

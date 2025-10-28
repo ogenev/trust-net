@@ -10,7 +10,8 @@
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use tracing::{info, warn};
+use tracing::{error, info, warn};
+use trustnet_indexer::publisher::PublishResult;
 
 #[derive(Parser)]
 #[command(name = "trustnet-indexer")]
@@ -178,63 +179,156 @@ async fn run_indexer(config_path: &str) -> Result<()> {
         config.builder.rebuild_interval_secs
     );
 
-    // TODO: Spawn root publisher task (hourly + manual trigger)
+    // Create and spawn root publisher task
+    use alloy::signers::local::PrivateKeySigner;
+    use trustnet_indexer::publisher::EventDrivenPublisher;
+
+    // Parse private key
+    let signer = config
+        .publisher
+        .private_key
+        .trim_start_matches("0x")
+        .parse::<PrivateKeySigner>()
+        .context("Failed to parse publisher private key")?;
+
+    let publisher = EventDrivenPublisher::new(
+        storage.clone(),
+        smm_service.clone(),
+        &config.network.rpc_url,
+        signer,
+        config.contracts.root_registry,
+        config.publisher.clone(),
+    )
+    .await
+    .context("Failed to create root publisher")?;
+
+    // Connect rebuild notifications (for future use)
+    let _rebuild_notify = publisher.rebuild_notify();
+
+    let publisher_handle = if config.publisher.auto_publish {
+        info!(
+            "Root publisher started (interval: {}s)",
+            config.publisher.publish_interval_secs
+        );
+        Some(tokio::spawn(async move { publisher.run().await }))
+    } else {
+        info!("Auto-publishing disabled, use 'publish-root' command to publish manually");
+        None
+    };
 
     info!("Indexer is running. Press Ctrl+C to stop.");
     info!("For API queries, run the trustnet-api service separately.");
 
-    // Wait for either Ctrl+C, sync task failure, or SMM service failure
-    tokio::select! {
-        result = sync_handle => {
-            // Sync task completed (either error or unexpected exit)
-            storage.close().await;
-            match result {
-                Ok(Ok(())) => {
-                    // Sync task completed successfully (should never happen - run() is infinite loop)
-                    warn!("Sync engine exited unexpectedly");
-                    Ok(())
-                }
-                Ok(Err(e)) => {
-                    // Sync task returned an error - propagate it to cause service restart
-                    Err(e).context("Sync engine failed")
-                }
-                Err(e) => {
-                    // Join error (task panicked)
-                    Err(anyhow::anyhow!("Sync task panicked: {}", e))
-                }
-            }
-        }
-        result = smm_handle => {
-            // SMM service task completed (either error or unexpected exit)
-            storage.close().await;
-            match result {
-                Ok(Ok(())) => {
-                    // SMM service completed successfully (should never happen - run() is infinite loop)
-                    warn!("SMM service exited unexpectedly");
-                    Ok(())
-                }
-                Ok(Err(e)) => {
-                    // SMM service returned an error - propagate it to cause service restart
-                    Err(e).context("SMM service failed")
-                }
-                Err(e) => {
-                    // Join error (task panicked)
-                    Err(anyhow::anyhow!("SMM service task panicked: {}", e))
+    // Wait for either Ctrl+C or task failures
+    if let Some(publisher_handle) = publisher_handle {
+        // Auto-publishing enabled, monitor all tasks
+        tokio::select! {
+            result = sync_handle => {
+                // Sync task completed (either error or unexpected exit)
+                storage.close().await;
+                match result {
+                    Ok(Ok(())) => {
+                        warn!("Sync engine exited unexpectedly");
+                        Ok(())
+                    }
+                    Ok(Err(e)) => {
+                        Err(e).context("Sync engine failed")
+                    }
+                    Err(e) => {
+                        Err(anyhow::anyhow!("Sync task panicked: {}", e))
+                    }
                 }
             }
+            result = smm_handle => {
+                // SMM service task completed (either error or unexpected exit)
+                storage.close().await;
+                match result {
+                    Ok(Ok(())) => {
+                        warn!("SMM service exited unexpectedly");
+                        Ok(())
+                    }
+                    Ok(Err(e)) => {
+                        Err(e).context("SMM service failed")
+                    }
+                    Err(e) => {
+                        Err(anyhow::anyhow!("SMM service task panicked: {}", e))
+                    }
+                }
+            }
+            result = publisher_handle => {
+                // Publisher task completed (either error or unexpected exit)
+                storage.close().await;
+                match result {
+                    Ok(Ok(())) => {
+                        warn!("Publisher exited unexpectedly");
+                        Ok(())
+                    }
+                    Ok(Err(e)) => {
+                        Err(e).context("Publisher failed")
+                    }
+                    Err(e) => {
+                        Err(anyhow::anyhow!("Publisher task panicked: {}", e))
+                    }
+                }
+            }
+            result = tokio::signal::ctrl_c() => {
+                result.context("Failed to listen for Ctrl+C")?;
+                info!("Received shutdown signal, gracefully shutting down...");
+                storage.close().await;
+                Ok(())
+            }
         }
-        result = tokio::signal::ctrl_c() => {
-            result.context("Failed to listen for Ctrl+C")?;
-            info!("Received shutdown signal, gracefully shutting down...");
-            storage.close().await;
-            Ok(())
+    } else {
+        // Auto-publishing disabled, monitor only sync and SMM tasks
+        tokio::select! {
+            result = sync_handle => {
+                // Sync task completed (either error or unexpected exit)
+                storage.close().await;
+                match result {
+                    Ok(Ok(())) => {
+                        warn!("Sync engine exited unexpectedly");
+                        Ok(())
+                    }
+                    Ok(Err(e)) => {
+                        Err(e).context("Sync engine failed")
+                    }
+                    Err(e) => {
+                        Err(anyhow::anyhow!("Sync task panicked: {}", e))
+                    }
+                }
+            }
+            result = smm_handle => {
+                // SMM service task completed (either error or unexpected exit)
+                storage.close().await;
+                match result {
+                    Ok(Ok(())) => {
+                        warn!("SMM service exited unexpectedly");
+                        Ok(())
+                    }
+                    Ok(Err(e)) => {
+                        Err(e).context("SMM service failed")
+                    }
+                    Err(e) => {
+                        Err(anyhow::anyhow!("SMM service task panicked: {}", e))
+                    }
+                }
+            }
+            result = tokio::signal::ctrl_c() => {
+                result.context("Failed to listen for Ctrl+C")?;
+                info!("Received shutdown signal, gracefully shutting down...");
+                storage.close().await;
+                Ok(())
+            }
         }
     }
 }
 
 /// Manually trigger root publishing
 async fn publish_root_manual(config_path: &str) -> Result<()> {
+    use alloy::signers::local::PrivateKeySigner;
     use trustnet_indexer::config::Config;
+    use trustnet_indexer::publisher::EventDrivenPublisher;
+    use trustnet_indexer::smm_service::PeriodicSmmBuilder;
     use trustnet_indexer::storage::Storage;
 
     info!("Manual root publishing triggered");
@@ -260,10 +354,113 @@ async fn publish_root_manual(config_path: &str) -> Result<()> {
 
     info!("Database connected");
 
-    // TODO: Build SMM from current edges
-    // TODO: Publish root to RootRegistry
+    // Build SMM from current edges
+    let smm_service = PeriodicSmmBuilder::new(
+        storage.clone(),
+        std::time::Duration::from_secs(300), // Not used for manual publish
+    );
 
-    warn!("Manual root publishing not yet implemented");
+    // Build SMM immediately
+    info!("Building SMM from current edges...");
+    let state = smm_service.get_current_state().await;
+
+    if state.is_none() {
+        // Need to build first
+        info!("No cached SMM state, building now...");
+        // Can't easily rebuild from here, so we create a temporary builder
+        let edges = storage.get_all_edges().await?;
+        info!("Found {} edges", edges.len());
+
+        // Build SMM manually (even if empty - let the publisher decide if it should publish)
+        let mut builder = trustnet_smm::SmmBuilder::new();
+        for edge in &edges {
+            let key = trustnet_core::hashing::compute_edge_key(
+                &edge.rater,
+                &edge.target,
+                &edge.context_id,
+            );
+            let smm_value = edge.level.to_smm_value();
+            builder.insert(key, smm_value)?;
+        }
+        let smm = builder.build();
+        let root = smm.root();
+
+        info!("SMM built with root: 0x{}", hex::encode(root));
+
+        // Parse private key
+        let signer = config
+            .publisher
+            .private_key
+            .trim_start_matches("0x")
+            .parse::<PrivateKeySigner>()
+            .context("Failed to parse publisher private key")?;
+
+        // Create publisher
+        let publisher = EventDrivenPublisher::new(
+            storage.clone(),
+            smm_service,
+            &config.network.rpc_url,
+            signer,
+            config.contracts.root_registry,
+            config.publisher.clone(),
+        )
+        .await
+        .context("Failed to create root publisher")?;
+
+        // Publish immediately (builds SMM and publishes in one call)
+        info!("Publishing root to chain...");
+        match publisher.publish_now().await {
+            Ok(PublishResult::Published { epoch }) => {
+                info!("Root published successfully to epoch {}", epoch);
+            }
+            Ok(PublishResult::Skipped { reason }) => {
+                info!("Root publish skipped: {:?}", reason);
+            }
+            Err(e) => {
+                error!("Failed to publish root: {}", e);
+                storage.close().await;
+                return Err(e);
+            }
+        }
+    } else {
+        info!("Using cached SMM state");
+
+        // Parse private key
+        let signer = config
+            .publisher
+            .private_key
+            .trim_start_matches("0x")
+            .parse::<PrivateKeySigner>()
+            .context("Failed to parse publisher private key")?;
+
+        // Create publisher
+        let publisher = EventDrivenPublisher::new(
+            storage.clone(),
+            smm_service,
+            &config.network.rpc_url,
+            signer,
+            config.contracts.root_registry,
+            config.publisher.clone(),
+        )
+        .await
+        .context("Failed to create root publisher")?;
+
+        // Publish immediately (builds SMM and publishes in one call)
+        info!("Publishing root to chain...");
+        match publisher.publish_now().await {
+            Ok(PublishResult::Published { epoch }) => {
+                info!("Root published successfully to epoch {}", epoch);
+            }
+            Ok(PublishResult::Skipped { reason }) => {
+                info!("Root publish skipped: {:?}", reason);
+            }
+            Err(e) => {
+                error!("Failed to publish root: {}", e);
+                storage.close().await;
+                return Err(e);
+            }
+        }
+    }
 
     storage.close().await;
 

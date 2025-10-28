@@ -97,6 +97,12 @@ impl PeriodicSmmBuilder {
         self.current_state.read().await.clone()
     }
 
+    /// Manually rebuild the SMM immediately.
+    /// This is used for manual operations without requiring the background task.
+    pub async fn rebuild_now(&self) -> Result<()> {
+        self.rebuild_smm().await
+    }
+
     /// Rebuild the SMM from current storage state.
     async fn rebuild_smm(&self) -> Result<()> {
         info!("Building SMM from current edges...");

@@ -138,6 +138,22 @@ pub struct PublisherConfig {
     /// Maximum priority fee per gas in gwei
     #[serde(default = "default_max_priority_fee_per_gas_gwei")]
     pub max_priority_fee_per_gas_gwei: u64,
+
+    /// Maximum gas price in gwei (0 = no limit)
+    #[serde(default)]
+    pub max_gas_price_gwei: u64,
+
+    /// Number of confirmations to wait
+    #[serde(default = "default_publisher_confirmations")]
+    pub confirmations: u64,
+
+    /// Maximum retry attempts for failed transactions
+    #[serde(default = "default_max_retries")]
+    pub max_retries: u32,
+
+    /// Minimum interval between publishes in seconds
+    #[serde(default = "default_min_publish_interval_secs")]
+    pub min_interval_secs: u64,
 }
 
 /// Logging configuration.
@@ -191,6 +207,18 @@ fn default_max_fee_per_gas_gwei() -> u64 {
 
 fn default_max_priority_fee_per_gas_gwei() -> u64 {
     2
+}
+
+fn default_publisher_confirmations() -> u64 {
+    3 // Wait for 3 confirmations
+}
+
+fn default_max_retries() -> u32 {
+    3 // Retry up to 3 times
+}
+
+fn default_min_publish_interval_secs() -> u64 {
+    60 // Minimum 1 minute between publishes
 }
 
 fn default_log_level() -> String {
