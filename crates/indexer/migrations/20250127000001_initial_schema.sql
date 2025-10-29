@@ -4,10 +4,10 @@
 -- Edges table: stores trust ratings with latest-wins semantics
 -- Primary key on (rater, target, context_id) ensures one rating per triple
 CREATE TABLE IF NOT EXISTS edges (
-    -- The rater (observer/curator) address (20 bytes)
+    -- The rater (decider/curator) address (20 bytes)
     rater BLOB NOT NULL,
 
-    -- The target (hinge/agent) address (20 bytes)
+    -- The target (endorser/agent) address (20 bytes)
     target BLOB NOT NULL,
 
     -- Context ID (32 bytes) - capability namespace
@@ -33,7 +33,7 @@ CREATE TABLE IF NOT EXISTS edges (
     PRIMARY KEY (rater, target, context_id)
 ) STRICT;
 
--- Index for querying edges by rater (observer-centric queries)
+-- Index for querying edges by rater (decider-centric queries)
 CREATE INDEX IF NOT EXISTS idx_edges_rater
 ON edges(rater, context_id);
 

@@ -190,7 +190,7 @@ impl fmt::Display for AgentKey {
 /// An edge in the trust graph.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Edge {
-    /// The rater (observer) address.
+    /// The rater (decider) address.
     pub rater: Address,
     /// The target address or agent key.
     pub target: Address,

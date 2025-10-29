@@ -135,7 +135,7 @@ This indexer works alongside other TrustNet services:
 
 - **trustnet-api** - HTTP API server (reads from same DB)
   - `GET /v1/root` - Get current graph root and epoch
-  - `GET /v1/score/:observer/:target?contextId=0x...` - Get trust score with proof
+  - `GET /v1/score/:decider/:target?contextId=0x...` - Get trust score with proof
   - `GET /v1/context` - List canonical context IDs
 
 - **trustnet-cli** - Offline tools for testing

@@ -5,7 +5,7 @@ Smart contracts for the TrustNet reputation layer on ERC-8004.
 ## Overview
 
 TrustNet provides verifiable, explainable trust-to-act decisions for AI agents using:
-- **Observer-relative** trust scoring (no global reputation)
+- **Decider-relative** trust scoring (no global reputation)
 - **Context-isolated** ratings (payments, code-exec, writes, defi-exec)
 - **2-hop proofs** with Sparse Merkle Maps
 - **Explainable** decisions showing which edges contributed
@@ -92,7 +92,7 @@ string memory name = TrustNetContexts.getContextName(contextId);
 
 ## Usage Examples
 
-### 1. Observer Rates a Curator
+### 1. Decider Rates a Curator
 
 ```solidity
 // FinOps trusts CFO highly for payment decisions
@@ -114,7 +114,7 @@ trustGraph.rateEdge(
 );
 ```
 
-### 3. Observer Overrides (Direct Veto)
+### 3. Decider Overrides (Direct Veto)
 
 ```solidity
 // SecOps distrusts a compromised agent
@@ -212,8 +212,8 @@ Quantization mapping (from whitepaper §3.2):
 ## Security Considerations
 
 1. **No access control** - anyone can rate anyone (open participation)
-   - Gatekeepers choose which observers they trust
-   - Direct overrides by observers always respected
+   - Gatekeepers choose which deciders they trust
+   - Direct overrides by deciders always respected
 
 2. **No on-chain scoring** - this contract only emits events
    - Scores computed off-chain by indexer

@@ -1,7 +1,7 @@
 # TrustNet
 
 > **Verifiable, explainable reputation for AI agents (ERC‑8004‑native).**  
-> Admit or deny agent actions using a tiny **2‑hop proof** and a deterministic, **observer‑relative** score.
+> Admit or deny agent actions using a tiny **2‑hop proof** and a deterministic, **decider‑relative** score.
 
 ## ✨ What is TrustNet?
 
@@ -10,16 +10,16 @@ TrustNet is a reputation layer that turns **ERC‑8004** agent feedback + curato
 and always show a short **“Why?”** (two edges + direct override).
 
 - 🔗 **ERC‑8004‑native** (Identity + Reputation ingestion)  
-- 🔐 **Explainable** (observer‑relative, context‑scoped, direct veto respected)  
+- 🔐 **Explainable** (decider‑relative, context‑scoped, direct veto respected)  
 - 🌱 **MVP‑small** (events‑only contracts, one root, tiny proofs)  
 - 🧪 **Open** (MIT/Apache‑2.0, reproducible builds)
 
 ## 🧩 API (MVP)
  - GET /v1/root → { epoch, graphRoot, manifest }
 -	GET /v1/context → [{ name, idHex }]
--	GET /v1/score/:observer/:target?contextId=<hex>
--	Returns { score, epoch, path:{hinge,lOY,lYT,lOT}, proof:{graphRoot, merkleOY[], merkleYT[], merkleOT[], otIsAbsent} }
--	If hinge omitted, server selects best hinge deterministically.
+-	GET /v1/score/:decider/:target?contextId=<hex>
+-	Returns { score, epoch, path:{endorser,lOY,lYT,lOT}, proof:{graphRoot, merkleOY[], merkleYT[], merkleOT[], otIsAbsent} }
+-	If endorser omitted, server selects best endorser deterministically.
 
 ## 🔐 Contracts (MVP)
 -	**TrustGraph** — emit EdgeRated(rater, target, level, contextId); no storage.
@@ -37,12 +37,12 @@ We ship Foundry tests + vectors to ensure Solidity and Rust verifiers produce id
 3.	**Build SMM**
 - Map (rater, target, context) → K, store V=uint8(level+2), create graphRoot, bump epoch, publish to RootRegistry.
 4.	**Proofs**
-- For (O,T,ctx), pick best hinge Y, assemble proofs for O→Y, Y→T, and O→T (membership or non‑membership).
+- For (O,T,ctx), pick best endorser Y, assemble proofs for O→Y, Y→T, and O→T (membership or non‑membership).
 
 **Trust model (MVP)**: trust‑minimized, reproducible. We publish a Root Manifest (block window, contracts, quantizer), so anyone can recompute the root over public logs.
 
 ## 🔒 Security & Integrity
-- **Anchored observers** — gates use allow‑listed observers or councils (k‑of‑n).
+- **Anchored deciders** — gates use allow‑listed deciders or councils (k‑of‑n).
 - **Direct veto** — an O→T = −2 cancels positive paths.
 - **Context binding** — all proofs must share the same contextId.
 - **Reorgs** — indexer waits N confirmations; epochs strictly increase.

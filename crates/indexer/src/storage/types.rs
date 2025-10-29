@@ -10,10 +10,10 @@ use trustnet_core::types::{ContextId, Level};
 /// within a specific context, with block coordinates for latest-wins ordering.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EdgeRecord {
-    /// The rater (observer/curator) address
+    /// The rater (decider/curator) address
     pub rater: Address,
 
-    /// The target (hinge/agent) address
+    /// The target (endorser/agent) address
     pub target: Address,
 
     /// Context ID (capability namespace)

@@ -3,14 +3,14 @@ pragma solidity ^0.8.26;
 
 /**
  * @title TrustPathVerifier
- * @notice Library for verifying two-hop trust paths and computing observer-relative trust scores
+ * @notice Library for verifying two-hop trust paths and computing decider-relative trust scores
  * @dev Verifies three Sparse Merkle Map (SMM) paths against a graph root and computes
  *      deterministic trust scores using the two-hop scoring algorithm from TrustNet protocol.
  *
  *      The library verifies membership proofs for:
- *      - O→Y (Observer to Hinge)
- *      - Y→T (Hinge to Target)
- *      - O→T (Observer to Target - direct override, can be membership or non-membership)
+ *      - O→Y (Decider to Endorser)
+ *      - Y→T (Endorser to Target)
+ *      - O→T (Decider to Target - direct override, can be membership or non-membership)
  *
  *      All three edges must share the same contextId for capability isolation.
  *
@@ -32,12 +32,12 @@ library TrustPathVerifier {
      * @param graphRoot The SMM root being verified against
      * @param epoch The epoch number for this root
      * @param contextId The context (capability namespace) being evaluated
-     * @param observer The observer/anchor address (O)
-     * @param hinge The curator/auditor address (Y)
+     * @param decider The decider/anchor address (O)
+     * @param endorser The curator/auditor address (Y)
      * @param target The agent being evaluated (T)
-     * @param levelOY Edge weight: Observer → Hinge (-2 to +2)
-     * @param levelYT Edge weight: Hinge → Target (-2 to +2)
-     * @param levelOT Edge weight: Observer → Target (direct override, -2 to +2)
+     * @param levelOY Edge weight: Decider → Endorser (-2 to +2)
+     * @param levelYT Edge weight: Endorser → Target (-2 to +2)
+     * @param levelOT Edge weight: Decider → Target (direct override, -2 to +2)
      * @param merkleOY Merkle proof path for O→Y edge
      * @param merkleYT Merkle proof path for Y→T edge
      * @param merkleOT Merkle proof path for O→T edge (siblings from leaf to root)
@@ -48,8 +48,8 @@ library TrustPathVerifier {
         bytes32 graphRoot;
         uint256 epoch;
         bytes32 contextId;
-        address observer;
-        address hinge;
+        address decider;
+        address endorser;
         address target;
         int8 levelOY;
         int8 levelYT;
@@ -77,15 +77,15 @@ library TrustPathVerifier {
      * @notice Result of trust path verification
      * @param isValid Whether the proof verified successfully
      * @param score The computed trust score (-2 to +2)
-     * @param hinge The hinge address used in the path
-     * @param levelOY Observer → Hinge level (for "Why" explanation)
-     * @param levelYT Hinge → Target level (for "Why" explanation)
-     * @param levelOT Observer → Target direct override level
+     * @param endorser The endorser address used in the path
+     * @param levelOY Decider → Endorser level (for "Why" explanation)
+     * @param levelYT Endorser → Target level (for "Why" explanation)
+     * @param levelOT Decider → Target direct override level
      */
     struct VerificationResult {
         bool isValid;
         int8 score;
-        address hinge;
+        address endorser;
         int8 levelOY;
         int8 levelYT;
         int8 levelOT;
@@ -119,22 +119,22 @@ library TrustPathVerifier {
         }
 
         // Compute edge keys for SMM
-        bytes32 keyOY = computeEdgeKey(proof.observer, proof.hinge, proof.contextId);
-        bytes32 keyYT = computeEdgeKey(proof.hinge, proof.target, proof.contextId);
-        bytes32 keyOT = computeEdgeKey(proof.observer, proof.target, proof.contextId);
+        bytes32 keyOY = computeEdgeKey(proof.decider, proof.endorser, proof.contextId);
+        bytes32 keyYT = computeEdgeKey(proof.endorser, proof.target, proof.contextId);
+        bytes32 keyOT = computeEdgeKey(proof.decider, proof.target, proof.contextId);
 
         // Verify O→Y membership
         uint8 valueOY = _levelToValue(proof.levelOY);
         bool validOY = verifyMembership(proof.graphRoot, keyOY, valueOY, proof.merkleOY);
         if (!validOY) {
-            return VerificationResult(false, 0, proof.hinge, 0, 0, 0);
+            return VerificationResult(false, 0, proof.endorser, 0, 0, 0);
         }
 
         // Verify Y→T membership
         uint8 valueYT = _levelToValue(proof.levelYT);
         bool validYT = verifyMembership(proof.graphRoot, keyYT, valueYT, proof.merkleYT);
         if (!validYT) {
-            return VerificationResult(false, 0, proof.hinge, 0, 0, 0);
+            return VerificationResult(false, 0, proof.endorser, 0, 0, 0);
         }
 
         // Verify O→T (can be membership or non-membership)
@@ -157,7 +157,7 @@ library TrustPathVerifier {
         }
 
         if (!validOT) {
-            return VerificationResult(false, 0, proof.hinge, 0, 0, 0);
+            return VerificationResult(false, 0, proof.endorser, 0, 0, 0);
         }
 
         // Compute the trust score
@@ -166,7 +166,7 @@ library TrustPathVerifier {
         return VerificationResult(
             true,
             score,
-            proof.hinge,
+            proof.endorser,
             proof.levelOY,
             proof.levelYT,
             proof.levelOT
@@ -203,9 +203,9 @@ library TrustPathVerifier {
      *      sumProducts = lOY * lYT
      *      scoreNumerator = 2*lOT + sumProducts
      *      score = clamp(scoreNumerator / 2, -2, +2)
-     * @param levelOY Observer → Hinge edge weight (-2 to +2)
-     * @param levelYT Hinge → Target edge weight (-2 to +2)
-     * @param levelOT Observer → Target direct override (-2 to +2)
+     * @param levelOY Decider → Endorser edge weight (-2 to +2)
+     * @param levelYT Endorser → Target edge weight (-2 to +2)
+     * @param levelOT Decider → Target direct override (-2 to +2)
      * @return score The computed score clamped to [-2, +2]
      */
     function computeScore(int8 levelOY, int8 levelYT, int8 levelOT)

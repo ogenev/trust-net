@@ -9,7 +9,7 @@
 ## Abstract
 
 **TrustNet** is a portable, **explainable “trust‑to‑act” layer** for AI agents. It enables gateways and smart contracts to
-**admit or deny** an agent’s action (e.g., *pay ≤ $50*, *run CI/CD*, *modify CRM data*) using a **small proof** and a **deterministic, observer‑relative** rule.
+**admit or deny** an agent’s action (e.g., *pay ≤ $50*, *run CI/CD*, *modify CRM data*) using a **small proof** and a **deterministic, decider‑relative** rule.
 
 TrustNet builds on **ERC‑8004**:
 - uses 8004 **Identity** to anchor agent IDs,
@@ -17,7 +17,7 @@ TrustNet builds on **ERC‑8004**:
 - optionally consumes **Validation** results.
 
 The core of TrustNet is tiny and auditable:
-- **Ratings**: signed edges among addresses (observers, hinges, targets) scoped by **context** (capability namespace).
+- **Ratings**: signed edges among addresses (deciders, endorsers, targets) scoped by **context** (capability namespace).
 - **Commitment**: a single **Sparse Merkle Map** (SMM) root (`graphRoot`) over the *latest* ratings.
 - **Proof**: a **2‑hop** membership proof (`O→Y`, `Y→T`, plus direct `O→T`) with a fixed **integer** scoring rule.
 - **Why‑by‑default**: every decision returns the two edges used, so humans can see *who* vouched and *why* it passed.
@@ -30,7 +30,7 @@ No tokens. No global social score. No ZK required for MVP (future‑ready).
 
 Agent systems now call tools, write code, move money, and act on behalf of users and DAOs. Traditional ACLs or opaque global scores don’t travel across apps and chains. TrustNet answers:
 
-> *“From **my** point of view (observer), may **this agent** perform **this capability** now — and **why**?”*
+> *“From **my** point of view (decider), may **this agent** perform **this capability** now — and **why**?”*
 
 We scope trust by **context**, compute it via a **transparent two‑hop rule**, and verify it with **small Merkle proofs**.
 
@@ -38,7 +38,7 @@ We scope trust by **context**, compute it via a **transparent two‑hop rule**, 
 
 ## 1) Goals (MVP)
 
-1. **Observer‑relative trust** — scores are always “as seen by” a chosen **observer/anchor** (e.g., FinOps, SecOps).
+1. **Decider‑relative trust** — scores are always “as seen by” a chosen **decider/anchor** (e.g., FinOps, SecOps).
 2. **Explainable decisions** — every allow/deny ships a short **Why** showing the two edges and the direct override.
 3. **Context isolation** — ratings are bound to a **contextId** (e.g., `payments`, `code-exec`, `writes`) to avoid cross‑capability privilege escalation.
 4. **Single root, tiny proofs** — one SMM commitment; 2‑hop proofs verify off‑chain and on‑chain.
@@ -51,8 +51,8 @@ No tokens, staking mechanics, ZK private proofs, or universal ranking. We score 
 
 ## 2) Entities & Identifiers
 
-- **Observer `O`** — an anchor that sets policy (e.g., FinOps, SecOps, ProtocolCouncil).
-- **Hinge `Y`** — a curator/auditor/team‑lead bridging `O` to `T`.
+- **Decider `O`** — an anchor that sets policy (e.g., FinOps, SecOps, ProtocolCouncil).
+- **Endorser `Y`** — a curator/auditor/team‑lead bridging `O` to `T`.
 - **Target `T`** — typically the **agent** being gated.
 - **Agent identity** — `agentId` (ERC‑721) plus optional `agentWallet` from 8004 **Identity** metadata.
 - **Context `contextId`** — `bytes32` capability namespace:  
@@ -92,7 +92,7 @@ event EdgeRated(
 - **Evidence**: `fileUri/fileHash` can link receipts or audit notes; shown in the Why panel.
 
 ### 3.3 Optional: InteractionReceipt (off‑chain)
-Observers can summarize behavior into ratings using signed receipts (success/error/violation, risk, ts, context).
+Deciders can summarize behavior into ratings using signed receipts (success/error/violation, risk, ts, context).
 
 ---
 
@@ -108,7 +108,7 @@ Observers can summarize behavior into ratings using signed receipts (success/err
 An off‑chain **Indexer** keeps the latest edges, builds the SMM, and publishes `{graphRoot, epoch}` to **RootRegistry**.
 
 ### 4.2 Two‑hop proof
-A score from **Observer `O`** to **Target `T`** via **Hinge `Y`** in a **context**:
+A score from **Decider `O`** to **Target `T`** via **Endorser `Y`** in a **context**:
 
 - Membership for `O→Y`, `Y→T`
 - Membership **or** non‑membership for `O→T` (direct override)
@@ -194,9 +194,9 @@ This enables **independent recomputation** of the root from public logs.
 ### 7.2 Score API (read‑only)
 - `GET /v1/root` → `{ epoch, graphRoot, manifest }`
 - `GET /v1/context` → list of canonical contexts
-- `GET /v1/score/:observer/:target?contextId=0x...`
-  - Returns `{ score, epoch, path:{hinge,lOY,lYT,lOT}, proof:{...} }`
-  - Chooses **best hinge** by maximizing numerator; stable tie‑breaks.
+- `GET /v1/score/:decider/:target?contextId=0x...`
+  - Returns `{ score, epoch, path:{endorser,lOY,lYT,lOT}, proof:{...} }`
+  - Chooses **best endorser** by maximizing numerator; stable tie‑breaks.
 
 ### 7.3 Gateway / Policy Engine
 - Verifies proof (off‑chain or on‑chain), applies thresholds:
@@ -219,7 +219,7 @@ This enables **independent recomputation** of the root from public logs.
 - Contract verifies TrustPathVerifier; caches admission for this epoch.
 
 ### 8.3 DeFi re‑balance (on‑chain)
-- `ProtocolCouncil` as observer; require `≥ +1` in `defi-exec`.
+- `ProtocolCouncil` as decider; require `≥ +1` in `defi-exec`.
 
 ### 8.4 Contexts (canonical)
 `keccak256("trustnet:ctx:global:v1")`, `…:payments:v1`, `…:code-exec:v1`, `…:writes:v1`, `…:defi-exec:v1`.
@@ -228,7 +228,7 @@ This enables **independent recomputation** of the root from public logs.
 
 ## 9) Security, Privacy, & Integrity
 
-- **Anchors required** — sensitive gates must restrict observers to allow‑listed anchors or councils (k‑of‑n).
+- **Anchors required** — sensitive gates must restrict deciders to allow‑listed anchors or councils (k‑of‑n).
 - **Direct veto respected** — `O→T = −2` neutralizes positive paths.
 - **Context binding** — all proof leaves share the same `contextId`.
 - **Default semantics** — missing `O→T` means **0**; non‑membership proof allowed.
@@ -264,7 +264,7 @@ This enables **independent recomputation** of the root from public logs.
 - **3‑hop** (or path‑diversity) option for discovery (keep 2‑hop for gates),
 - EAS/Sign mirrors of ratings; DID adapters,
 - Attestation adapters (TEE/SCITT/RATS),
-- ZK threshold proofs (hide hinge, reveal only “≥ threshold”).
+- ZK threshold proofs (hide endorser, reveal only “≥ threshold”).
 
 ---
 

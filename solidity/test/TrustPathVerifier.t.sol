@@ -24,17 +24,17 @@ contract TrustPathVerifierTest is Test, TestHelpers {
     bytes32 constant TEST_CONTEXT = bytes32(uint256(0x123));
 
     // Events for testing
-    event ProofVerified(address indexed observer, address indexed target, int8 score);
-    event PathExplanation(address hinge, int8 levelOY, int8 levelYT, int8 levelOT);
+    event ProofVerified(address indexed decider, address indexed target, int8 score);
+    event PathExplanation(address endorser, int8 levelOY, int8 levelYT, int8 levelOT);
 
     // ============ Setup ============
 
     function setUp() public {
         // Label addresses for better test output
-        vm.label(OBSERVER, "Observer");
-        vm.label(HINGE, "Hinge");
+        vm.label(OBSERVER, "Decider");
+        vm.label(HINGE, "Endorser");
         vm.label(TARGET, "Target");
-        vm.label(ALTERNATIVE_HINGE, "AlternativeHinge");
+        vm.label(ALTERNATIVE_HINGE, "AlternativeEndorser");
     }
 
     // ============ Core Scoring Tests (Test Vectors from Whitepaper) ============
@@ -66,13 +66,13 @@ contract TrustPathVerifierTest is Test, TestHelpers {
     // ============ Additional Scoring Edge Cases ============
 
     function testScoring_DirectOverrideOnly() public pure {
-        // Direct relationship without hinge trust
+        // Direct relationship without endorser trust
         int8 score = TrustPathVerifier.computeScore(0, 0, 2);
         assertEq(score, 2, "Direct override should dominate");
     }
 
-    function testScoring_NegativeHingePath() public pure {
-        // Negative trust through hinge
+    function testScoring_NegativeEndorserPath() public pure {
+        // Negative trust through endorser
         int8 score = TrustPathVerifier.computeScore(-2, -1, 0);
         assertEq(score, 1, "Negative * negative should be positive");
     }
@@ -334,8 +334,8 @@ contract TrustPathVerifierTest is Test, TestHelpers {
         proof.graphRoot = bytes32(uint256(0xDEADBEEF));
         proof.epoch = 1;
         proof.contextId = TEST_CONTEXT;
-        proof.observer = OBSERVER;
-        proof.hinge = HINGE;
+        proof.decider = OBSERVER;
+        proof.endorser = HINGE;
         proof.target = TARGET;
         proof.levelOY = 2;
         proof.levelYT = 1;
@@ -502,8 +502,8 @@ contract TrustPathVerifierTest is Test, TestHelpers {
         proof.graphRoot = leafOY;
         proof.epoch = 1;
         proof.contextId = TEST_CONTEXT;
-        proof.observer = OBSERVER;
-        proof.hinge = HINGE;
+        proof.decider = OBSERVER;
+        proof.endorser = HINGE;
         proof.target = TARGET;
         proof.levelOY = levelOY;
         proof.levelYT = levelYT;
@@ -596,14 +596,14 @@ contract TrustPathVerifierTest is Test, TestHelpers {
         int8 score = TrustPathVerifier.computeScore(levelOY, levelYT, levelOT);
 
         // The levels provide full "Why" explanation:
-        // "Observer trusts Hinge (+2), Hinge trusts Target (+1), Direct override (-1)"
+        // "Decider trusts Endorser (+2), Endorser trusts Target (+1), Direct override (-1)"
         // Score calculation: sumProducts = 2*1 = 2, scoreNumerator = 2*(-1) + 2 = 0, score = 0
         assertEq(score, 0, "Score should be 0");
 
         // In a real implementation, the VerificationResult would contain:
-        // - hinge: HINGE
-        // - levelOY: 2 (Observer->Hinge: +2)
-        // - levelYT: 1 (Hinge->Target: +1)
+        // - endorser: HINGE
+        // - levelOY: 2 (Decider->Endorser: +2)
+        // - levelYT: 1 (Endorser->Target: +1)
         // - levelOT: -1 (Direct override: -1)
     }
 }

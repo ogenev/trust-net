@@ -31,7 +31,7 @@ pub fn keccak256(data: &[u8]) -> B256 {
 ///
 /// # Arguments
 ///
-/// * `rater` - The address of the rater/observer
+/// * `rater` - The address of the rater/decider
 /// * `target` - The address of the target
 /// * `context` - The context identifier
 ///

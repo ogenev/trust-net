@@ -27,8 +27,8 @@ contract TrustGraph {
 
     /**
      * @notice Emitted when a trust edge is rated
-     * @param rater Address setting the trust rating (observer or curator)
-     * @param target Address receiving the rating (hinge or agent)
+     * @param rater Address setting the trust rating (decider or curator)
+     * @param target Address receiving the rating (endorser or agent)
      * @param level Trust level in range [-2, +2]
      *        -2: Strong distrust
      *        -1: Mild distrust
@@ -69,8 +69,8 @@ contract TrustGraph {
      * @dev Gas cost: ~21k for first rating in a tx, ~5k for subsequent
      *
      * Examples:
-     * - Observer rates curator: rateEdge(curatorAddress, +2, PAYMENTS_CTX)
-     * - Observer overrides agent: rateEdge(agentAddress, -2, PAYMENTS_CTX)
+     * - Decider rates curator: rateEdge(curatorAddress, +2, PAYMENTS_CTX)
+     * - Decider overrides agent: rateEdge(agentAddress, -2, PAYMENTS_CTX)
      * - Curator rates agent: rateEdge(agentAddress, +1, CODE_EXEC_CTX)
      */
     function rateEdge(
