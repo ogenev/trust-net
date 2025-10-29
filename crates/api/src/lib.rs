@@ -6,3 +6,6 @@
 //! - `/v1/context` - Get contextual reputation
 
 #![warn(missing_docs)]
+
+pub mod db;
+pub mod smm_cache;
