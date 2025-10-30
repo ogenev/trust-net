@@ -254,6 +254,44 @@ async fn get_rating(
 }
 
 // Score endpoint - returns computed score with 2-hop logic
+/// Full 2-hop path proof as specified in whitepaper Section 4.2
+#[derive(Serialize)]
+struct TrustPathProof {
+    /// Decider address (D)
+    #[serde(rename = "D")]
+    decider: String,
+    /// Endorser address (E)
+    #[serde(rename = "E")]
+    endorser: String,
+    /// Target address (T)
+    #[serde(rename = "T")]
+    target: String,
+
+    /// D→E edge level (Decider to Endorser)
+    #[serde(rename = "lDE")]
+    level_de: i8,
+    /// D→E Merkle proof siblings
+    #[serde(rename = "merkleDE")]
+    merkle_de: Vec<String>,
+
+    /// E→T edge level (Endorser to Target)
+    #[serde(rename = "lET")]
+    level_et: i8,
+    /// E→T Merkle proof siblings
+    #[serde(rename = "merkleET")]
+    merkle_et: Vec<String>,
+
+    /// D→T direct edge level (Decider to Target, 0 if absent)
+    #[serde(rename = "lDT")]
+    level_dt: i8,
+    /// D→T Merkle proof siblings
+    #[serde(rename = "merkleDT")]
+    merkle_dt: Vec<String>,
+    /// Whether D→T edge is absent (non-membership proof)
+    #[serde(rename = "dtIsAbsent")]
+    dt_is_absent: bool,
+}
+
 #[derive(Serialize)]
 struct ScoreResponse {
     /// Computed score as ERC-8004 value (0-100)
@@ -265,6 +303,19 @@ struct ScoreResponse {
     /// Endorser address for 2-hop paths
     #[serde(skip_serializing_if = "Option::is_none")]
     endorser: Option<String>,
+
+    /// Epoch number
+    epoch: i64,
+    /// Merkle root hash of the graph
+    #[serde(rename = "graphRoot")]
+    graph_root: String,
+    /// Context ID for this score
+    #[serde(rename = "contextId")]
+    context_id: String,
+
+    /// Full 2-hop path proof (only present for 2-hop method)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    proof: Option<TrustPathProof>,
 }
 
 async fn get_score(
@@ -284,16 +335,103 @@ async fn get_score(
         .parse::<B256>()
         .map_err(|_| bad_request(&format!("Invalid context_id: {}", query.context_id)))?;
 
-    // Check for direct edge first
-    if let Some(level) = db::get_direct_edge(&state.db, &decider, &target, &context_id)
+    // Get the published epoch root for proof generation
+    let latest_epoch = db::get_latest_epoch(&state.db)
         .await
         .map_err(internal_error)?
-    {
+        .ok_or_else(|| {
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(ErrorResponse {
+                    error: "No epochs published yet".to_string(),
+                }),
+            )
+        })?;
+
+    let published_root = B256::from_slice(&latest_epoch.graph_root);
+
+    // Ensure SMM cache is synchronized with published epoch
+    if state.smm_cache.is_stale(published_root).await {
+        let edges = db::get_all_edges_for_smm(&state.db)
+            .await
+            .map_err(internal_error)?;
+        let success = state
+            .smm_cache
+            .try_rebuild_for_epoch(edges, published_root)
+            .await
+            .map_err(internal_error)?;
+
+        if !success {
+            // Rebuild failed (edges ahead of published epoch)
+            // Check if we have an existing cache we can continue using
+            if state.smm_cache.get().await.is_none() {
+                // No cache at all - truly unavailable (cold start, no snapshot)
+                return Err((
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    Json(ErrorResponse {
+                        error: format!(
+                            "No snapshot available for published epoch {}. Edges are ahead of published epoch. Waiting for indexer to publish or for snapshot to be created.",
+                            latest_epoch.epoch
+                        ),
+                    }),
+                ));
+            }
+            // else: we have a cache (possibly for older epoch), continue using it
+            // The is_membership guards will catch any attempts to use unpublished edges
+        }
+    }
+
+    let smm = state
+        .smm_cache
+        .get()
+        .await
+        .ok_or_else(|| internal_error("SMM not available"))?;
+
+    // Verify cached SMM root matches published epoch root
+    // This ensures we never return proofs from a stale epoch
+    let cached_root = smm.root();
+    if cached_root != published_root {
+        // Cache is from a different epoch - cannot serve with correct root
+        return Err((
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(ErrorResponse {
+                error: format!(
+                    "Cache root mismatch. Published epoch {} has root 0x{}, but cached root is 0x{}. Waiting for cache rebuild.",
+                    latest_epoch.epoch,
+                    hex::encode(published_root),
+                    hex::encode(cached_root)
+                ),
+            }),
+        ));
+    }
+
+    let epoch = latest_epoch.epoch;
+    let graph_root = format!("0x{}", hex::encode(published_root));
+    let context_id_hex = format!("0x{}", hex::encode(context_id));
+
+    // Check for direct edge in published epoch (not database)
+    // This ensures the score and published root are synchronized
+    let context = ContextId::new(context_id);
+    let key_dt = compute_edge_key(&decider, &target, &context);
+    let proof_dt = smm
+        .prove(key_dt)
+        .map_err(|e| internal_error(format!("Failed to generate D→T proof: {}", e)))?;
+
+    if proof_dt.is_membership {
+        // Direct edge exists in published epoch
+        let published_level_dt = (proof_dt.value as i8) - 2; // SMM value 0-4 → level -2 to +2
         return Ok(Json(ScoreResponse {
-            score: level_to_erc8004_score(level),
-            level: level.value(),
+            score: level_to_erc8004_score(
+                trustnet_core::Level::new(published_level_dt)
+                    .map_err(|_| internal_error("Invalid level in direct edge"))?,
+            ),
+            level: published_level_dt,
             method: "direct".to_string(),
             endorser: None,
+            epoch,
+            graph_root,
+            context_id: context_id_hex,
+            proof: None,
         }));
     }
 
@@ -302,38 +440,113 @@ async fn get_score(
         .await
         .map_err(internal_error)?;
 
-    // Find best 2-hop path using protocol scoring formula
-    if let Some((endorser, _level1, _level2, path_score)) = two_hop_paths
-        .into_iter()
-        .map(|path| {
-            // Protocol formula: (levelOY * levelYT) / 2 with truncation toward zero
-            // Since no direct edge exists (levelOT=0), score = (level1 * level2) / 2
-            //
-            // Special case: when both levels are negative, multiplication flips the sign
-            // (e.g., -2 * -2 / 2 = 2, which incorrectly suggests trust).
-            // In trust semantics, if we distrust the endorser, we can't trust their
-            // judgment, so we use the strongest distrust instead.
-            let path_score = if path.level1 < 0 && path.level2 < 0 {
-                // Both negative: use min (strongest distrust)
-                path.level1.min(path.level2)
-            } else {
-                // At least one positive: use multiplication formula
-                (path.level1 * path.level2) / 2
+    // Evaluate all 2-hop paths to find the best published path
+    // Note: SQL ordering by MIN(level1, level2) DESC no longer matches actual scores
+    // because the whitepaper formula treats double-negatives as positive (multiplication)
+    // Example: (-2, -2) has min=-2 but score=+2, better than (+2, -1) with min=-1 and score=-1
+    let context = ContextId::new(context_id);
+    let mut best_path: Option<(i8, TrustPathProof, Address)> = None;
+
+    for path in two_hop_paths {
+        let endorser_addr = Address::from_slice(&path.endorser);
+
+        // Generate proofs for this candidate path
+        let key_de = compute_edge_key(&decider, &endorser_addr, &context);
+        let proof_de = smm
+            .prove(key_de)
+            .map_err(|e| internal_error(format!("Failed to generate D→E proof: {}", e)))?;
+
+        // Skip this path if D→E not in published epoch (try next candidate)
+        if !proof_de.is_membership {
+            continue;
+        }
+
+        let key_et = compute_edge_key(&endorser_addr, &target, &context);
+        let proof_et = smm
+            .prove(key_et)
+            .map_err(|e| internal_error(format!("Failed to generate E→T proof: {}", e)))?;
+
+        // Skip this path if E→T not in published epoch (try next candidate)
+        if !proof_et.is_membership {
+            continue;
+        }
+
+        // Both edges exist in published epoch - this path is valid!
+        // Generate D→T proof (may be non-membership)
+        let key_dt = compute_edge_key(&decider, &target, &context);
+        let proof_dt = smm
+            .prove(key_dt)
+            .map_err(|e| internal_error(format!("Failed to generate D→T proof: {}", e)))?;
+
+        // Extract levels from published epoch (proof values), not database
+        // This ensures the score and proof are synchronized with the published root
+        let published_level_de = (proof_de.value as i8) - 2; // SMM value 0-4 → level -2 to +2
+        let published_level_et = (proof_et.value as i8) - 2;
+        let published_level_dt = if proof_dt.is_membership {
+            (proof_dt.value as i8) - 2
+        } else {
+            0 // Non-membership defaults to 0
+        };
+
+        // Recompute score using published levels (not database levels)
+        // This matches the protocol formula in the whitepaper (§5):
+        // sumProducts = lDE * lET
+        // scoreNumerator = 2*lDT + sumProducts
+        // score = clamp(scoreNumerator / 2, -2, +2)
+        let sum_products = published_level_de as i32 * published_level_et as i32;
+        let score_numerator = 2 * (published_level_dt as i32) + sum_products;
+        let published_path_score = (score_numerator / 2).clamp(-2, 2) as i8;
+
+        // Check if this is the best path so far
+        let is_better = match &best_path {
+            None => true,
+            Some((best_score, _, _)) => published_path_score > *best_score,
+        };
+
+        if is_better {
+            let trust_path_proof = TrustPathProof {
+                decider: format!("0x{}", hex::encode(decider)),
+                endorser: format!("0x{}", hex::encode(endorser_addr)),
+                target: format!("0x{}", hex::encode(target)),
+                level_de: published_level_de,
+                merkle_de: proof_de
+                    .siblings
+                    .iter()
+                    .map(|s| format!("0x{}", hex::encode(s)))
+                    .collect(),
+                level_et: published_level_et,
+                merkle_et: proof_et
+                    .siblings
+                    .iter()
+                    .map(|s| format!("0x{}", hex::encode(s)))
+                    .collect(),
+                level_dt: published_level_dt,
+                merkle_dt: proof_dt
+                    .siblings
+                    .iter()
+                    .map(|s| format!("0x{}", hex::encode(s)))
+                    .collect(),
+                dt_is_absent: !proof_dt.is_membership,
             };
-            // Clamp to valid Level range [-2, +2]
-            let path_score = path_score.clamp(-2, 2);
-            (path.endorser, path.level1, path.level2, path_score)
-        })
-        .max_by_key(|(_, _, _, score)| *score)
-    {
+
+            best_path = Some((published_path_score, trust_path_proof, endorser_addr));
+        }
+    }
+
+    // Return best path if found
+    if let Some((best_score, best_proof, best_endorser)) = best_path {
         return Ok(Json(ScoreResponse {
             score: level_to_erc8004_score(
-                trustnet_core::Level::new(path_score as i8)
+                trustnet_core::Level::new(best_score)
                     .map_err(|_| internal_error("Invalid level in 2-hop path"))?,
             ),
-            level: path_score as i8,
+            level: best_score,
             method: "2-hop".to_string(),
-            endorser: Some(format!("0x{}", hex::encode(endorser))),
+            endorser: Some(format!("0x{}", hex::encode(best_endorser))),
+            epoch,
+            graph_root,
+            context_id: context_id_hex,
+            proof: Some(best_proof),
         }));
     }
 
@@ -343,6 +556,10 @@ async fn get_score(
         level: 0,
         method: "none".to_string(),
         endorser: None,
+        epoch,
+        graph_root,
+        context_id: context_id_hex,
+        proof: None,
     }))
 }
 
@@ -559,26 +776,48 @@ async fn get_proof(
             .map_err(internal_error)?;
 
         if !success {
-            // The edges table is newer than the published epoch
-            // This happens during the window between edge ingestion and epoch publication
-            return Err((
-                StatusCode::SERVICE_UNAVAILABLE,
-                Json(ErrorResponse {
-                    error: format!(
-                        "Epoch data not yet published. Latest published epoch: {}. New edges are being processed. Please retry in a moment.",
-                        latest_epoch.epoch
-                    ),
-                }),
-            ));
+            // Rebuild failed (edges ahead of published epoch)
+            // Check if we have an existing cache we can continue using
+            if state.smm_cache.get().await.is_none() {
+                // No cache at all - truly unavailable (cold start, no snapshot)
+                return Err((
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    Json(ErrorResponse {
+                        error: format!(
+                            "No snapshot available for published epoch {}. Edges are ahead of published epoch. Waiting for indexer to publish or for snapshot to be created.",
+                            latest_epoch.epoch
+                        ),
+                    }),
+                ));
+            }
+            // else: we have a cache (possibly for older epoch), continue using it
         }
     }
 
-    // Get SMM from cache - guaranteed to match published epoch after checks above
+    // Get SMM from cache
     let smm = state
         .smm_cache
         .get()
         .await
         .ok_or_else(|| internal_error("SMM not available"))?;
+
+    // Verify cached SMM root matches published epoch root
+    // This ensures we never return proofs from a stale epoch
+    let cached_root = smm.root();
+    if cached_root != published_root {
+        // Cache is from a different epoch - cannot serve with correct root
+        return Err((
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(ErrorResponse {
+                error: format!(
+                    "Cache root mismatch. Published epoch {} has root 0x{}, but cached root is 0x{}. Waiting for cache rebuild.",
+                    latest_epoch.epoch,
+                    hex::encode(published_root),
+                    hex::encode(cached_root)
+                ),
+            }),
+        ));
+    }
 
     // Compute edge key
     let context = ContextId::new(context_id);
@@ -746,17 +985,20 @@ mod tests {
 
     #[tokio::test]
     async fn test_2hop_scoring_both_negative() {
-        // (-2, -2) -> min(-2, -2) = -2 (not +2!)
+        // Per whitepaper §5: sumProducts = lDE * lET (pure multiplication)
+        // Two negatives multiply to positive (protocol-defined behavior)
+
+        // (-2, -2) -> (-2)*(-2)/2 = 4/2 = +2
         let score = compute_2hop_score(-2, -2);
-        assert_eq!(score, -2);
+        assert_eq!(score, 2);
 
-        // (-1, -1) -> min(-1, -1) = -1 (not 0!)
+        // (-1, -1) -> (-1)*(-1)/2 = 1/2 = 0 (integer division)
         let score = compute_2hop_score(-1, -1);
-        assert_eq!(score, -1);
+        assert_eq!(score, 0);
 
-        // (-2, -1) -> min(-2, -1) = -2 (not +1!)
+        // (-2, -1) -> (-2)*(-1)/2 = 2/2 = +1
         let score = compute_2hop_score(-2, -1);
-        assert_eq!(score, -2);
+        assert_eq!(score, 1);
     }
 
     #[test]
@@ -769,12 +1011,9 @@ mod tests {
     }
 
     // Helper function to compute 2-hop score (extracted logic from get_score)
+    // Implements the whitepaper formula (§5): score = clamp((lDE * lET) / 2, -2, +2)
     fn compute_2hop_score(level1: i32, level2: i32) -> i32 {
-        let path_score = if level1 < 0 && level2 < 0 {
-            level1.min(level2)
-        } else {
-            (level1 * level2) / 2
-        };
+        let path_score = (level1 * level2) / 2;
         path_score.clamp(-2, 2)
     }
 

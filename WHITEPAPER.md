@@ -19,7 +19,7 @@ TrustNet builds on **ERC‑8004**:
 The core of TrustNet is tiny and auditable:
 - **Ratings**: signed edges among addresses (deciders, endorsers, targets) scoped by **context** (capability namespace).
 - **Commitment**: a single **Sparse Merkle Map** (SMM) root (`graphRoot`) over the *latest* ratings.
-- **Proof**: a **2‑hop** membership proof (`O→Y`, `Y→T`, plus direct `O→T`) with a fixed **integer** scoring rule.
+- **Proof**: a **2‑hop** membership proof (`D→E`, `E→T`, plus direct `D→T`) with a fixed **integer** scoring rule.
 - **Why‑by‑default**: every decision returns the two edges used, so humans can see *who* vouched and *why* it passed.
 
 No tokens. No global social score. No ZK required for MVP (future‑ready).
@@ -51,13 +51,13 @@ No tokens, staking mechanics, ZK private proofs, or universal ranking. We score 
 
 ## 2) Entities & Identifiers
 
-- **Decider `O`** — an anchor that sets policy (e.g., FinOps, SecOps, ProtocolCouncil).
-- **Endorser `Y`** — a curator/auditor/team‑lead bridging `O` to `T`.
+- **Decider `D`** — an anchor that sets policy (e.g., FinOps, SecOps, ProtocolCouncil).
+- **Endorser `E`** — a curator/auditor/team‑lead bridging `D` to `T`.
 - **Target `T`** — typically the **agent** being gated.
 - **Agent identity** — `agentId` (ERC‑721) plus optional `agentWallet` from 8004 **Identity** metadata.
-- **Context `contextId`** — `bytes32` capability namespace:  
+- **Context `contextId`** — `bytes32` capability namespace:
   `global`, `payments`, `code-exec`, `writes`, `defi-exec` (see §8.4).
-- **Address form** — EVM `address` for `O`, `Y`, `T` (20 bytes). When using `agentId`, bind it to `agentWallet` if needed for on‑chain gating.
+- **Address form** — EVM `address` for `D`, `E`, `T` (20 bytes). When using `agentId`, bind it to `agentWallet` if needed for on‑chain gating.
 
 ---
 
@@ -73,7 +73,7 @@ event EdgeRated(
 );
 ```
 - **Semantics**: the **latest** event per `(rater, target, contextId)` prevails (ordered by `(block, txIndex, logIndex)`).
-- **Usage**: for **curator edges** (`O→Y`) and **direct overrides** (`O→T`).
+- **Usage**: for **curator edges** (`D→E`) and **direct overrides** (`D→T`).
 
 ### 3.2 ERC‑8004 feedback → TrustNet edge (ingestion mapping)
 `NewFeedback(agentId, client, score0_100, tag1, tag2, fileUri, fileHash, …)`
@@ -103,15 +103,15 @@ Deciders can summarize behavior into ratings using signed receipts (success/erro
 - **Value**: `V = uint8(level + 2)` maps `−2..+2` → `0..4` (1 byte)
 - **Leaf**:  `H_leaf  = keccak256( 0x00 ∥ K ∥ V )`
 - **Inner**: `H_node  = keccak256( 0x01 ∥ left ∥ right )` *(positional)*
-- **Default**: unseen keys are **neutral** (`level=0 → V=2`). Proofs may demonstrate **non‑membership** for `O→T`.
+- **Default**: unseen keys are **neutral** (`level=0 → V=2`). Proofs may demonstrate **non‑membership** for `D→T`.
 
 An off‑chain **Indexer** keeps the latest edges, builds the SMM, and publishes `{graphRoot, epoch}` to **RootRegistry**.
 
 ### 4.2 Two‑hop proof
-A score from **Decider `O`** to **Target `T`** via **Endorser `Y`** in a **context**:
+A score from **Decider `D`** to **Target `T`** via **Endorser `E`** in a **context**:
 
-- Membership for `O→Y`, `Y→T`
-- Membership **or** non‑membership for `O→T` (direct override)
+- Membership for `D→E`, `E→T`
+- Membership **or** non‑membership for `D→T` (direct override)
 - All three **share the same `contextId`**
 
 **TrustPathProof (conceptual)**
@@ -119,10 +119,10 @@ A score from **Decider `O`** to **Target `T`** via **Endorser `Y`** in a **conte
 {
   "graphRoot": "0x..", "epoch": 123,
   "contextId": "0xCTX..",
-  "O": "0x..", "Y": "0x..", "T": "0x..",
-  "lOY": 2, "merkleOY": [...],
-  "lYT": 1, "merkleYT": [...],
-  "lOT": 0, "merkleOT": [...], "otIsAbsent": true
+  "D": "0x..", "E": "0x..", "T": "0x..",
+  "lDE": 2, "merkleDE": [...],
+  "lET": 1, "merkleET": [...],
+  "lDT": 0, "merkleDT": [...], "dtIsAbsent": true
 }
 ```
 
@@ -133,8 +133,8 @@ A score from **Decider `O`** to **Target `T`** via **Endorser `Y`** in a **conte
 Let `l ∈ {−2, −1, 0, +1, +2}`.
 
 ```
-sumProducts    = lOY * lYT
-scoreNumerator = 2*lOT + sumProducts
+sumProducts    = lDE * lET
+scoreNumerator = 2*lDT + sumProducts
 score          = clamp( scoreNumerator / 2 , −2, +2 )
 ```
 
@@ -142,7 +142,7 @@ score          = clamp( scoreNumerator / 2 , −2, +2 )
 - Clamp saturates to `[-2, +2]`.
 - Deterministic examples:
 
-| lOT | lOY | lYT | Numerator | Score |
+| lDT | lDE | lET | Numerator | Score |
 |:--:|:--:|:--:|:--:|:--:|
 |  0 | +1 | +1 |  1 |  0 |
 |  0 | +2 | +1 |  2 | +1 |
@@ -166,7 +166,7 @@ score          = clamp( scoreNumerator / 2 , −2, +2 )
 - Enforces **same context** across leaves.
 - Computes the **deterministic score**, or `require(score ≥ threshold)`.
 
-> *Pattern*: contracts verify once per epoch and cache `admitted[O][T][epoch] = true`.
+> *Pattern*: contracts verify once per epoch and cache `admitted[D][T][epoch] = true`.
 
 ---
 
@@ -195,7 +195,7 @@ This enables **independent recomputation** of the root from public logs.
 - `GET /v1/root` → `{ epoch, graphRoot, manifest }`
 - `GET /v1/context` → list of canonical contexts
 - `GET /v1/score/:decider/:target?contextId=0x...`
-  - Returns `{ score, epoch, path:{endorser,lOY,lYT,lOT}, proof:{...} }`
+  - Returns `{ score, epoch, path:{endorser,lDE,lET,lDT}, proof:{...} }`
   - Chooses **best endorser** by maximizing numerator; stable tie‑breaks.
 
 ### 7.3 Gateway / Policy Engine
@@ -229,9 +229,9 @@ This enables **independent recomputation** of the root from public logs.
 ## 9) Security, Privacy, & Integrity
 
 - **Anchors required** — sensitive gates must restrict deciders to allow‑listed anchors or councils (k‑of‑n).
-- **Direct veto respected** — `O→T = −2` neutralizes positive paths.
+- **Direct veto respected** — `D→T = −2` neutralizes positive paths.
 - **Context binding** — all proof leaves share the same `contextId`.
-- **Default semantics** — missing `O→T` means **0**; non‑membership proof allowed.
+- **Default semantics** — missing `D→T` means **0**; non‑membership proof allowed.
 - **Reorg safety** — indexer waits N confirmations; epochs strictly increase.
 - **Privacy** — scope by context; avoid PII; evidence lives as hashed URIs when needed.
 
@@ -272,10 +272,10 @@ This enables **independent recomputation** of the root from public logs.
 
 Assume `contextId = global`, missing edges = 0.
 
-1. `lOT=0, lOY=+2, lYT=+1` → `num=2` → `score=+1`
-2. `lOT=0, lOY=+2, lYT=+2` → `num=4` → `score=+2`
-3. `lOT=−2, lOY=+2, lYT=+2` → `num=0` → `score=0`
-4. `lOT=0, lOY=+1, lYT=+1` → `num=1` → `score=0`
+1. `lDT=0, lDE=+2, lET=+1` → `num=2` → `score=+1`
+2. `lDT=0, lDE=+2, lET=+2` → `num=4` → `score=+2`
+3. `lDT=−2, lDE=+2, lET=+2` → `num=0` → `score=0`
+4. `lDT=0, lDE=+1, lET=+1` → `num=1` → `score=0`
 
 ---
 

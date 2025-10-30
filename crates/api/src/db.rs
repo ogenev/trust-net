@@ -26,6 +26,9 @@ pub async fn get_latest_epoch(pool: &SqlitePool) -> anyhow::Result<Option<DbEpoc
 }
 
 /// Get a direct edge rating.
+/// Note: Currently unused in favor of SMM-based direct edge lookup for epoch consistency.
+/// Kept for potential future use or alternative query paths.
+#[allow(dead_code)]
 pub async fn get_direct_edge(
     pool: &SqlitePool,
     rater: &Address,
@@ -100,15 +103,20 @@ pub struct TwoHopPath {
     /// The endorser address (intermediate node)
     pub endorser: Vec<u8>,
     /// Trust level from decider to endorser
+    /// Note: Used by database ORDER BY clause, not read in Rust code
+    #[allow(dead_code)]
     pub level1: i32,
     /// Trust level from endorser to target
+    /// Note: Used by database ORDER BY clause, not read in Rust code
+    #[allow(dead_code)]
     pub level2: i32,
 }
 
 /// Get all 2-hop paths for score computation, ordered by path quality.
 ///
-/// Returns up to 100 paths ordered by MIN(level1, level2) DESC to ensure
-/// we always get the highest-quality paths first.
+/// Returns all paths ordered by MIN(level1, level2) DESC to ensure
+/// the highest-quality paths are tried first. No LIMIT is applied so that
+/// published paths are not masked by newer unpublished edges during catch-up.
 pub async fn get_two_hop_paths(
     pool: &SqlitePool,
     decider: &Address,
@@ -128,7 +136,6 @@ pub async fn get_two_hop_paths(
           AND e1.context_id = ?
           AND e2.context_id = ?
         ORDER BY MIN(e1.level, e2.level) DESC
-        LIMIT 100
         "#,
     )
     .bind(decider.as_slice())
