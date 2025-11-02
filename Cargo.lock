@@ -4425,15 +4425,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "trustnet-cli"
-version = "0.1.0"
-dependencies = [
- "trustnet-core",
- "trustnet-prover",
- "trustnet-smm",
-]
-
-[[package]]
 name = "trustnet-core"
 version = "0.1.0"
 dependencies = [
@@ -4464,22 +4455,6 @@ dependencies = [
  "toml",
  "tracing",
  "tracing-subscriber",
- "trustnet-core",
- "trustnet-smm",
-]
-
-[[package]]
-name = "trustnet-prover"
-version = "0.1.0"
-dependencies = [
- "trustnet-core",
- "trustnet-smm",
-]
-
-[[package]]
-name = "trustnet-sdk"
-version = "0.1.0"
-dependencies = [
  "trustnet-core",
  "trustnet-smm",
 ]

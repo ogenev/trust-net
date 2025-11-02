@@ -131,17 +131,12 @@ Key settings:
 
 ## Related Services
 
-This indexer works alongside other TrustNet services:
+This indexer works alongside the TrustNet API service:
 
 - **trustnet-api** - HTTP API server (reads from same DB)
   - `GET /v1/root` - Get current graph root and epoch
   - `GET /v1/score/:decider/:target?contextId=0x...` - Get trust score with proof
   - `GET /v1/context` - List canonical context IDs
-
-- **trustnet-cli** - Offline tools for testing
-  - `build-root` - Build Merkle root from files
-  - `prove` - Generate proofs offline
-  - `verify` - Verify proofs
 
 ## Development
 

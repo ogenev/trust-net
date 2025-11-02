@@ -6,77 +6,9 @@
 //! - Edge storage and management with latest-wins semantics
 //! - Sparse Merkle Map building
 //! - Root publishing to RootRegistry
-//!
-//! # Architecture (Modular)
-//!
-//! The TrustNet system is split into separate services:
-//!
-//! ```text
-//! ┌──────────────────────────────┐
-//! │  trustnet-indexer (this)    │
-//! │                              │
-//! │  ┌─────────────────┐         │
-//! │  │  Event Listener │ ← Ethereum RPC
-//! │  │   (tokio task)  │   EdgeRated + NewFeedback
-//! │  └────────┬────────┘         │
-//! │           │                  │
-//! │      ┌────▼──────┐           │
-//! │      │  Storage  │ ← SQLite  │
-//! │      │  (edges)  │   latest-wins
-//! │      └────┬──────┘           │
-//! │           │                  │
-//! │      ┌────▼──────────┐       │
-//! │      │ Root Publisher│       │
-//! │      │ (tokio task)  │       │
-//! │      │ Hourly + manual       │
-//! │      └───────┬───────┘       │
-//! │              │               │
-//! │              ▼               │
-//! │        RootRegistry          │
-//! │        (on-chain)            │
-//! └──────────────────────────────┘
-//!          │
-//!          │ Shared DB
-//!          │
-//! ┌────────▼──────────────────────┐
-//! │   trustnet-api (separate)    │
-//! │                               │
-//! │   ┌───────────────┐           │
-//! │   │  API Server   │           │
-//! │   │  (axum)       │           │
-//! │   └───────┬───────┘           │
-//! │           │                   │
-//! │   ┌───────▼────────┐          │
-//! │   │ Storage (read) │          │
-//! │   │ + Prover       │          │
-//! │   └────────────────┘          │
-//! │                               │
-//! │   Endpoints:                  │
-//! │   • GET /v1/root              │
-//! │   • GET /v1/score             │
-//! │   • GET /v1/context           │
-//! └───────────────────────────────┘
-//!
-//! ┌───────────────────────────────┐
-//! │  trustnet-cli (offline)      │
-//! │  • build-root                 │
-//! │  • prove                      │
-//! │  • verify                     │
-//! │  • seed                       │
-//! └───────────────────────────────┘
-//! ```
-//!
-//! # Separation of Concerns
-//!
-//! - **indexer**: Writes edges, builds and publishes roots (this crate)
-//! - **api**: Reads edges, generates proofs, serves HTTP API (trustnet-api)
-//! - **prover**: Library for proof generation (trustnet-prover)
-//! - **cli**: Offline tools for testing and seeding (trustnet-cli)
 
 #![warn(missing_docs)]
 #![warn(clippy::all)]
-
-// Module declarations (will be implemented in phases)
 
 pub mod storage;
 
