@@ -1,20 +1,20 @@
 //! Database types for the indexer storage layer.
 
-use alloy::primitives::{Address, B256};
+use alloy::primitives::B256;
 use serde::{Deserialize, Serialize};
-use trustnet_core::types::{ContextId, Level};
+use trustnet_core::types::{ContextId, Level, PrincipalId};
 
 /// An edge record as stored in the database.
 ///
-/// This represents a trust rating from one address to another
-/// within a specific context, with block coordinates for latest-wins ordering.
+/// This represents the **latest-wins** edge for a canonical key:
+/// `(rater_pid, target_pid, context_id)`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EdgeRecord {
-    /// The rater (decider/curator) address
-    pub rater: Address,
+    /// The rater (decider/curator) principal id (bytes32)
+    pub rater: PrincipalId,
 
-    /// The target (endorser/agent) address
-    pub target: Address,
+    /// The target (endorser/agent) principal id (bytes32)
+    pub target: PrincipalId,
 
     /// Context ID (capability namespace)
     pub context_id: ContextId,
@@ -22,23 +22,32 @@ pub struct EdgeRecord {
     /// Trust level (-2 to +2)
     pub level: Level,
 
-    /// Block number where this edge was emitted
-    pub block_number: u64,
+    /// Updated-at timestamp committed in the leaf value (unix seconds).
+    pub updated_at_u64: u64,
 
-    /// Transaction index within the block
-    pub tx_index: u64,
-
-    /// Log index within the transaction
-    pub log_index: u64,
-
-    /// When this edge was ingested (Unix timestamp)
-    pub ingested_at: i64,
+    /// Evidence hash committed in the leaf value (bytes32, zero if none).
+    pub evidence_hash: B256,
 
     /// Source of the edge: "trust_graph" or "erc8004"
     pub source: EdgeSource,
 
-    /// Transaction hash where this edge was emitted
+    /// Chain id (required for chain sources, nullable for server mode).
+    pub chain_id: Option<u64>,
+
+    /// Block number where this edge was emitted (chain sources).
+    pub block_number: Option<u64>,
+
+    /// Transaction index within the block (chain sources).
+    pub tx_index: Option<u64>,
+
+    /// Log index within the transaction (chain sources).
+    pub log_index: Option<u64>,
+
+    /// Transaction hash where this edge was emitted (chain sources).
     pub tx_hash: Option<B256>,
+
+    /// Server sequence ordering key (server mode).
+    pub server_seq: Option<u64>,
 }
 
 /// Source of an edge event.
@@ -50,6 +59,9 @@ pub enum EdgeSource {
 
     /// NewFeedback event from ERC-8004 Reputation contract
     Erc8004,
+
+    /// Private append-only log event (server mode)
+    PrivateLog,
 }
 
 impl EdgeSource {
@@ -58,6 +70,7 @@ impl EdgeSource {
         match self {
             EdgeSource::TrustGraph => "trust_graph",
             EdgeSource::Erc8004 => "erc8004",
+            EdgeSource::PrivateLog => "private_log",
         }
     }
 }
@@ -69,6 +82,7 @@ impl std::str::FromStr for EdgeSource {
         match s {
             "trust_graph" => Ok(EdgeSource::TrustGraph),
             "erc8004" => Ok(EdgeSource::Erc8004),
+            "private_log" => Ok(EdgeSource::PrivateLog),
             _ => Err(format!("Unknown edge source: {}", s)),
         }
     }
@@ -97,8 +111,21 @@ pub struct EpochRecord {
     /// Number of edges included in this epoch
     pub edge_count: u64,
 
-    /// Root manifest JSON (for reproducibility)
-    pub manifest: Option<String>,
+    /// Canonical Root Manifest JSON (RFC 8785 JCS), when available.
+    ///
+    /// v0.4 uses this for reproducible root recomputation.
+    pub manifest_json: Option<String>,
+
+    /// `keccak256(canonical_manifest_json_bytes)` when available.
+    pub manifest_hash: Option<B256>,
+
+    /// Root publisher signature (server-mode authenticity), when available.
+    ///
+    /// v0.4: signature over `epoch || graphRoot || manifestHash` (see spec §10.5 / §16.2).
+    pub publisher_sig: Option<Vec<u8>>,
+
+    /// Unix timestamp (seconds) when the root was built (not necessarily published), when available.
+    pub created_at_u64: Option<u64>,
 }
 
 /// Sync state record (singleton).
@@ -176,6 +203,7 @@ mod tests {
     fn test_edge_source_str_conversion() {
         assert_eq!(EdgeSource::TrustGraph.as_str(), "trust_graph");
         assert_eq!(EdgeSource::Erc8004.as_str(), "erc8004");
+        assert_eq!(EdgeSource::PrivateLog.as_str(), "private_log");
 
         assert_eq!(
             "trust_graph".parse::<EdgeSource>().unwrap(),
@@ -184,6 +212,10 @@ mod tests {
         assert_eq!(
             "erc8004".parse::<EdgeSource>().unwrap(),
             EdgeSource::Erc8004
+        );
+        assert_eq!(
+            "private_log".parse::<EdgeSource>().unwrap(),
+            EdgeSource::PrivateLog
         );
         assert!("invalid".parse::<EdgeSource>().is_err());
     }

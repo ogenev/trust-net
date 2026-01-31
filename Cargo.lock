@@ -2390,6 +2390,7 @@ dependencies = [
  "elliptic-curve",
  "once_cell",
  "sha2",
+ "signature",
 ]
 
 [[package]]
@@ -3391,6 +3392,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "28d3b2b1366ec20994f1fd18c3c594f05c5dd4bc44d8bb0c1c632c8d6829481f"
 
 [[package]]
+name = "ryu-js"
+version = "0.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6518fc26bced4d53678a22d6e423e9d8716377def84545fe328236e3af070e7f"
+
+[[package]]
 name = "same-file"
 version = "1.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3503,6 +3510,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde_bytes"
+version = "0.11.19"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a5d440709e79d88e51ac01c4b72fc6cb7314017bb7da9eeff678aa94c10e3ea8"
+dependencies = [
+ "serde",
+ "serde_core",
+]
+
+[[package]]
 name = "serde_core"
 version = "1.0.228"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3520,6 +3537,17 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.108",
+]
+
+[[package]]
+name = "serde_jcs"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cacecf649bc1a7c5f0e299cc813977c6a78116abda2b93b1ee01735b71ead9a8"
+dependencies = [
+ "ryu-js",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -4409,18 +4437,27 @@ dependencies = [
 name = "trustnet-api"
 version = "0.1.0"
 dependencies = [
+ "alloy-primitives",
  "anyhow",
  "axum",
+ "base64",
+ "chrono",
  "hex",
  "http-body-util",
  "hyper",
+ "k256",
  "serde",
+ "serde_bytes",
+ "serde_jcs",
  "serde_json",
+ "signature",
  "sqlx",
+ "tempfile",
  "tokio",
  "tower",
  "tower-http 0.5.2",
  "trustnet-core",
+ "trustnet-engine",
  "trustnet-smm",
 ]
 
@@ -4438,6 +4475,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "trustnet-engine"
+version = "0.1.0"
+dependencies = [
+ "thiserror 2.0.17",
+ "trustnet-core",
+]
+
+[[package]]
 name = "trustnet-indexer"
 version = "0.1.0"
 dependencies = [
@@ -4447,6 +4492,7 @@ dependencies = [
  "clap",
  "hex",
  "serde",
+ "serde_jcs",
  "serde_json",
  "sqlx",
  "tempfile",
@@ -4467,9 +4513,32 @@ dependencies = [
  "criterion",
  "proptest",
  "serde",
+ "serde_bytes",
  "serde_json",
  "thiserror 2.0.17",
  "trustnet-core",
+]
+
+[[package]]
+name = "trustnet-verifier"
+version = "0.1.0"
+dependencies = [
+ "alloy-primitives",
+ "anyhow",
+ "base64",
+ "chrono",
+ "clap",
+ "hex",
+ "k256",
+ "serde",
+ "serde_bytes",
+ "serde_jcs",
+ "serde_json",
+ "signature",
+ "thiserror 2.0.17",
+ "trustnet-core",
+ "trustnet-engine",
+ "trustnet-smm",
 ]
 
 [[package]]

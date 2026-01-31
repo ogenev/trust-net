@@ -121,7 +121,7 @@ impl Storage {
 
     /// Get database statistics.
     pub async fn stats(&self) -> Result<DatabaseStats> {
-        let edge_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM edges")
+        let edge_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM edges_latest")
             .fetch_one(&self.pool)
             .await?;
 

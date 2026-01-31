@@ -1,52 +1,43 @@
 # TrustNet
 
-> **Verifiable, explainable reputation for AI agents (ERC‑8004‑native).**  
-> Admit or deny agent actions using a tiny **2‑hop proof** and a deterministic, **decider‑relative** score.
+> **Verifiable, explainable trust-to-act for AI agents (TrustNet Spec v0.4).**  
+> Gate actions using a deterministic decision rule plus cryptographic proofs against a committed `graphRoot`.
 
-## ✨ What is TrustNet?
+## What this repo is upgrading to
 
-TrustNet is a reputation layer that turns **ERC‑8004** agent feedback + curator ratings into a **single Merkle root** and
-**portable proofs**. Gateways and contracts use these proofs to **allow/deny** agent actions (payments, code‑exec, writes, DeFi)
-and always show a short **“Why?”** (two edges + direct override).
+This repo is being upgraded to **TrustNet Unified Spec v0.4**:
+- Spec: `docs/TrustNet_Spec_v0.4.md`
+- Upgrade plan: `docs/Upgrade_Plan.md`
+- Progress tracker: `docs/Upgrade_Progress.md`
 
-- 🔗 **ERC‑8004‑native** (Identity + Reputation ingestion)  
-- 🔐 **Explainable** (decider‑relative, context‑scoped, direct veto respected)  
-- 🌱 **MVP‑small** (events‑only contracts, one root, tiny proofs)  
-- 🧪 **Open** (MIT/Apache‑2.0, reproducible builds)
+TrustNet’s core properties:
+- **Context-scoped trust** (payments ≠ code exec).
+- **Decider-relative trust** (no global score; policy chooses whose ratings count).
+- **Verifiable “Why”** (exact edges used to ALLOW/ASK/DENY, with Merkle proofs).
 
-## 🧩 API (MVP)
- - GET /v1/root → { epoch, graphRoot, manifest }
--	GET /v1/context → [{ name, idHex }]
--	GET /v1/score/:decider/:target?contextId=<hex>
--	Returns { score, epoch, path:{endorser,lOY,lYT,lOT}, proof:{graphRoot, merkleOY[], merkleYT[], merkleOT[], otIsAbsent} }
--	If endorser omitted, server selects best endorser deterministically.
+## Deployment modes (v0.4)
 
-## 🔐 Contracts (MVP)
--	**TrustGraph** — emit EdgeRated(rater, target, level, contextId); no storage.
--	**RootRegistry** — setGraphRoot(bytes32 root, uint64 epoch) (owner‑only; strictly increasing).
--	**TrustPathVerifier** — verifies three SMM paths against graphRoot, computes score, requireAtLeast(threshold).
+- **Local mode:** single machine; decisions computed locally (roots/proofs optional).
+- **Server mode:** roots are signed by a configured root publisher key; gateways verify offline.
+- **Chain mode:** roots are anchored on-chain (RootRegistry) and can also be signed; proofs verify against the anchored root.
 
-We ship Foundry tests + vectors to ensure Solidity and Rust verifiers produce identical results.
+## HTTP API (v0.4 target)
 
-## 🧠 How the Indexer Works
-1.	**Ingest**
-- ERC‑8004 Reputation NewFeedback → (client → agentWallet) edge with contextId=tag1, level=quantize(score), only if tag2=keccak256("trustnet:v1").
-- TrustGraph EdgeRated → (rater → target) edge with explicit level.
-2.	**Latest‑wins**
-- Per (rater, target, context), keep the latest event by (block, txIndex, logIndex).
-3.	**Build SMM**
-- Map (rater, target, context) → K, store V=uint8(level+2), create graphRoot, bump epoch, publish to RootRegistry.
-4.	**Proofs**
-- For (O,T,ctx), pick best endorser Y, assemble proofs for O→Y, Y→T, and O→T (membership or non‑membership).
+- `GET /v1/root` → `{ epoch, graphRoot, manifest( or manifestUri ), manifestHash, publisherSig }`
+- `GET /v1/contexts` → canonical contexts (and/or their `contextId` hashes)
+- `GET /v1/decision?decider=<principalId>&target=<principalId>&contextId=<bytes32>` → `DecisionBundleV1` (ALLOW|ASK|DENY + why + proofs)
+- `GET /v1/proof?key=<edgeKey>` → debug membership/non-membership proof
+- `POST /v1/ratings` → append signed `RatingEvent` (server mode)
 
-**Trust model (MVP)**: trust‑minimized, reproducible. We publish a Root Manifest (block window, contracts, quantizer), so anyone can recompute the root over public logs.
+## Contracts (chain mode, optional for MVP)
 
-## 🔒 Security & Integrity
-- **Anchored deciders** — gates use allow‑listed deciders or councils (k‑of‑n).
-- **Direct veto** — an O→T = −2 cancels positive paths.
-- **Context binding** — all proofs must share the same contextId.
-- **Reorgs** — indexer waits N confirmations; epochs strictly increase.
+- `TrustGraph`: emits `EdgeRated(rater, target, level, contextId)` (events-only).
+- `RootRegistry`: anchors `{epoch, graphRoot, manifestHash (and optional manifestUri)}`.
+- `TrustPathVerifier`: optional on-chain verifier (off-chain verification is sufficient for MVP).
 
-## 🙏 Acknowledgements
+## Indexing + root building (v0.4)
 
-**Thanks to the ERC‑8004 community and early test users who helped shape TrustNet’s MVP.**
+1) **Ingest** (chain and/or server private log) into `edges_raw`  
+2) **Reduce latest-wins** into `edges_latest` per `(rater, target, contextId)`  
+3) **Build root**: commit latest edges into a Sparse Merkle Map (`graphRoot`) plus Root Manifest + `manifestHash`  
+4) **Serve decisions**: choose endorser deterministically and return a verifiable decision bundle

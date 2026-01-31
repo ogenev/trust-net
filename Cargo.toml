@@ -4,6 +4,8 @@ members = [
     "crates/smm",
     "crates/indexer",
     "crates/api",
+    "crates/engine",
+    "crates/verifier",
 ]
 resolver = "2"
 

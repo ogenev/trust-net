@@ -3,6 +3,7 @@
 use alloy_primitives::{Address, B256};
 use serde::{Deserialize, Serialize};
 use std::fmt;
+use std::str::FromStr;
 
 use crate::constants::{MAX_LEVEL, MIN_LEVEL};
 use crate::error::CoreError;
@@ -10,6 +11,130 @@ use crate::error::CoreError;
 // Re-export Alloy types for convenience
 pub use alloy_primitives::Address as EthAddress;
 pub use alloy_primitives::B256 as Bytes32;
+
+/// PrincipalId (unified identity representation).
+///
+/// A 32-byte identifier used in TrustNet hashing, indexing, and proofs.
+///
+/// v0.4 encoding rules (see spec §6.1):
+/// - EVM address: left-pad 20 bytes to 32 bytes (12 zero bytes + 20 address bytes)
+/// - Local identity (agentRef): already 32 bytes (typically sha256(agentPublicKey))
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct PrincipalId(B256);
+
+impl PrincipalId {
+    /// Create a PrincipalId from raw bytes.
+    pub const fn new(bytes: B256) -> Self {
+        Self(bytes)
+    }
+
+    /// Create a PrincipalId from an EVM address via left-padding to 32 bytes.
+    pub fn from_evm_address(address: Address) -> Self {
+        let mut bytes = [0u8; 32];
+        bytes[12..].copy_from_slice(address.as_slice());
+        Self(B256::from(bytes))
+    }
+
+    /// Attempt to interpret this PrincipalId as an EVM address (left-pad form).
+    pub fn to_evm_address_opt(&self) -> Option<Address> {
+        let bytes: &[u8; 32] = self.0.as_ref();
+        if bytes[..12].iter().any(|b| *b != 0) {
+            return None;
+        }
+        Some(Address::from_slice(&bytes[12..]))
+    }
+
+    /// Get the inner bytes.
+    pub const fn inner(&self) -> &B256 {
+        &self.0
+    }
+
+    /// Get bytes.
+    pub fn as_bytes(&self) -> &[u8; 32] {
+        self.0.as_ref()
+    }
+}
+
+impl From<B256> for PrincipalId {
+    fn from(value: B256) -> Self {
+        Self(value)
+    }
+}
+
+impl From<[u8; 32]> for PrincipalId {
+    fn from(value: [u8; 32]) -> Self {
+        Self(B256::from(value))
+    }
+}
+
+impl fmt::Display for PrincipalId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl Serialize for PrincipalId {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        // Always serialize as 32-byte hex string (0x + 64 hex chars), matching B256.
+        self.0.serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for PrincipalId {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+
+        // Support agentRef:... (hex-encoded 32 bytes) for local/server mode.
+        if let Some(rest) = s.strip_prefix("agentRef:") {
+            let b256 = B256::from_str(rest)
+                .map_err(|_| serde::de::Error::custom("Invalid agentRef: expected 32-byte hex"))?;
+            return Ok(Self(b256));
+        }
+
+        // If it's a 20-byte EVM address, left-pad to 32 bytes.
+        // Accept both 0x-prefixed and non-prefixed forms.
+        let addr_candidate = s.as_str();
+        if addr_candidate.len() == 42 || addr_candidate.len() == 40 {
+            if let Ok(addr) = Address::from_str(addr_candidate) {
+                return Ok(Self::from_evm_address(addr));
+            }
+        }
+
+        // Otherwise, parse as bytes32 hex.
+        let b256 = B256::from_str(&s)
+            .map_err(|_| serde::de::Error::custom("Invalid PrincipalId: expected 32-byte hex"))?;
+        Ok(Self(b256))
+    }
+}
+
+impl FromStr for PrincipalId {
+    type Err = CoreError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        // Match the same parsing rules as Deserialize.
+        if let Some(rest) = s.strip_prefix("agentRef:") {
+            let b256 =
+                B256::from_str(rest).map_err(|_| CoreError::Other("Invalid agentRef".into()))?;
+            return Ok(Self(b256));
+        }
+
+        // 20-byte EVM address (0x-prefixed or not).
+        if s.len() == 42 || s.len() == 40 {
+            if let Ok(addr) = Address::from_str(s) {
+                return Ok(Self::from_evm_address(addr));
+            }
+        }
+
+        let b256 = B256::from_str(s).map_err(|_| CoreError::Other("Invalid PrincipalId".into()))?;
+        Ok(Self(b256))
+    }
+}
 
 /// Trust level ranging from -2 to +2.
 ///
@@ -74,6 +199,67 @@ impl Level {
     /// Strong positive rating.
     pub const fn strong_positive() -> Self {
         Level(2)
+    }
+}
+
+/// Leaf value encoding (v0.4 MVP): `levelEnc || updatedAtEnc || evidenceHash`.
+///
+/// - `levelEnc`: `uint8` where `levelEnc = level + 2` (maps -2..+2 → 0..4)
+/// - `updatedAtEnc`: `uint64` big-endian unix seconds (or other monotonic-ish time)
+/// - `evidenceHash`: `bytes32` (zero if none)
+pub const LEAF_VALUE_V1_LEN: usize = 41;
+
+/// Decoded leaf value for Sparse Merkle Map leaves (TrustNet v0.4 MVP).
+///
+/// This is the structured representation of the 41-byte encoding committed under each leaf:
+/// `levelEnc || updatedAtEnc || evidenceHash`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LeafValueV1 {
+    /// Trust level committed in the leaf.
+    pub level: Level,
+    /// Unix timestamp (seconds) committed in the leaf (big-endian encoding).
+    pub updated_at_u64: u64,
+    /// Evidence hash committed in the leaf (`0x00..00` if none).
+    pub evidence_hash: B256,
+}
+
+impl LeafValueV1 {
+    /// Construct the neutral/empty leaf value used for absent edges.
+    pub const fn default_neutral() -> Self {
+        Self {
+            level: Level::neutral(),
+            updated_at_u64: 0,
+            evidence_hash: B256::ZERO,
+        }
+    }
+
+    /// Encode this leaf value into the canonical 41-byte wire/commitment format.
+    pub fn encode(&self) -> [u8; LEAF_VALUE_V1_LEN] {
+        let mut out = [0u8; LEAF_VALUE_V1_LEN];
+        out[0] = self.level.to_smm_value();
+        out[1..9].copy_from_slice(&self.updated_at_u64.to_be_bytes());
+        out[9..].copy_from_slice(self.evidence_hash.as_ref());
+        out
+    }
+
+    /// Decode a 41-byte leaf value from the canonical v0.4 encoding.
+    pub fn decode(bytes: &[u8]) -> Result<Self, CoreError> {
+        if bytes.len() != LEAF_VALUE_V1_LEN {
+            return Err(CoreError::InvalidLeafValueLength {
+                expected: LEAF_VALUE_V1_LEN,
+                got: bytes.len(),
+            });
+        }
+
+        let level = Level::from_smm_value(bytes[0])?;
+        let updated_at_u64 = u64::from_be_bytes(bytes[1..9].try_into().expect("slice length"));
+        let evidence_hash = B256::from_slice(&bytes[9..]);
+
+        Ok(Self {
+            level,
+            updated_at_u64,
+            evidence_hash,
+        })
     }
 }
 
@@ -146,6 +332,15 @@ impl fmt::Display for ContextId {
     }
 }
 
+impl FromStr for ContextId {
+    type Err = CoreError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let b256 = B256::from_str(s).map_err(|_| CoreError::Other("Invalid ContextId".into()))?;
+        Ok(ContextId(b256))
+    }
+}
+
 /// Agent identity key (hash of chainId || registry || agentId).
 /// Wrapper around B256 to provide domain-specific type safety.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -190,10 +385,10 @@ impl fmt::Display for AgentKey {
 /// An edge in the trust graph.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Edge {
-    /// The rater (decider) address.
-    pub rater: Address,
-    /// The target address or agent key.
-    pub target: Address,
+    /// The rater (decider) principal.
+    pub rater: PrincipalId,
+    /// The target principal.
+    pub target: PrincipalId,
     /// The context in which this rating applies.
     pub context: ContextId,
     /// The trust level.
@@ -202,7 +397,7 @@ pub struct Edge {
 
 impl Edge {
     /// Create a new edge.
-    pub fn new(rater: Address, target: Address, context: ContextId, level: Level) -> Self {
+    pub fn new(rater: PrincipalId, target: PrincipalId, context: ContextId, level: Level) -> Self {
         Edge {
             rater,
             target,
@@ -422,8 +617,12 @@ mod tests {
 
     #[test]
     fn test_edge_creation() {
-        let rater = Address::from(hex!("1111111111111111111111111111111111111111"));
-        let target = Address::from(hex!("2222222222222222222222222222222222222222"));
+        let rater = PrincipalId::from_evm_address(Address::from(hex!(
+            "1111111111111111111111111111111111111111"
+        )));
+        let target = PrincipalId::from_evm_address(Address::from(hex!(
+            "2222222222222222222222222222222222222222"
+        )));
         let context = ContextId::from(hex!(
             "430faa5635b6f437d8b5a2d66333fe4fbcf75602232a76b67e94fd4a3275169b"
         ));

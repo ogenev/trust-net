@@ -3,7 +3,7 @@
 //! Provides keccak256 hashing and edge key computation functions
 //! that match the Solidity implementation exactly.
 
-use crate::types::{AgentKey, Bytes32, ContextId};
+use crate::types::{AgentKey, Bytes32, ContextId, PrincipalId};
 use alloy_primitives::{keccak256 as alloy_keccak256, Address, B256};
 
 /// Compute keccak256 hash of input data.
@@ -24,15 +24,15 @@ pub fn keccak256(data: &[u8]) -> B256 {
 
 /// Compute the edge key for a given (rater, target, context) triple.
 ///
-/// The key is computed as: `keccak256(rater || target || contextId)`
-/// where rater and target are 20-byte addresses and contextId is 32 bytes.
+/// The key is computed as: `keccak256(raterPrincipalId || targetPrincipalId || contextId)`
+/// where rater and target are 32-byte `PrincipalId`s and contextId is 32 bytes.
 ///
 /// This must match the Solidity implementation exactly.
 ///
 /// # Arguments
 ///
-/// * `rater` - The address of the rater/decider
-/// * `target` - The address of the target
+/// * `rater` - The PrincipalId of the rater/decider
+/// * `target` - The PrincipalId of the target
 /// * `context` - The context identifier
 ///
 /// # Returns
@@ -46,17 +46,17 @@ pub fn keccak256(data: &[u8]) -> B256 {
 /// use trustnet_core::hashing::compute_edge_key;
 /// use alloy_primitives::Address;
 ///
-/// let rater = Address::from([0x11; 20]);
-/// let target = Address::from([0x22; 20]);
+/// let rater = trustnet_core::PrincipalId::from_evm_address(Address::from([0x11; 20]));
+/// let target = trustnet_core::PrincipalId::from_evm_address(Address::from([0x22; 20]));
 /// let context = ContextId::from(CTX_PAYMENTS);
 ///
 /// let key = compute_edge_key(&rater, &target, &context);
 /// ```
-pub fn compute_edge_key(rater: &Address, target: &Address, context: &ContextId) -> Bytes32 {
-    // Concatenate: rater (20 bytes) || target (20 bytes) || contextId (32 bytes)
-    let mut data = Vec::with_capacity(72);
-    data.extend_from_slice(rater.as_slice());
-    data.extend_from_slice(target.as_slice());
+pub fn compute_edge_key(rater: &PrincipalId, target: &PrincipalId, context: &ContextId) -> Bytes32 {
+    // Concatenate: raterPrincipalId (32 bytes) || targetPrincipalId (32 bytes) || contextId (32 bytes)
+    let mut data = Vec::with_capacity(96);
+    data.extend_from_slice(rater.as_bytes());
+    data.extend_from_slice(target.as_bytes());
     data.extend_from_slice(context.as_bytes());
 
     keccak256(&data)
@@ -119,22 +119,12 @@ pub fn compute_agent_key(chain_id: u64, registry: &Address, agent_id: &[u8; 32])
 
 /// Compute the leaf hash for an SMM entry.
 ///
-/// The leaf hash is: `keccak256(0x00 || key || value)`
-///
-/// # Arguments
-///
-/// * `key` - The 32-byte key
-/// * `value` - The value (level + 2, ranging from 0 to 4)
-///
-/// # Returns
-///
-/// The 32-byte leaf hash.
-pub fn compute_leaf_hash(key: &Bytes32, value: u8) -> B256 {
-    let mut data = Vec::with_capacity(33);
+/// The leaf hash is: `keccak256(0x00 || key || leafValueBytes)`.
+pub fn compute_leaf_hash(key: &Bytes32, leaf_value: &[u8]) -> B256 {
+    let mut data = Vec::with_capacity(1 + 32 + leaf_value.len());
     data.push(crate::constants::SMM_LEAF_PREFIX);
     data.extend_from_slice(key.as_ref());
-    data.push(value);
-
+    data.extend_from_slice(leaf_value);
     keccak256(&data)
 }
 
@@ -161,6 +151,24 @@ pub fn compute_internal_hash(left: &B256, right: &B256) -> B256 {
     keccak256(&data)
 }
 
+/// Compute the digest that a root publisher signs for server-mode root authenticity.
+///
+/// v0.4 spec: `publisherSig` is a signature over `epoch || graphRoot || manifestHash`.
+///
+/// This function computes:
+/// `keccak256( epoch_u64_be || graphRoot_bytes32 || manifestHash_bytes32 )`.
+///
+/// Notes:
+/// - `epoch` is encoded as **uint64 big-endian** (8 bytes).
+/// - The resulting 32-byte digest can be signed with secp256k1 (Ethereum-style ECDSA).
+pub fn compute_root_signature_hash(epoch: u64, graph_root: &B256, manifest_hash: &B256) -> B256 {
+    let mut preimage = [0u8; 8 + 32 + 32];
+    preimage[..8].copy_from_slice(&epoch.to_be_bytes());
+    preimage[8..40].copy_from_slice(graph_root.as_ref());
+    preimage[40..].copy_from_slice(manifest_hash.as_ref());
+    keccak256(&preimage)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -182,9 +190,9 @@ mod tests {
         ));
         assert_eq!(keccak256(input), expected);
 
-        // Verify agenttrust tag matches constant
-        let input = b"agenttrust:v1";
-        assert_eq!(keccak256(input), TAG_AGENTTRUST_V1);
+        // Verify trustnet tag matches constant
+        let input = b"trustnet:v1";
+        assert_eq!(keccak256(input), TAG_TRUSTNET_V1);
 
         // Verify a trustnet context hash
         let input = b"trustnet:ctx:global:v1";
@@ -193,8 +201,12 @@ mod tests {
 
     #[test]
     fn test_compute_edge_key() {
-        let rater = Address::from(hex!("1111111111111111111111111111111111111111"));
-        let target = Address::from(hex!("2222222222222222222222222222222222222222"));
+        let rater = PrincipalId::from_evm_address(Address::from(hex!(
+            "1111111111111111111111111111111111111111"
+        )));
+        let target = PrincipalId::from_evm_address(Address::from(hex!(
+            "2222222222222222222222222222222222222222"
+        )));
         let context = ContextId::from(CTX_PAYMENTS);
 
         let key = compute_edge_key(&rater, &target, &context);
@@ -204,7 +216,9 @@ mod tests {
         assert_eq!(key, key2);
 
         // Different inputs should produce different keys
-        let different_rater = Address::from(hex!("3333333333333333333333333333333333333333"));
+        let different_rater = PrincipalId::from_evm_address(Address::from(hex!(
+            "3333333333333333333333333333333333333333"
+        )));
         let different_key = compute_edge_key(&different_rater, &target, &context);
         assert_ne!(key, different_key);
     }
@@ -351,14 +365,14 @@ mod tests {
         let key = Bytes32::from(hex!(
             "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
         ));
-        let value = 2u8; // Represents level 0
+        let leaf_value = [2u8]; // legacy 1-byte leaf value
 
-        let hash = compute_leaf_hash(&key, value);
+        let hash = compute_leaf_hash(&key, &leaf_value);
 
         // Verify the hash includes the leaf prefix
         let mut expected_preimage = vec![SMM_LEAF_PREFIX];
         expected_preimage.extend_from_slice(key.as_ref());
-        expected_preimage.push(value);
+        expected_preimage.extend_from_slice(&leaf_value);
         let expected_hash = keccak256(&expected_preimage);
 
         assert_eq!(hash, expected_hash);
@@ -392,8 +406,12 @@ mod tests {
     fn test_edge_key_matches_solidity() {
         // This test should match the exact computation in Solidity
         // We'll use the same test vectors as in the Solidity tests
-        let rater = Address::from(hex!("0000000000000000000000000000000000000001"));
-        let target = Address::from(hex!("0000000000000000000000000000000000000002"));
+        let rater = PrincipalId::from_evm_address(Address::from(hex!(
+            "0000000000000000000000000000000000000001"
+        )));
+        let target = PrincipalId::from_evm_address(Address::from(hex!(
+            "0000000000000000000000000000000000000002"
+        )));
         let context = ContextId::from(CTX_GLOBAL);
 
         let key = compute_edge_key(&rater, &target, &context);
@@ -403,5 +421,25 @@ mod tests {
         // For now, we just verify it's deterministic
         let key2 = compute_edge_key(&rater, &target, &context);
         assert_eq!(key, key2);
+    }
+
+    #[test]
+    fn test_compute_root_signature_hash() {
+        let epoch = 123u64;
+        let graph_root = B256::from(hex!(
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        ));
+        let manifest_hash = B256::from(hex!(
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        ));
+
+        let digest = compute_root_signature_hash(epoch, &graph_root, &manifest_hash);
+
+        let mut expected_preimage = Vec::with_capacity(72);
+        expected_preimage.extend_from_slice(&epoch.to_be_bytes());
+        expected_preimage.extend_from_slice(graph_root.as_ref());
+        expected_preimage.extend_from_slice(manifest_hash.as_ref());
+
+        assert_eq!(digest, keccak256(&expected_preimage));
     }
 }

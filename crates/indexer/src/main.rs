@@ -149,14 +149,23 @@ async fn run_indexer(config_path: &str) -> Result<()> {
 
     // Create RPC provider
     use trustnet_indexer::listener::{RpcProvider, SyncEngine};
-    let provider = RpcProvider::new(&config.network.rpc_url, config.contracts.erc8004_reputation)
-        .await
-        .context("Failed to create RPC provider")?;
+    let provider = RpcProvider::new(
+        &config.network.rpc_url,
+        config.contracts.trust_graph,
+        config.contracts.erc8004_reputation,
+    )
+    .await
+    .context("Failed to create RPC provider")?;
 
     info!("RPC provider initialized");
 
     // Create sync engine (uses core quantizer with fixed buckets)
-    let sync_engine = SyncEngine::new(provider, storage.clone(), config.sync.clone());
+    let sync_engine = SyncEngine::new(
+        provider,
+        storage.clone(),
+        config.sync.clone(),
+        config.network.chain_id,
+    );
 
     // Spawn event listener task
     let sync_handle = tokio::spawn(async move { sync_engine.run().await });
@@ -182,6 +191,7 @@ async fn run_indexer(config_path: &str) -> Result<()> {
     // Create and spawn root publisher task
     use alloy::signers::local::PrivateKeySigner;
     use trustnet_indexer::publisher::EventDrivenPublisher;
+    use trustnet_indexer::root_manifest::ChainManifestConfigV1;
 
     // Parse private key
     let signer = config
@@ -197,6 +207,15 @@ async fn run_indexer(config_path: &str) -> Result<()> {
         &config.network.rpc_url,
         signer,
         config.contracts.root_registry,
+        ChainManifestConfigV1 {
+            chain_id: config.network.chain_id,
+            trust_graph: config.contracts.trust_graph,
+            erc8004_reputation: config.contracts.erc8004_reputation,
+            erc8004_identity: config.contracts.erc8004_identity,
+            root_registry: config.contracts.root_registry,
+            start_block: config.sync.start_block,
+            confirmations: config.sync.confirmations,
+        },
         config.publisher.clone(),
     )
     .await
@@ -368,7 +387,7 @@ async fn publish_root_manual(config_path: &str) -> Result<()> {
         // Need to build first
         info!("No cached SMM state, building now...");
         // Can't easily rebuild from here, so we create a temporary builder
-        let edges = storage.get_all_edges().await?;
+        let edges = storage.get_all_edges_latest().await?;
         info!("Found {} edges", edges.len());
 
         // Build SMM manually (even if empty - let the publisher decide if it should publish)
@@ -379,8 +398,14 @@ async fn publish_root_manual(config_path: &str) -> Result<()> {
                 &edge.target,
                 &edge.context_id,
             );
-            let smm_value = edge.level.to_smm_value();
-            builder.insert(key, smm_value)?;
+            let leaf_value = trustnet_core::LeafValueV1 {
+                level: edge.level,
+                updated_at_u64: edge.updated_at_u64,
+                evidence_hash: edge.evidence_hash,
+            }
+            .encode()
+            .to_vec();
+            builder.insert(key, leaf_value)?;
         }
         let smm = builder.build();
         let root = smm.root();
@@ -395,6 +420,8 @@ async fn publish_root_manual(config_path: &str) -> Result<()> {
             .parse::<PrivateKeySigner>()
             .context("Failed to parse publisher private key")?;
 
+        use trustnet_indexer::root_manifest::ChainManifestConfigV1;
+
         // Create publisher
         let publisher = EventDrivenPublisher::new(
             storage.clone(),
@@ -402,6 +429,15 @@ async fn publish_root_manual(config_path: &str) -> Result<()> {
             &config.network.rpc_url,
             signer,
             config.contracts.root_registry,
+            ChainManifestConfigV1 {
+                chain_id: config.network.chain_id,
+                trust_graph: config.contracts.trust_graph,
+                erc8004_reputation: config.contracts.erc8004_reputation,
+                erc8004_identity: config.contracts.erc8004_identity,
+                root_registry: config.contracts.root_registry,
+                start_block: config.sync.start_block,
+                confirmations: config.sync.confirmations,
+            },
             config.publisher.clone(),
         )
         .await
@@ -433,6 +469,8 @@ async fn publish_root_manual(config_path: &str) -> Result<()> {
             .parse::<PrivateKeySigner>()
             .context("Failed to parse publisher private key")?;
 
+        use trustnet_indexer::root_manifest::ChainManifestConfigV1;
+
         // Create publisher
         let publisher = EventDrivenPublisher::new(
             storage.clone(),
@@ -440,6 +478,15 @@ async fn publish_root_manual(config_path: &str) -> Result<()> {
             &config.network.rpc_url,
             signer,
             config.contracts.root_registry,
+            ChainManifestConfigV1 {
+                chain_id: config.network.chain_id,
+                trust_graph: config.contracts.trust_graph,
+                erc8004_reputation: config.contracts.erc8004_reputation,
+                erc8004_identity: config.contracts.erc8004_identity,
+                root_registry: config.contracts.root_registry,
+                start_block: config.sync.start_block,
+                confirmations: config.sync.confirmations,
+            },
             config.publisher.clone(),
         )
         .await

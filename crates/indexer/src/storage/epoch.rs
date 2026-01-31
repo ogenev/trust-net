@@ -12,14 +12,18 @@ impl Storage {
     pub async fn insert_epoch(&self, epoch: &EpochRecord) -> Result<()> {
         let root_bytes = epoch.graph_root.as_slice();
         let tx_hash_bytes = epoch.tx_hash.as_ref().map(|h| h.as_slice());
+        let manifest_hash_bytes = epoch.manifest_hash.as_ref().map(|h| h.as_slice());
+        let publisher_sig_bytes = epoch.publisher_sig.as_deref();
+        let created_at_i64 = epoch.created_at_u64.map(|v| v as i64);
 
         sqlx::query(
             r#"
             INSERT INTO epochs (
                 epoch, graph_root, published_at_block,
-                published_at, tx_hash, edge_count, manifest
+                published_at, tx_hash, edge_count, manifest,
+                manifest_json, manifest_hash, publisher_sig, created_at_u64
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(epoch.epoch as i64)
@@ -28,7 +32,12 @@ impl Storage {
         .bind(epoch.published_at)
         .bind(tx_hash_bytes)
         .bind(epoch.edge_count as i64)
-        .bind(&epoch.manifest)
+        // Keep legacy `manifest` column populated for backwards compatibility.
+        .bind(&epoch.manifest_json)
+        .bind(&epoch.manifest_json)
+        .bind(manifest_hash_bytes)
+        .bind(publisher_sig_bytes)
+        .bind(created_at_i64)
         .execute(&self.pool)
         .await
         .context("Failed to insert epoch")?;
@@ -77,7 +86,8 @@ impl Storage {
         let row = sqlx::query(
             r#"
             SELECT epoch, graph_root, published_at_block,
-                   published_at, tx_hash, edge_count, manifest
+                   published_at, tx_hash, edge_count, manifest,
+                   manifest_json, manifest_hash, publisher_sig, created_at_u64
             FROM epochs
             ORDER BY epoch DESC
             LIMIT 1
@@ -97,7 +107,8 @@ impl Storage {
         let row = sqlx::query(
             r#"
             SELECT epoch, graph_root, published_at_block,
-                   published_at, tx_hash, edge_count, manifest
+                   published_at, tx_hash, edge_count, manifest,
+                   manifest_json, manifest_hash, publisher_sig, created_at_u64
             FROM epochs
             WHERE epoch = ?
             "#,
@@ -119,7 +130,8 @@ impl Storage {
         let row = sqlx::query(
             r#"
             SELECT epoch, graph_root, published_at_block,
-                   published_at, tx_hash, edge_count, manifest
+                   published_at, tx_hash, edge_count, manifest,
+                   manifest_json, manifest_hash, publisher_sig, created_at_u64
             FROM epochs
             WHERE graph_root = ?
             "#,
@@ -139,7 +151,8 @@ impl Storage {
         let rows = sqlx::query(
             r#"
             SELECT epoch, graph_root, published_at_block,
-                   published_at, tx_hash, edge_count, manifest
+                   published_at, tx_hash, edge_count, manifest,
+                   manifest_json, manifest_hash, publisher_sig, created_at_u64
             FROM epochs
             ORDER BY epoch DESC
             "#,
@@ -159,7 +172,8 @@ impl Storage {
         let rows = sqlx::query(
             r#"
             SELECT epoch, graph_root, published_at_block,
-                   published_at, tx_hash, edge_count, manifest
+                   published_at, tx_hash, edge_count, manifest,
+                   manifest_json, manifest_hash, publisher_sig, created_at_u64
             FROM epochs
             WHERE epoch >= ? AND epoch <= ?
             ORDER BY epoch ASC
@@ -186,9 +200,20 @@ impl Storage {
     fn row_to_epoch_record(row: sqlx::sqlite::SqliteRow) -> Result<EpochRecord> {
         let root_bytes: Vec<u8> = row.get("graph_root");
         let tx_hash_bytes: Option<Vec<u8>> = row.get("tx_hash");
+        let manifest_hash_bytes: Option<Vec<u8>> = row.try_get("manifest_hash").ok();
+        let publisher_sig_bytes: Option<Vec<u8>> = row.try_get("publisher_sig").ok();
+        let created_at_u64: Option<i64> = row.try_get("created_at_u64").ok();
 
         let graph_root = B256::from_slice(&root_bytes);
         let tx_hash = tx_hash_bytes.map(|bytes| B256::from_slice(&bytes));
+
+        let manifest_json: Option<String> = row.try_get("manifest_json").ok();
+        let legacy_manifest: Option<String> = row.try_get("manifest").ok();
+        let manifest_json = manifest_json.or(legacy_manifest);
+
+        let manifest_hash = manifest_hash_bytes
+            .as_deref()
+            .and_then(|bytes| (bytes.len() == 32).then(|| B256::from_slice(bytes)));
 
         Ok(EpochRecord {
             epoch: row.get::<i64, _>("epoch") as u64,
@@ -197,7 +222,10 @@ impl Storage {
             published_at: row.get("published_at"),
             tx_hash,
             edge_count: row.get::<i64, _>("edge_count") as u64,
-            manifest: row.get("manifest"),
+            manifest_json,
+            manifest_hash,
+            publisher_sig: publisher_sig_bytes,
+            created_at_u64: created_at_u64.map(|v| v as u64),
         })
     }
 }
@@ -232,7 +260,12 @@ mod tests {
                 "abcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcd"
             ))),
             edge_count: 42,
-            manifest: Some(r#"{"version": "v1"}"#.to_string()),
+            manifest_json: Some(r#"{"version":"v1"}"#.to_string()),
+            manifest_hash: Some(B256::from(hex!(
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            ))),
+            publisher_sig: Some(vec![0x11u8; 65]),
+            created_at_u64: Some(1234567890),
         };
 
         storage.insert_epoch(&epoch).await.unwrap();
@@ -242,6 +275,10 @@ mod tests {
         assert_eq!(retrieved.epoch, 1);
         assert_eq!(retrieved.graph_root, epoch.graph_root);
         assert_eq!(retrieved.edge_count, 42);
+        assert_eq!(retrieved.manifest_json, epoch.manifest_json);
+        assert_eq!(retrieved.manifest_hash, epoch.manifest_hash);
+        assert_eq!(retrieved.publisher_sig, epoch.publisher_sig);
+        assert_eq!(retrieved.created_at_u64, epoch.created_at_u64);
 
         // Get latest
         let latest = storage.get_latest_epoch().await.unwrap().unwrap();
@@ -271,7 +308,10 @@ mod tests {
                 published_at: 1234567890 + (i as i64 * 3600),
                 tx_hash: None,
                 edge_count: i * 10,
-                manifest: None,
+                manifest_json: None,
+                manifest_hash: None,
+                publisher_sig: None,
+                created_at_u64: None,
             };
             storage.insert_epoch(&epoch).await.unwrap();
         }

@@ -20,5 +20,7 @@ pub mod smm_service;
 
 pub mod publisher;
 
+pub mod root_manifest;
+
 // Re-export common types
 pub use trustnet_core::{types::*, *};

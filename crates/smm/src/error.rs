@@ -6,9 +6,13 @@ use thiserror::Error;
 /// SMM error type.
 #[derive(Error, Debug)]
 pub enum SmmError {
-    /// Invalid value - must be 0-4 (representing levels -2 to +2).
-    #[error("Invalid value {0}, must be 0-4 (representing trust levels -2 to +2)")]
-    InvalidValue(u8),
+    /// Leaf value was empty (ambiguous with non-membership).
+    #[error("Invalid leaf value: empty")]
+    EmptyLeafValue,
+
+    /// Leaf value failed validation.
+    #[error("Invalid leaf value: {0}")]
+    InvalidLeafValue(String),
 
     /// Invalid proof structure or verification failed.
     #[error("Invalid proof: {0}")]

@@ -1,23 +1,59 @@
-//! Database query functions for the API.
+//! Database query helpers for the TrustNet API (Spec v0.4).
 
-use sqlx::{Row, SqlitePool};
-use trustnet_core::{types::Level, Address, B256};
+use sqlx::SqlitePool;
 
-/// Latest epoch record from the database.
+/// Latest epoch record (v0.4 fields are optional for legacy epochs).
 #[derive(Debug, sqlx::FromRow)]
 pub struct DbEpoch {
-    /// Epoch number
+    /// Epoch number.
     pub epoch: i64,
-    /// Merkle root hash
+    /// Graph root bytes (32 bytes).
     pub graph_root: Vec<u8>,
-    /// Number of edges in this epoch
+    /// Edge count included in the epoch.
     pub edge_count: i64,
+    /// Canonical manifest JSON (RFC 8785 JCS), if present.
+    pub manifest_json: Option<String>,
+    /// `keccak256(canonical_manifest_json_bytes)`, if present.
+    pub manifest_hash: Option<Vec<u8>>,
+    /// Publisher signature bytes (typically 65 bytes), if present.
+    pub publisher_sig: Option<Vec<u8>>,
+    /// Unix timestamp (seconds) for when the root was built, if present.
+    pub created_at_u64: Option<i64>,
+}
+
+/// Row from `edges_latest` used to reconstruct an epoch tree.
+#[derive(Debug, sqlx::FromRow)]
+pub struct DbEdgeLatest {
+    /// Rater principal id bytes (32 bytes).
+    pub rater_pid: Vec<u8>,
+    /// Target principal id bytes (32 bytes).
+    pub target_pid: Vec<u8>,
+    /// Context id bytes (32 bytes).
+    pub context_id: Vec<u8>,
+    /// Trust level as i8 stored in an i32 column.
+    pub level_i8: i32,
+    /// Unix timestamp (seconds) for when this edge was observed/updated.
+    pub updated_at_u64: i64,
+    /// Evidence hash bytes (32 bytes).
+    pub evidence_hash: Vec<u8>,
 }
 
 /// Get the latest published epoch.
 pub async fn get_latest_epoch(pool: &SqlitePool) -> anyhow::Result<Option<DbEpoch>> {
     let epoch = sqlx::query_as::<_, DbEpoch>(
-        "SELECT epoch, graph_root, edge_count FROM epochs ORDER BY epoch DESC LIMIT 1",
+        r#"
+        SELECT
+            epoch,
+            graph_root,
+            edge_count,
+            manifest_json,
+            manifest_hash,
+            publisher_sig,
+            created_at_u64
+        FROM epochs
+        ORDER BY epoch DESC
+        LIMIT 1
+        "#,
     )
     .fetch_optional(pool)
     .await?;
@@ -25,199 +61,57 @@ pub async fn get_latest_epoch(pool: &SqlitePool) -> anyhow::Result<Option<DbEpoc
     Ok(epoch)
 }
 
-/// Get a direct edge rating.
-/// Note: Currently unused in favor of SMM-based direct edge lookup for epoch consistency.
-/// Kept for potential future use or alternative query paths.
-#[allow(dead_code)]
-pub async fn get_direct_edge(
-    pool: &SqlitePool,
-    rater: &Address,
-    target: &Address,
-    context_id: &B256,
-) -> anyhow::Result<Option<Level>> {
-    let result: Option<(i32,)> =
-        sqlx::query_as("SELECT level FROM edges WHERE rater = ? AND target = ? AND context_id = ?")
-            .bind(rater.as_slice())
-            .bind(target.as_slice())
-            .bind(context_id.as_slice())
-            .fetch_optional(pool)
-            .await?;
-
-    Ok(result.and_then(|(level,)| Level::new(level as i8).ok()))
-}
-
-/// Edge details including metadata.
-#[derive(Debug, sqlx::FromRow)]
-pub struct EdgeDetails {
-    /// Trust level (-2 to +2)
-    pub level: i32,
-    /// Block number where edge was emitted
-    pub block_number: i64,
-    /// Transaction hash
-    pub tx_hash: Option<Vec<u8>>,
-    /// Unix timestamp when ingested
-    pub ingested_at: i64,
-    /// Source: "trust_graph" or "erc8004"
-    pub source: String,
-}
-
-/// Edge details for collection endpoint (includes target).
-#[derive(Debug, sqlx::FromRow)]
-pub struct EdgeDetailsWithTarget {
-    /// Target address
-    pub target: Vec<u8>,
-    /// Trust level (-2 to +2)
-    pub level: i32,
-    /// Block number where edge was emitted
-    pub block_number: i64,
-    /// Transaction hash
-    pub tx_hash: Option<Vec<u8>>,
-    /// Unix timestamp when ingested
-    pub ingested_at: i64,
-    /// Source: "trust_graph" or "erc8004"
-    pub source: String,
-}
-
-/// Get edge with full details for rating endpoint.
-pub async fn get_edge_details(
-    pool: &SqlitePool,
-    rater: &Address,
-    target: &Address,
-    context_id: &B256,
-) -> anyhow::Result<Option<EdgeDetails>> {
-    let edge = sqlx::query_as::<_, EdgeDetails>(
-        "SELECT level, block_number, tx_hash, ingested_at, source FROM edges WHERE rater = ? AND target = ? AND context_id = ?"
-    )
-    .bind(rater.as_slice())
-    .bind(target.as_slice())
-    .bind(context_id.as_slice())
-    .fetch_optional(pool)
-    .await?;
-
-    Ok(edge)
-}
-
-/// Two-hop path result.
-#[derive(Debug, sqlx::FromRow)]
-pub struct TwoHopPath {
-    /// The endorser address (intermediate node)
-    pub endorser: Vec<u8>,
-    /// Trust level from decider to endorser
-    /// Note: Used by database ORDER BY clause, not read in Rust code
-    #[allow(dead_code)]
-    pub level1: i32,
-    /// Trust level from endorser to target
-    /// Note: Used by database ORDER BY clause, not read in Rust code
-    #[allow(dead_code)]
-    pub level2: i32,
-}
-
-/// Get all 2-hop paths for score computation, ordered by path quality.
-///
-/// Returns all paths ordered by MIN(level1, level2) DESC to ensure
-/// the highest-quality paths are tried first. No LIMIT is applied so that
-/// published paths are not masked by newer unpublished edges during catch-up.
-pub async fn get_two_hop_paths(
-    pool: &SqlitePool,
-    decider: &Address,
-    target: &Address,
-    context_id: &B256,
-) -> anyhow::Result<Vec<TwoHopPath>> {
-    let paths = sqlx::query_as::<_, TwoHopPath>(
+/// Fetch all latest-wins edges (v0.4 schema) for SMM reconstruction.
+pub async fn get_all_edges_latest(pool: &SqlitePool) -> anyhow::Result<Vec<DbEdgeLatest>> {
+    let rows = sqlx::query_as::<_, DbEdgeLatest>(
         r#"
         SELECT
-            e1.target as endorser,
-            e1.level as level1,
-            e2.level as level2
-        FROM edges e1
-        JOIN edges e2 ON e1.target = e2.rater
-        WHERE e1.rater = ?
-          AND e2.target = ?
-          AND e1.context_id = ?
-          AND e2.context_id = ?
-        ORDER BY MIN(e1.level, e2.level) DESC
+            rater_pid,
+            target_pid,
+            context_id,
+            level_i8,
+            updated_at_u64,
+            evidence_hash
+        FROM edges_latest
         "#,
     )
-    .bind(decider.as_slice())
-    .bind(target.as_slice())
-    .bind(context_id.as_slice())
-    .bind(context_id.as_slice())
     .fetch_all(pool)
     .await?;
 
-    Ok(paths)
+    Ok(rows)
 }
 
-/// Get all edges for SMM building.
+/// Candidate endorsers `E` for a 2-hop decision `(D -> E -> T)` in a given context.
 ///
-/// Returns all edges as tuples (rater, target, context_id, level) for
-/// constructing the Sparse Merkle Map on startup.
-pub async fn get_all_edges_for_smm(
+/// This query is a **hint**; the API must still verify membership proofs against the published
+/// epoch root before using any candidate.
+pub async fn get_candidate_endorsers(
     pool: &SqlitePool,
-) -> anyhow::Result<Vec<crate::smm_cache::RawEdge>> {
-    let rows = sqlx::query("SELECT rater, target, context_id, level FROM edges")
-        .fetch_all(pool)
-        .await?;
+    decider_pid: &[u8],
+    target_pid: &[u8],
+    context_id: &[u8],
+) -> anyhow::Result<Vec<Vec<u8>>> {
+    let rows = sqlx::query_scalar::<_, Vec<u8>>(
+        r#"
+        SELECT e1.target_pid AS endorser_pid
+        FROM edges_latest e1
+        JOIN edges_latest e2
+          ON e1.target_pid = e2.rater_pid
+        WHERE e1.rater_pid = ?
+          AND e2.target_pid = ?
+          AND e1.context_id = ?
+          AND e2.context_id = ?
+          AND e1.level_i8 > 0
+          AND e2.level_i8 > 0
+        ORDER BY endorser_pid ASC
+        "#,
+    )
+    .bind(decider_pid)
+    .bind(target_pid)
+    .bind(context_id)
+    .bind(context_id)
+    .fetch_all(pool)
+    .await?;
 
-    let edges = rows
-        .into_iter()
-        .map(|row| {
-            crate::smm_cache::RawEdge(
-                row.get("rater"),
-                row.get("target"),
-                row.get("context_id"),
-                row.get("level"),
-            )
-        })
-        .collect();
-
-    Ok(edges)
-}
-
-/// Get ratings by rater with pagination support.
-pub async fn get_ratings_by_rater(
-    pool: &SqlitePool,
-    rater: &Address,
-    context_id: &B256,
-    target: Option<&Address>,
-    limit: i64,
-    cursor: Option<&[u8]>,
-) -> anyhow::Result<Vec<EdgeDetailsWithTarget>> {
-    // Build query dynamically based on filters
-    let mut query = String::from(
-        "SELECT target, level, block_number, tx_hash, ingested_at, source FROM edges WHERE rater = ? AND context_id = ?"
-    );
-
-    // Add target filter if provided
-    if target.is_some() {
-        query.push_str(" AND target = ?");
-    }
-
-    // Add cursor for pagination (target > cursor)
-    if cursor.is_some() {
-        query.push_str(" AND target > ?");
-    }
-
-    query.push_str(" ORDER BY target ASC LIMIT ?");
-
-    // Start building the query
-    let mut q = sqlx::query_as::<_, EdgeDetailsWithTarget>(&query)
-        .bind(rater.as_slice())
-        .bind(context_id.as_slice());
-
-    // Add target binding if provided
-    if let Some(t) = target {
-        q = q.bind(t.as_slice());
-    }
-
-    // Add cursor binding if provided
-    if let Some(c) = cursor {
-        q = q.bind(c);
-    }
-
-    // Add limit
-    q = q.bind(limit);
-
-    let edges = q.fetch_all(pool).await?;
-    Ok(edges)
+    Ok(rows)
 }

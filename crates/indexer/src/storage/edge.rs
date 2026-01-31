@@ -1,190 +1,231 @@
-//! Edge storage operations with latest-wins semantics.
+//! Edge storage operations (TrustNet spec v0.4).
 
 use super::{EdgeRecord, EdgeSource, Storage};
-use alloy::primitives::{Address, B256};
+use alloy::primitives::B256;
 use anyhow::{Context, Result};
 use sqlx::Row;
-use trustnet_core::types::{ContextId, Level};
+use trustnet_core::types::{ContextId, Level, PrincipalId};
 
 impl Storage {
-    /// Insert or update an edge with latest-wins semantics.
+    /// Append an event to the immutable `edges_raw` table.
     ///
-    /// If an edge already exists for the same (rater, target, context_id),
-    /// it will only be updated if the new edge has later block coordinates.
-    ///
-    /// Returns `true` if the edge was inserted/updated, `false` if it was older.
-    pub async fn upsert_edge(&self, edge: &EdgeRecord) -> Result<bool> {
-        let rater_bytes = edge.rater.as_slice();
-        let target_bytes = edge.target.as_slice();
-        let context_bytes = edge.context_id.as_bytes().as_slice();
+    /// Returns the inserted row id.
+    pub async fn append_edge_raw(&self, edge: &EdgeRecord) -> Result<i64> {
+        let rater_pid = edge.rater.as_bytes().as_slice();
+        let target_pid = edge.target.as_bytes().as_slice();
+        let context_id = edge.context_id.as_bytes().as_slice();
+        let evidence_hash = edge.evidence_hash.as_slice();
+
         let tx_hash_bytes = edge.tx_hash.as_ref().map(|h| h.as_slice());
 
-        // Use INSERT ... ON CONFLICT with WHERE clause for latest-wins.
-        // The WHERE clause ensures UPDATE only happens when the new edge is newer.
-        // If the edge is stale, no UPDATE occurs and rows_affected = 0.
+        let chain_id = edge.chain_id.map(|v| v as i64);
+        let block_number = edge.block_number.map(|v| v as i64);
+        let tx_index = edge.tx_index.map(|v| v as i64);
+        let log_index = edge.log_index.map(|v| v as i64);
+        let server_seq = edge.server_seq.map(|v| v as i64);
+
         let result = sqlx::query(
             r#"
-            INSERT INTO edges (
-                rater, target, context_id, level,
-                block_number, tx_index, log_index,
-                ingested_at, source, tx_hash
+            INSERT INTO edges_raw (
+                rater_pid, target_pid, context_id,
+                level_i8, updated_at_u64, evidence_hash,
+                source,
+                chain_id, block_number, tx_index, log_index, tx_hash,
+                server_seq
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(rater, target, context_id)
-            DO UPDATE SET
-                level = excluded.level,
-                block_number = excluded.block_number,
-                tx_index = excluded.tx_index,
-                log_index = excluded.log_index,
-                ingested_at = excluded.ingested_at,
-                source = excluded.source,
-                tx_hash = excluded.tx_hash
-            WHERE (excluded.block_number > edges.block_number)
-               OR (excluded.block_number = edges.block_number AND excluded.tx_index > edges.tx_index)
-               OR (excluded.block_number = edges.block_number AND excluded.tx_index = edges.tx_index AND excluded.log_index > edges.log_index)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
-        .bind(rater_bytes)
-        .bind(target_bytes)
-        .bind(context_bytes)
+        .bind(rater_pid)
+        .bind(target_pid)
+        .bind(context_id)
         .bind(edge.level.value() as i32)
-        .bind(edge.block_number as i64)
-        .bind(edge.tx_index as i64)
-        .bind(edge.log_index as i64)
-        .bind(edge.ingested_at)
+        .bind(edge.updated_at_u64 as i64)
+        .bind(evidence_hash)
         .bind(edge.source.as_str())
+        .bind(chain_id)
+        .bind(block_number)
+        .bind(tx_index)
+        .bind(log_index)
         .bind(tx_hash_bytes)
+        .bind(server_seq)
         .execute(&self.pool)
         .await
-        .context("Failed to upsert edge")?;
+        .context("Failed to append edges_raw")?;
 
-        // rows_affected > 0 means either:
-        // - New edge inserted (no conflict), or
-        // - Edge updated (conflict + WHERE clause passed)
-        // rows_affected = 0 means:
-        // - Edge is stale (conflict + WHERE clause failed)
-        Ok(result.rows_affected() > 0)
+        Ok(result.last_insert_rowid())
     }
 
-    /// Get an edge by rater, target, and context.
-    pub async fn get_edge(
-        &self,
-        rater: &Address,
-        target: &Address,
-        context_id: &ContextId,
-    ) -> Result<Option<EdgeRecord>> {
-        let rater_bytes = rater.as_slice();
-        let target_bytes = target.as_slice();
-        let context_bytes = context_id.as_bytes().as_slice();
-
-        let row = sqlx::query(
-            r#"
-            SELECT rater, target, context_id, level,
-                   block_number, tx_index, log_index,
-                   ingested_at, source, tx_hash
-            FROM edges
-            WHERE rater = ? AND target = ? AND context_id = ?
-            "#,
-        )
-        .bind(rater_bytes)
-        .bind(target_bytes)
-        .bind(context_bytes)
-        .fetch_optional(&self.pool)
-        .await?;
-
-        match row {
-            Some(row) => Ok(Some(Self::row_to_edge_record(row)?)),
-            None => Ok(None),
+    /// Upsert an edge into `edges_latest` with deterministic latest-wins semantics.
+    ///
+    /// Returns `true` if inserted/updated, `false` if stale.
+    pub async fn upsert_edge_latest(&self, edge: &EdgeRecord) -> Result<bool> {
+        match edge.source {
+            EdgeSource::PrivateLog => self.upsert_edge_latest_server(edge).await,
+            EdgeSource::TrustGraph | EdgeSource::Erc8004 => {
+                self.upsert_edge_latest_chain(edge).await
+            }
         }
     }
 
-    /// Get all edges from a specific rater in a context.
-    pub async fn get_edges_from_rater(
+    async fn upsert_edge_latest_chain(&self, edge: &EdgeRecord) -> Result<bool> {
+        let Some(block_number) = edge.block_number else {
+            anyhow::bail!("chain edge missing block_number");
+        };
+        let Some(tx_index) = edge.tx_index else {
+            anyhow::bail!("chain edge missing tx_index");
+        };
+        let Some(log_index) = edge.log_index else {
+            anyhow::bail!("chain edge missing log_index");
+        };
+
+        let rater_pid = edge.rater.as_bytes().as_slice();
+        let target_pid = edge.target.as_bytes().as_slice();
+        let context_id = edge.context_id.as_bytes().as_slice();
+        let evidence_hash = edge.evidence_hash.as_slice();
+        let tx_hash_bytes = edge.tx_hash.as_ref().map(|h| h.as_slice());
+
+        let result = sqlx::query(
+            r#"
+            INSERT INTO edges_latest (
+                rater_pid, target_pid, context_id,
+                level_i8, updated_at_u64, evidence_hash, source,
+                chain_id, block_number, tx_index, log_index, tx_hash,
+                server_seq
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
+            ON CONFLICT(rater_pid, target_pid, context_id)
+            DO UPDATE SET
+                level_i8 = excluded.level_i8,
+                updated_at_u64 = excluded.updated_at_u64,
+                evidence_hash = excluded.evidence_hash,
+                source = excluded.source,
+                chain_id = excluded.chain_id,
+                block_number = excluded.block_number,
+                tx_index = excluded.tx_index,
+                log_index = excluded.log_index,
+                tx_hash = excluded.tx_hash,
+                server_seq = NULL
+            WHERE edges_latest.block_number IS NULL
+               OR (excluded.block_number > edges_latest.block_number)
+               OR (excluded.block_number = edges_latest.block_number AND excluded.tx_index > edges_latest.tx_index)
+               OR (excluded.block_number = edges_latest.block_number AND excluded.tx_index = edges_latest.tx_index AND excluded.log_index > edges_latest.log_index)
+            "#,
+        )
+        .bind(rater_pid)
+        .bind(target_pid)
+        .bind(context_id)
+        .bind(edge.level.value() as i32)
+        .bind(edge.updated_at_u64 as i64)
+        .bind(evidence_hash)
+        .bind(edge.source.as_str())
+        .bind(edge.chain_id.map(|v| v as i64))
+        .bind(block_number as i64)
+        .bind(tx_index as i64)
+        .bind(log_index as i64)
+        .bind(tx_hash_bytes)
+        .execute(&self.pool)
+        .await
+        .context("Failed to upsert edges_latest (chain)")?;
+
+        Ok(result.rows_affected() > 0)
+    }
+
+    async fn upsert_edge_latest_server(&self, edge: &EdgeRecord) -> Result<bool> {
+        let Some(server_seq) = edge.server_seq else {
+            anyhow::bail!("server edge missing server_seq");
+        };
+
+        let rater_pid = edge.rater.as_bytes().as_slice();
+        let target_pid = edge.target.as_bytes().as_slice();
+        let context_id = edge.context_id.as_bytes().as_slice();
+        let evidence_hash = edge.evidence_hash.as_slice();
+
+        let result = sqlx::query(
+            r#"
+            INSERT INTO edges_latest (
+                rater_pid, target_pid, context_id,
+                level_i8, updated_at_u64, evidence_hash, source,
+                chain_id, block_number, tx_index, log_index, tx_hash,
+                server_seq
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, ?)
+            ON CONFLICT(rater_pid, target_pid, context_id)
+            DO UPDATE SET
+                level_i8 = excluded.level_i8,
+                updated_at_u64 = excluded.updated_at_u64,
+                evidence_hash = excluded.evidence_hash,
+                source = excluded.source,
+                chain_id = NULL,
+                block_number = NULL,
+                tx_index = NULL,
+                log_index = NULL,
+                tx_hash = NULL,
+                server_seq = excluded.server_seq
+            WHERE edges_latest.server_seq IS NULL
+               OR (excluded.server_seq > edges_latest.server_seq)
+            "#,
+        )
+        .bind(rater_pid)
+        .bind(target_pid)
+        .bind(context_id)
+        .bind(edge.level.value() as i32)
+        .bind(edge.updated_at_u64 as i64)
+        .bind(evidence_hash)
+        .bind(edge.source.as_str())
+        .bind(server_seq as i64)
+        .execute(&self.pool)
+        .await
+        .context("Failed to upsert edges_latest (server)")?;
+
+        Ok(result.rows_affected() > 0)
+    }
+
+    /// Fetch a latest-wins edge by key.
+    pub async fn get_edge_latest(
         &self,
-        rater: &Address,
+        rater: &PrincipalId,
+        target: &PrincipalId,
         context_id: &ContextId,
-    ) -> Result<Vec<EdgeRecord>> {
-        let rater_bytes = rater.as_slice();
-        let context_bytes = context_id.as_bytes().as_slice();
-
-        let rows = sqlx::query(
+    ) -> Result<Option<EdgeRecord>> {
+        let row = sqlx::query(
             r#"
-            SELECT rater, target, context_id, level,
-                   block_number, tx_index, log_index,
-                   ingested_at, source, tx_hash
-            FROM edges
-            WHERE rater = ? AND context_id = ?
-            ORDER BY block_number DESC, tx_index DESC, log_index DESC
+            SELECT
+                rater_pid, target_pid, context_id,
+                level_i8, updated_at_u64, evidence_hash,
+                source,
+                chain_id, block_number, tx_index, log_index, tx_hash,
+                server_seq
+            FROM edges_latest
+            WHERE rater_pid = ? AND target_pid = ? AND context_id = ?
             "#,
         )
-        .bind(rater_bytes)
-        .bind(context_bytes)
-        .fetch_all(&self.pool)
+        .bind(rater.as_bytes().as_slice())
+        .bind(target.as_bytes().as_slice())
+        .bind(context_id.as_bytes().as_slice())
+        .fetch_optional(&self.pool)
         .await?;
 
-        rows.into_iter().map(Self::row_to_edge_record).collect()
+        row.map(Self::row_to_edge_record).transpose()
     }
 
-    /// Get all edges to a specific target in a context.
-    pub async fn get_edges_to_target(
-        &self,
-        target: &Address,
-        context_id: &ContextId,
-    ) -> Result<Vec<EdgeRecord>> {
-        let target_bytes = target.as_slice();
-        let context_bytes = context_id.as_bytes().as_slice();
-
+    /// Get all latest-wins edges (for building an SMM).
+    pub async fn get_all_edges_latest(&self) -> Result<Vec<EdgeRecord>> {
         let rows = sqlx::query(
             r#"
-            SELECT rater, target, context_id, level,
-                   block_number, tx_index, log_index,
-                   ingested_at, source, tx_hash
-            FROM edges
-            WHERE target = ? AND context_id = ?
-            ORDER BY block_number DESC, tx_index DESC, log_index DESC
-            "#,
-        )
-        .bind(target_bytes)
-        .bind(context_bytes)
-        .fetch_all(&self.pool)
-        .await?;
-
-        rows.into_iter().map(Self::row_to_edge_record).collect()
-    }
-
-    /// Get all edges in a specific context.
-    pub async fn get_all_edges_in_context(
-        &self,
-        context_id: &ContextId,
-    ) -> Result<Vec<EdgeRecord>> {
-        let context_bytes = context_id.as_bytes().as_slice();
-
-        let rows = sqlx::query(
-            r#"
-            SELECT rater, target, context_id, level,
-                   block_number, tx_index, log_index,
-                   ingested_at, source, tx_hash
-            FROM edges
-            WHERE context_id = ?
-            ORDER BY block_number DESC, tx_index DESC, log_index DESC
-            "#,
-        )
-        .bind(context_bytes)
-        .fetch_all(&self.pool)
-        .await?;
-
-        rows.into_iter().map(Self::row_to_edge_record).collect()
-    }
-
-    /// Get all edges (for building the complete SMM).
-    pub async fn get_all_edges(&self) -> Result<Vec<EdgeRecord>> {
-        let rows = sqlx::query(
-            r#"
-            SELECT rater, target, context_id, level,
-                   block_number, tx_index, log_index,
-                   ingested_at, source, tx_hash
-            FROM edges
-            ORDER BY block_number DESC, tx_index DESC, log_index DESC
+            SELECT
+                rater_pid, target_pid, context_id,
+                level_i8, updated_at_u64, evidence_hash,
+                source,
+                chain_id, block_number, tx_index, log_index, tx_hash,
+                server_seq
+            FROM edges_latest
+            ORDER BY
+                -- Prefer chain ordering when present, otherwise server ordering.
+                COALESCE(block_number, 0) DESC,
+                COALESCE(tx_index, 0) DESC,
+                COALESCE(log_index, 0) DESC,
+                COALESCE(server_seq, 0) DESC
             "#,
         )
         .fetch_all(&self.pool)
@@ -193,54 +234,86 @@ impl Storage {
         rows.into_iter().map(Self::row_to_edge_record).collect()
     }
 
-    /// Count total edges in the database.
-    pub async fn count_edges(&self) -> Result<u64> {
-        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM edges")
+    /// Count total latest-wins edges.
+    pub async fn count_edges_latest(&self) -> Result<u64> {
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM edges_latest")
             .fetch_one(&self.pool)
             .await?;
-
         Ok(count as u64)
     }
 
-    /// Delete edges older than a certain block number (for cleanup).
-    pub async fn delete_edges_before_block(&self, block_number: u64) -> Result<u64> {
-        let result = sqlx::query("DELETE FROM edges WHERE block_number < ?")
-            .bind(block_number as i64)
-            .execute(&self.pool)
-            .await?;
+    /// Delete chain edges older than a certain block number (cleanup).
+    ///
+    /// This deletes both raw and latest rows where the stored chain ordering is below the given
+    /// block number. Server-mode edges are not affected.
+    pub async fn delete_chain_edges_before_block(&self, block_number: u64) -> Result<u64> {
+        let result_raw = sqlx::query(
+            "DELETE FROM edges_raw WHERE block_number IS NOT NULL AND block_number < ?",
+        )
+        .bind(block_number as i64)
+        .execute(&self.pool)
+        .await?;
 
-        Ok(result.rows_affected())
+        let result_latest = sqlx::query(
+            "DELETE FROM edges_latest WHERE block_number IS NOT NULL AND block_number < ?",
+        )
+        .bind(block_number as i64)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(result_raw.rows_affected() + result_latest.rows_affected())
     }
 
-    /// Helper function to convert a database row to an EdgeRecord.
     fn row_to_edge_record(row: sqlx::sqlite::SqliteRow) -> Result<EdgeRecord> {
-        let rater_bytes: Vec<u8> = row.get("rater");
-        let target_bytes: Vec<u8> = row.get("target");
-        let context_bytes: Vec<u8> = row.get("context_id");
-        let level: i32 = row.get("level");
-        let source_str: String = row.get("source");
-        let tx_hash_bytes: Option<Vec<u8>> = row.get("tx_hash");
+        let rater_pid: Vec<u8> = row.get("rater_pid");
+        let target_pid: Vec<u8> = row.get("target_pid");
+        let context_id_bytes: Vec<u8> = row.get("context_id");
 
-        let rater = Address::from_slice(&rater_bytes);
-        let target = Address::from_slice(&target_bytes);
-        let context_id = ContextId::from(<[u8; 32]>::try_from(context_bytes.as_slice())?);
-        let level = Level::new(level as i8)?;
+        let level_i8: i32 = row.get("level_i8");
+        let updated_at_u64: i64 = row.get("updated_at_u64");
+        let evidence_hash_bytes: Vec<u8> = row.get("evidence_hash");
+        let source_str: String = row.get("source");
+
+        let chain_id: Option<i64> = row.try_get("chain_id").ok();
+        let block_number: Option<i64> = row.try_get("block_number").ok();
+        let tx_index: Option<i64> = row.try_get("tx_index").ok();
+        let log_index: Option<i64> = row.try_get("log_index").ok();
+        let tx_hash_bytes: Option<Vec<u8>> = row.try_get("tx_hash").ok();
+        let server_seq: Option<i64> = row.try_get("server_seq").ok();
+
+        let rater_pid = PrincipalId::from(<[u8; 32]>::try_from(rater_pid.as_slice())?);
+        let target_pid = PrincipalId::from(<[u8; 32]>::try_from(target_pid.as_slice())?);
+        let context_id = ContextId::from(<[u8; 32]>::try_from(context_id_bytes.as_slice())?);
+
+        let level = Level::new(level_i8 as i8)?;
         let source = source_str
             .parse::<EdgeSource>()
             .map_err(|e| anyhow::anyhow!("Invalid edge source in database: {}", e))?;
-        let tx_hash = tx_hash_bytes.map(|bytes| B256::from_slice(&bytes));
+
+        let evidence_hash = if evidence_hash_bytes.len() == 32 {
+            B256::from_slice(&evidence_hash_bytes)
+        } else {
+            B256::ZERO
+        };
+
+        let tx_hash = tx_hash_bytes
+            .as_ref()
+            .and_then(|bytes| (bytes.len() == 32).then(|| B256::from_slice(bytes)));
 
         Ok(EdgeRecord {
-            rater,
-            target,
+            rater: rater_pid,
+            target: target_pid,
             context_id,
             level,
-            block_number: row.get::<i64, _>("block_number") as u64,
-            tx_index: row.get::<i64, _>("tx_index") as u64,
-            log_index: row.get::<i64, _>("log_index") as u64,
-            ingested_at: row.get("ingested_at"),
+            updated_at_u64: updated_at_u64 as u64,
+            evidence_hash,
             source,
+            chain_id: chain_id.map(|v| v as u64),
+            block_number: block_number.map(|v| v as u64),
+            tx_index: tx_index.map(|v| v as u64),
+            log_index: log_index.map(|v| v as u64),
             tx_hash,
+            server_seq: server_seq.map(|v| v as u64),
         })
     }
 }
@@ -248,8 +321,8 @@ impl Storage {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy::hex;
     use tempfile::NamedTempFile;
+    use trustnet_core::types::{ContextId, Level};
 
     async fn setup_storage() -> (Storage, NamedTempFile) {
         let temp_db = NamedTempFile::new().unwrap();
@@ -257,167 +330,59 @@ mod tests {
             .await
             .unwrap();
         storage.run_migrations().await.unwrap();
-        (storage, temp_db) // Keep temp_db alive
+        (storage, temp_db)
     }
 
     #[tokio::test]
-    async fn test_upsert_edge() {
+    async fn test_latest_wins_chain_ordering() {
         let (storage, _temp_db) = setup_storage().await;
 
-        let rater = Address::from(hex!("1111111111111111111111111111111111111111"));
-        let target = Address::from(hex!("2222222222222222222222222222222222222222"));
-        let context_id = ContextId::from(hex!(
-            "430faa5635b6f437d8b5a2d66333fe4fbcf75602232a76b67e94fd4a3275169b"
-        ));
+        let rater = PrincipalId::from([0x11u8; 32]);
+        let target = PrincipalId::from([0x22u8; 32]);
+        let context_id = ContextId::from([0x33u8; 32]);
 
-        let edge = EdgeRecord {
+        let base = EdgeRecord {
             rater,
             target,
             context_id,
             level: Level::positive(),
-            block_number: 100,
-            tx_index: 5,
-            log_index: 2,
-            ingested_at: 1234567890,
+            updated_at_u64: 1,
+            evidence_hash: B256::ZERO,
             source: EdgeSource::TrustGraph,
+            chain_id: Some(1),
+            block_number: Some(100),
+            tx_index: Some(1),
+            log_index: Some(1),
             tx_hash: None,
+            server_seq: None,
         };
 
-        // Insert new edge
-        let inserted = storage.upsert_edge(&edge).await.unwrap();
-        assert!(inserted);
+        // Insert base
+        storage.append_edge_raw(&base).await.unwrap();
+        assert!(storage.upsert_edge_latest(&base).await.unwrap());
 
-        // Retrieve and verify
-        let retrieved = storage
-            .get_edge(&rater, &target, &context_id)
+        // Older event (stale)
+        let mut older = base.clone();
+        older.level = Level::strong_positive();
+        older.block_number = Some(99);
+        storage.append_edge_raw(&older).await.unwrap();
+        assert!(!storage.upsert_edge_latest(&older).await.unwrap());
+
+        // Newer event (wins)
+        let mut newer = base.clone();
+        newer.level = Level::strong_negative();
+        newer.block_number = Some(100);
+        newer.tx_index = Some(2);
+        storage.append_edge_raw(&newer).await.unwrap();
+        assert!(storage.upsert_edge_latest(&newer).await.unwrap());
+
+        let got = storage
+            .get_edge_latest(&rater, &target, &context_id)
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(retrieved.level, edge.level);
-        assert_eq!(retrieved.block_number, 100);
-
-        storage.close().await;
-    }
-
-    #[tokio::test]
-    async fn test_latest_wins_semantics() {
-        let (storage, _temp_db) = setup_storage().await;
-
-        let rater = Address::from(hex!("1111111111111111111111111111111111111111"));
-        let target = Address::from(hex!("2222222222222222222222222222222222222222"));
-        let context_id = ContextId::from(hex!(
-            "430faa5635b6f437d8b5a2d66333fe4fbcf75602232a76b67e94fd4a3275169b"
-        ));
-
-        // Insert initial edge at block 100
-        let edge1 = EdgeRecord {
-            rater,
-            target,
-            context_id,
-            level: Level::positive(),
-            block_number: 100,
-            tx_index: 5,
-            log_index: 2,
-            ingested_at: 1234567890,
-            source: EdgeSource::TrustGraph,
-            tx_hash: None,
-        };
-        let inserted = storage.upsert_edge(&edge1).await.unwrap();
-        assert!(inserted, "First edge should be inserted");
-
-        // Try to insert older edge at block 99 (should be rejected)
-        let edge2 = EdgeRecord {
-            level: Level::negative(),
-            block_number: 99,
-            tx_index: 10,
-            log_index: 0,
-            ingested_at: 1234567891,
-            ..edge1.clone()
-        };
-        let updated = storage.upsert_edge(&edge2).await.unwrap();
-        assert!(!updated, "Older edge should be rejected (return false)");
-
-        // Should still have the first edge
-        let retrieved = storage
-            .get_edge(&rater, &target, &context_id)
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(retrieved.level, Level::positive());
-        assert_eq!(retrieved.block_number, 100);
-
-        // Insert newer edge at block 101 (should replace)
-        let edge3 = EdgeRecord {
-            level: Level::strong_positive(),
-            block_number: 101,
-            tx_index: 0,
-            log_index: 0,
-            ingested_at: 1234567892,
-            ..edge1.clone()
-        };
-        let updated = storage.upsert_edge(&edge3).await.unwrap();
-        assert!(updated, "Newer edge should be accepted (return true)");
-
-        // Should have the new edge
-        let retrieved = storage
-            .get_edge(&rater, &target, &context_id)
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(retrieved.level, Level::strong_positive());
-        assert_eq!(retrieved.block_number, 101);
-
-        // Try same coordinates again (should be rejected)
-        let edge4 = EdgeRecord {
-            level: Level::negative(),
-            ..edge3.clone()
-        };
-        let updated = storage.upsert_edge(&edge4).await.unwrap();
-        assert!(!updated, "Same block coordinates should be rejected");
-
-        storage.close().await;
-    }
-
-    #[tokio::test]
-    async fn test_get_edges_from_rater() {
-        let (storage, _temp_db) = setup_storage().await;
-
-        let rater = Address::from(hex!("1111111111111111111111111111111111111111"));
-        let target1 = Address::from(hex!("2222222222222222222222222222222222222222"));
-        let target2 = Address::from(hex!("3333333333333333333333333333333333333333"));
-        let context_id = ContextId::from(hex!(
-            "430faa5635b6f437d8b5a2d66333fe4fbcf75602232a76b67e94fd4a3275169b"
-        ));
-
-        // Insert two edges from same rater
-        let edge1 = EdgeRecord {
-            rater,
-            target: target1,
-            context_id,
-            level: Level::positive(),
-            block_number: 100,
-            tx_index: 0,
-            log_index: 0,
-            ingested_at: 1234567890,
-            source: EdgeSource::TrustGraph,
-            tx_hash: None,
-        };
-        storage.upsert_edge(&edge1).await.unwrap();
-
-        let edge2 = EdgeRecord {
-            target: target2,
-            level: Level::strong_positive(),
-            ..edge1.clone()
-        };
-        storage.upsert_edge(&edge2).await.unwrap();
-
-        // Query edges from rater
-        let edges = storage
-            .get_edges_from_rater(&rater, &context_id)
-            .await
-            .unwrap();
-        assert_eq!(edges.len(), 2);
-
-        storage.close().await;
+        assert_eq!(got.level, Level::strong_negative());
+        assert_eq!(got.block_number, Some(100));
+        assert_eq!(got.tx_index, Some(2));
     }
 }

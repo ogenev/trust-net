@@ -1,9 +1,11 @@
 //! Sync engine for historical and live block processing.
 
 use anyhow::{Context, Result};
+use std::collections::HashMap;
 use std::time::Duration;
 use tracing::{info, warn};
 
+use super::provider::ChainEvent;
 use super::RpcProvider;
 use crate::config::SyncConfig;
 use crate::storage::Storage;
@@ -13,15 +15,17 @@ pub struct SyncEngine {
     provider: RpcProvider,
     storage: Storage,
     config: SyncConfig,
+    chain_id: u64,
 }
 
 impl SyncEngine {
     /// Create a new sync engine.
-    pub fn new(provider: RpcProvider, storage: Storage, config: SyncConfig) -> Self {
+    pub fn new(provider: RpcProvider, storage: Storage, config: SyncConfig, chain_id: u64) -> Self {
         Self {
             provider,
             storage,
             config,
+            chain_id,
         }
     }
 
@@ -95,32 +99,55 @@ impl SyncEngine {
                 )
             })?;
 
-        info!("Found {} NewFeedback events in batch", events.len());
+        info!("Found {} chain events in batch", events.len());
 
         // Process each event
         let mut processed = 0;
         let mut skipped = 0;
 
+        let mut ts_cache: HashMap<u64, u64> = HashMap::new();
+
         for event in events {
-            // Convert event to edge record
-            match event.to_edge_record() {
-                Ok(edge) => {
-                    // Upsert with latest-wins semantics
-                    match self.storage.upsert_edge(&edge).await {
-                        Ok(updated) => {
-                            if updated {
-                                processed += 1;
-                            } else {
-                                skipped += 1;
-                            }
-                        }
-                        Err(e) => {
-                            warn!("Failed to upsert edge: {}", e);
-                        }
+            let block_number = match &event {
+                ChainEvent::TrustGraph(ev) => ev.block_number,
+                ChainEvent::Erc8004(ev) => ev.block_number,
+            };
+
+            let updated_at_u64 = match ts_cache.get(&block_number).copied() {
+                Some(ts) => ts,
+                None => {
+                    let ts = self.provider.get_block_timestamp(block_number).await?;
+                    ts_cache.insert(block_number, ts);
+                    ts
+                }
+            };
+
+            let maybe_edge = match event {
+                ChainEvent::TrustGraph(ev) => {
+                    Some(ev.to_edge_record(self.chain_id, updated_at_u64)?)
+                }
+                ChainEvent::Erc8004(ev) => ev.to_edge_record(self.chain_id, updated_at_u64)?,
+            };
+
+            let Some(edge) = maybe_edge else {
+                skipped += 1;
+                continue;
+            };
+
+            if let Err(e) = self.storage.append_edge_raw(&edge).await {
+                warn!("Failed to append edges_raw: {}", e);
+            }
+
+            match self.storage.upsert_edge_latest(&edge).await {
+                Ok(updated) => {
+                    if updated {
+                        processed += 1;
+                    } else {
+                        skipped += 1;
                     }
                 }
                 Err(e) => {
-                    warn!("Failed to convert event to edge: {}", e);
+                    warn!("Failed to upsert edge: {}", e);
                 }
             }
         }
@@ -160,24 +187,28 @@ impl SyncEngine {
                 .with_context(|| format!("Failed to fetch logs for block {}", block_num))?;
 
             if !events.is_empty() {
-                info!(
-                    "Block {}: found {} NewFeedback events",
-                    block_num,
-                    events.len()
-                );
+                info!("Block {}: found {} chain events", block_num, events.len());
             }
 
             // Process events
+            let updated_at_u64 = self.provider.get_block_timestamp(block_num).await?;
             for event in events {
-                match event.to_edge_record() {
-                    Ok(edge) => {
-                        if let Err(e) = self.storage.upsert_edge(&edge).await {
-                            warn!("Failed to upsert edge: {}", e);
-                        }
+                let maybe_edge = match event {
+                    ChainEvent::TrustGraph(ev) => {
+                        Some(ev.to_edge_record(self.chain_id, updated_at_u64)?)
                     }
-                    Err(e) => {
-                        warn!("Failed to convert event to edge: {}", e);
-                    }
+                    ChainEvent::Erc8004(ev) => ev.to_edge_record(self.chain_id, updated_at_u64)?,
+                };
+
+                let Some(edge) = maybe_edge else {
+                    continue;
+                };
+
+                if let Err(e) = self.storage.append_edge_raw(&edge).await {
+                    warn!("Failed to append edges_raw: {}", e);
+                }
+                if let Err(e) = self.storage.upsert_edge_latest(&edge).await {
+                    warn!("Failed to upsert edges_latest: {}", e);
                 }
             }
 
