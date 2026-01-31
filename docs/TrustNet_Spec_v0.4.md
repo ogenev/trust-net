@@ -507,6 +507,12 @@ TrustNet commits the latest edge set into a Sparse Merkle Map keyed by the edge 
 
 **Default value:** neutral (`level=0`) with zero metadata.
 
+**Empty leaf hash (non-membership):** `bytes32(0)`.
+
+In this v0.4 MVP, leaves that are not present in the map are represented by an **empty leaf**
+whose `leafHash` is `bytes32(0)`. Verifiers MUST interpret an empty leaf as the default value
+(neutral with zero metadata).
+
 ### 10.2 Leaf value encoding (recommended improvement)
 
 To support verifiable freshness and evidence, the leaf value SHOULD commit to more than just `level`.
@@ -523,7 +529,8 @@ Define leaf payload:
 
 Hashing scheme (domain-separated):
 
-- `leafHash = keccak256( 0x00 || edgeKey || leafValue )`
+- **Membership leaf:** `leafHash = keccak256( 0x00 || edgeKey || leafValue )`
+- **Empty leaf (non-membership):** `leafHash = bytes32(0)` (and `leafValue` is omitted/empty)
 - `nodeHash = keccak256( 0x01 || left || right )`
 
 This keeps proofs small but makes TTL and evidence commitments verifiable by recomputation.
@@ -580,12 +587,12 @@ A root builder MUST produce a deterministic `graphRoot` from `edges_latest_for_r
 2) **Compute leaves**:
    - For each edge tuple `(rater, target, contextId)` compute `edgeKey`.
    - Encode `leafValue` using the configured `leafValueFormat`.
-   - Compute `leafHash = keccak256(0x00 || edgeKey || leafValue)`.
+   - Compute `leafHash = keccak256(0x00 || edgeKey || leafValue)` for included leaves.
 
 3) **Build the sparse tree**:
    - Tree depth is 256.
-   - Default node hashes MUST be precomputed for each level for the default leaf.
-   - Leaves not present are treated as default.
+   - Default node hashes MUST be precomputed for each level starting from the empty leaf hash (`bytes32(0)`) at height 0.
+   - Leaves not present are treated as empty (`leafHash = bytes32(0)`) and MUST be interpreted as the default value (neutral).
 
 4) **Publish outputs**:
    - `graphRoot`
@@ -614,7 +621,7 @@ A membership proof asserts:
 
 Proof contents:
 - `edgeKey` inputs (rater, target, contextId) or already-hashed key
-- `leafValue` (committed fields)
+- `leafValue` (committed fields; membership proofs only)
 - `siblings[]` array of 32-byte hashes (one per tree level), OR a compressed form (§11.4)
 
 Verifier recomputes:
@@ -625,7 +632,11 @@ Verifier recomputes:
 
 In a Sparse Merkle Map, a non-membership proof is a proof that the leaf at `edgeKey` equals the **default value** (neutral).
 
-Implementation: identical to membership proof but `leafValue` is default.
+Implementation: identical to membership proof but:
+- `leafHash` at the bottom is the empty leaf hash (`bytes32(0)`), and
+- `leafValue` is omitted/empty (it is not committed in the proof).
+
+Verifiers MUST interpret non-membership as the default value (neutral with zero metadata).
 
 ### 11.3 Decision proof bundle (2-hop)
 
@@ -666,6 +677,7 @@ Uncompressed:
   "contextId": "0x<32 bytes>",
   "rater": "0x<32 bytes principalId>",
   "target": "0x<32 bytes principalId>",
+  "isMembership": true,
   "leafValue": {
     "level": 2,
     "updatedAt": 12345678,
@@ -685,6 +697,7 @@ Compressed:
   "contextId": "0x<32 bytes>",
   "rater": "0x<32 bytes principalId>",
   "target": "0x<32 bytes principalId>",
+  "isMembership": true,
   "leafValue": {
     "level": 2,
     "updatedAt": 12345678,
@@ -698,9 +711,11 @@ Compressed:
 
 Rules:
 - `edgeKey` MUST equal `keccak256(rater || target || contextId)`.
-- `leafValue` MUST match the root’s `leafValueFormat`.
-- If `updatedAt` is not used, it MUST be `0`.
-- `level` MUST be in `[-2..+2]`.
+- `isMembership` MUST be `true` for membership proofs and `false` for non-membership proofs.
+- If `isMembership=true`, `leafValue` MUST be present and MUST match the root’s `leafValueFormat`.
+- If `isMembership=false`, `leafValue` SHOULD be omitted and the verifier MUST treat the leaf as the default value (neutral) with `leafHash = bytes32(0)`.
+- If `leafValue.updatedAt` is not used, it MUST be `0`.
+- `leafValue.level` MUST be in `[-2..+2]`.
 
 #### 11.5.2 `DecisionBundleV1` (2-hop decision response)
 
