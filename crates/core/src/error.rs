@@ -29,6 +29,15 @@ pub enum CoreError {
     #[error("Invalid hex encoding")]
     InvalidHex,
 
+    /// Invalid leaf value length.
+    #[error("Invalid leaf value length: expected {expected} bytes, got {got} bytes")]
+    InvalidLeafValueLength {
+        /// Expected number of bytes for this leaf value encoding.
+        expected: usize,
+        /// Actual number of bytes observed.
+        got: usize,
+    },
+
     /// Generic error with message.
     #[error("{0}")]
     Other(String),

@@ -9,6 +9,9 @@ cache_path = ".forge-cache"
 # Libs for dependencies if needed
 libs = ["lib"]
 
+# Allow Solidity tests to load cross-language hashing vectors from the repo `docs/` folder.
+fs_permissions = [{ access = "read", path = "../docs" }]
+
 # Solidity configuration
 solc_version = "0.8.26"
 optimizer = true

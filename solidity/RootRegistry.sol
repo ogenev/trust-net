@@ -14,6 +14,7 @@ pragma solidity ^0.8.26;
  * - Basic root storage and retrieval
  * - Single publisher model
  * - Simple epoch advancement (monotonically increasing)
+ * - Root manifest anchoring (manifestHash + manifestURI)
  *
  * Spec: https://github.com/trustnet/whitepaper Section 6.2
  */
@@ -24,11 +25,23 @@ contract RootRegistry {
     /// @notice Current active Sparse Merkle Map root
     bytes32 public currentRoot;
 
+    /// @notice Current active Root Manifest hash (keccak256(canonical_json_bytes))
+    bytes32 public currentManifestHash;
+
+    /// @notice Current active Root Manifest URI (e.g., ipfs://... or https://...)
+    string public currentManifestURI;
+
     /// @notice Current epoch number (monotonically increasing)
     uint256 public currentEpoch;
 
     /// @notice Historical roots mapping for lookups
     mapping(uint256 => bytes32) public rootHistory;
+
+    /// @notice Historical manifest hashes by epoch
+    mapping(uint256 => bytes32) public manifestHashHistory;
+
+    /// @notice Historical manifest URIs by epoch
+    mapping(uint256 => string) public manifestURIHistory;
 
     /// @notice Timestamp when each epoch was published
     mapping(uint256 => uint256) public epochTimestamps;
@@ -43,12 +56,16 @@ contract RootRegistry {
      * @notice Emitted when a new root is published
      * @param epoch The epoch number for this root
      * @param root The Sparse Merkle Map root hash
+     * @param manifestHash The keccak256 hash of the canonical Root Manifest JSON
+     * @param manifestURI The URI where the Root Manifest can be fetched
      * @param publisher Address that published this root
      * @param timestamp Block timestamp of publication
      */
     event RootPublished(
         uint256 indexed epoch,
         bytes32 indexed root,
+        bytes32 manifestHash,
+        string manifestURI,
         address indexed publisher,
         uint256 timestamp
     );
@@ -131,19 +148,31 @@ contract RootRegistry {
      * @notice Publish a new Sparse Merkle Map root
      * @param newRoot The new SMM root hash
      * @param epoch The epoch number (must be currentEpoch + 1)
+     * @param manifestHash The keccak256 hash of the canonical Root Manifest JSON
+     * @param manifestURI A URI where the Root Manifest can be fetched
      *
      * @dev Only callable by authorized publisher
      * @dev Epochs must increase monotonically
      * @dev Root cannot be zero
+     * @dev manifestHash cannot be zero (v0.4 requires manifest anchoring)
      * @dev Emits RootPublished event
      *
      * Example:
      * - Indexer builds SMM from EdgeRated events
-     * - Calls publishRoot(0xabc..., 1) to publish epoch 1
+     * - Calls publishRoot(0xabc..., 1, 0xdef..., "ipfs://...") to publish epoch 1
      */
-    function publishRoot(bytes32 newRoot, uint256 epoch) external onlyPublisher {
+    function publishRoot(
+        bytes32 newRoot,
+        uint256 epoch,
+        bytes32 manifestHash,
+        string calldata manifestURI
+    ) external onlyPublisher {
         // Validate root is not zero
         if (newRoot == bytes32(0)) {
+            revert InvalidRoot();
+        }
+
+        if (manifestHash == bytes32(0)) {
             revert InvalidRoot();
         }
 
@@ -155,14 +184,18 @@ contract RootRegistry {
 
         // Update current state
         currentRoot = newRoot;
+        currentManifestHash = manifestHash;
+        currentManifestURI = manifestURI;
         currentEpoch = epoch;
 
         // Store in history
         rootHistory[epoch] = newRoot;
+        manifestHashHistory[epoch] = manifestHash;
+        manifestURIHistory[epoch] = manifestURI;
         epochTimestamps[epoch] = block.timestamp;
 
         // Emit event
-        emit RootPublished(epoch, newRoot, msg.sender, block.timestamp);
+        emit RootPublished(epoch, newRoot, manifestHash, manifestURI, msg.sender, block.timestamp);
     }
 
     /**
@@ -174,6 +207,24 @@ contract RootRegistry {
      */
     function getRootAt(uint256 epoch) external view returns (bytes32) {
         return rootHistory[epoch];
+    }
+
+    /**
+     * @notice Get the manifest hash for a specific epoch
+     * @param epoch The epoch to query
+     * @return The manifest hash for that epoch, or 0x0 if not found
+     */
+    function getManifestHashAt(uint256 epoch) external view returns (bytes32) {
+        return manifestHashHistory[epoch];
+    }
+
+    /**
+     * @notice Get the manifest URI for a specific epoch
+     * @param epoch The epoch to query
+     * @return The manifest URI for that epoch (empty string if not found)
+     */
+    function getManifestURIAt(uint256 epoch) external view returns (string memory) {
+        return manifestURIHistory[epoch];
     }
 
     /**

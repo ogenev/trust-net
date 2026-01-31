@@ -6,16 +6,22 @@ use alloy::network::EthereumWallet;
 use alloy::primitives::{Address, B256};
 use alloy::providers::{Provider, ProviderBuilder};
 use alloy::signers::local::PrivateKeySigner;
+use alloy::signers::Signer;
 use alloy::sol;
 use anyhow::{Context, Result};
+use chrono::TimeZone;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::{Notify, RwLock};
 use tracing::{info, warn};
 
 use crate::config::PublisherConfig;
+use crate::root_manifest::{
+    build_chain_root_manifest_v1, canonicalize_manifest, ChainManifestConfigV1,
+};
 use crate::smm_service::PeriodicSmmBuilder;
 use crate::storage::{EpochRecord, Storage};
+use trustnet_core::hashing::compute_root_signature_hash;
 
 /// Result of a publish attempt
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -75,12 +81,14 @@ sol! {
     #[allow(missing_docs)]
     #[sol(rpc)]
     contract RootRegistry {
-        function publishRoot(bytes32 newRoot, uint256 epoch) external;
+        function publishRoot(bytes32 newRoot, uint256 epoch, bytes32 manifestHash, string manifestURI) external;
         function currentEpoch() external view returns (uint256);
 
         event RootPublished(
             uint256 indexed epoch,
             bytes32 indexed root,
+            bytes32 manifestHash,
+            string manifestURI,
             address indexed publisher,
             uint256 timestamp
         );
@@ -113,6 +121,10 @@ pub struct EventDrivenPublisher {
     >,
     /// The provider for blockchain interaction
     provider: WalletProvider,
+    /// Publisher signer (also used for server-mode root signatures).
+    signer: PrivateKeySigner,
+    /// Root manifest config (chain mode).
+    manifest_config: ChainManifestConfigV1,
     config: PublisherConfig,
     state: Arc<RwLock<PublisherState>>,
     rebuild_notify: Arc<Notify>,
@@ -126,10 +138,11 @@ impl EventDrivenPublisher {
         rpc_url: &str,
         signer: PrivateKeySigner,
         contract_address: Address,
+        manifest_config: ChainManifestConfigV1,
         config: PublisherConfig,
     ) -> Result<Self> {
         // Create wallet from signer
-        let wallet = EthereumWallet::from(signer);
+        let wallet = EthereumWallet::from(signer.clone());
 
         // Build provider with wallet
         let provider = ProviderBuilder::new()
@@ -145,6 +158,8 @@ impl EventDrivenPublisher {
             smm_service,
             contract,
             provider,
+            signer,
+            manifest_config,
             config,
             state: Arc::new(RwLock::new(PublisherState::default())),
             rebuild_notify: Arc::new(Notify::new()),
@@ -274,7 +289,8 @@ impl EventDrivenPublisher {
         let epoch_num = self.get_next_epoch_number().await?;
 
         // Determine which root to publish
-        let (root_to_publish, edge_count_to_publish) = if needs_republish {
+        let (root_to_publish, edge_count_to_publish, stored_epoch_for_manifest) = if needs_republish
+        {
             // When republishing, we must use the stored root for the specific epoch
             // from our database, not the current SMM snapshot
             info!(
@@ -290,7 +306,11 @@ impl EventDrivenPublisher {
                         hex::encode(stored_epoch.graph_root),
                         stored_epoch.edge_count
                     );
-                    (stored_epoch.graph_root, stored_epoch.edge_count)
+                    (
+                        stored_epoch.graph_root,
+                        stored_epoch.edge_count,
+                        Some(stored_epoch),
+                    )
                 }
                 None => {
                     // If we don't have the epoch in our DB, this is a serious issue
@@ -306,7 +326,64 @@ impl EventDrivenPublisher {
             }
         } else {
             // Normal publish: use current SMM snapshot
-            (smm_state.root, smm_state.edge_count)
+            (smm_state.root, smm_state.edge_count, None)
+        };
+
+        // Build root manifest + signature (v0.4 server-mode authenticity).
+        //
+        // For chain-mode roots we still generate a manifest and signature. Gateways can verify the
+        // signature, the on-chain anchor, or both.
+        let created_at_u64 = stored_epoch_for_manifest
+            .as_ref()
+            .and_then(|e| e.created_at_u64)
+            .unwrap_or_else(|| smm_state.built_at.max(0) as u64);
+
+        let created_at_rfc3339 = chrono::Utc
+            .timestamp_opt(created_at_u64 as i64, 0)
+            .single()
+            .unwrap_or_else(chrono::Utc::now)
+            .to_rfc3339();
+
+        let to_block_hash = if needs_republish {
+            None
+        } else {
+            self.try_get_block_hash(smm_state.built_at_block).await
+        };
+
+        let (manifest_json, manifest_hash, publisher_sig) = if let Some(stored_epoch) =
+            stored_epoch_for_manifest.as_ref()
+        {
+            (
+                stored_epoch.manifest_json.clone(),
+                stored_epoch.manifest_hash,
+                stored_epoch.publisher_sig.clone(),
+            )
+        } else {
+            let manifest = build_chain_root_manifest_v1(
+                &self.manifest_config,
+                epoch_num,
+                &root_to_publish,
+                smm_state.built_at_block,
+                to_block_hash,
+                created_at_rfc3339,
+            );
+            let canonical = canonicalize_manifest(&manifest);
+            let manifest_hash = trustnet_core::hashing::keccak256(&canonical);
+            let manifest_json =
+                Some(String::from_utf8(canonical).context("Manifest must be valid UTF-8")?);
+
+            let digest = compute_root_signature_hash(epoch_num, &root_to_publish, &manifest_hash);
+            let signature = self
+                .signer
+                .sign_hash(&digest)
+                .await
+                .context("Failed to sign root digest")?;
+
+            (
+                manifest_json,
+                Some(manifest_hash),
+                Some(signature.as_bytes().to_vec()),
+            )
         };
 
         info!(
@@ -317,9 +394,25 @@ impl EventDrivenPublisher {
         );
 
         // Call RootRegistry.publishRoot(newRoot, epoch)
+        let manifest_hash_value = manifest_hash.ok_or_else(|| {
+            anyhow::anyhow!(
+                "Cannot publish epoch {}: missing manifestHash (v0.4 required)",
+                epoch_num
+            )
+        })?;
+
+        // MVP: we store the full manifest JSON in the local DB; on-chain we anchor only its hash
+        // and provide a best-effort URI pointer.
+        let manifest_uri_value = "inline".to_string();
+
         let tx = self
             .contract
-            .publishRoot(root_to_publish, alloy::primitives::U256::from(epoch_num))
+            .publishRoot(
+                root_to_publish,
+                alloy::primitives::U256::from(epoch_num),
+                manifest_hash_value,
+                manifest_uri_value,
+            )
             .send()
             .await
             .context("Failed to send publishRoot transaction")?;
@@ -351,7 +444,7 @@ impl EventDrivenPublisher {
             );
 
             return Err(anyhow::anyhow!(
-                "Transaction reverted: 0x{} in block {} - publishRoot(0x{}, {}) failed on-chain",
+                "Transaction reverted: 0x{} in block {} - publishRoot(0x{}, {}, ...) failed on-chain",
                 hex::encode(receipt.transaction_hash),
                 receipt.block_number.unwrap_or_default(),
                 hex::encode(root_to_publish),
@@ -442,7 +535,10 @@ impl EventDrivenPublisher {
                     published_at: chrono::Utc::now().timestamp(), // New timestamp
                     tx_hash: Some(receipt.transaction_hash), // New transaction hash
                     edge_count: existing.edge_count, // Keep original edge count
-                    manifest: existing.manifest,  // Keep original manifest
+                    manifest_json: existing.manifest_json,
+                    manifest_hash: existing.manifest_hash,
+                    publisher_sig: existing.publisher_sig,
+                    created_at_u64: existing.created_at_u64,
                 };
 
                 self.storage.update_epoch_metadata(&updated_epoch).await?;
@@ -470,7 +566,10 @@ impl EventDrivenPublisher {
                 published_at: chrono::Utc::now().timestamp(),
                 tx_hash: Some(receipt.transaction_hash),
                 edge_count: edge_count_to_publish,
-                manifest: None,
+                manifest_json,
+                manifest_hash,
+                publisher_sig,
+                created_at_u64: Some(created_at_u64),
             };
 
             self.storage.insert_epoch(&epoch).await?;
@@ -674,5 +773,25 @@ impl EventDrivenPublisher {
     /// Get current publisher state.
     pub async fn get_state(&self) -> PublisherState {
         self.state.read().await.clone()
+    }
+
+    async fn try_get_block_hash(&self, block_number: u64) -> Option<B256> {
+        use alloy::rpc::types::{BlockNumberOrTag, BlockTransactionsKind};
+
+        match self
+            .provider
+            .get_block_by_number(
+                BlockNumberOrTag::Number(block_number),
+                BlockTransactionsKind::Hashes,
+            )
+            .await
+        {
+            Ok(Some(block)) => Some(block.header.hash),
+            Ok(None) => None,
+            Err(e) => {
+                warn!("Failed to fetch block hash for {}: {}", block_number, e);
+                None
+            }
+        }
     }
 }

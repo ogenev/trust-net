@@ -13,6 +13,38 @@ use trustnet_smm::SmmBuilder;
 
 use crate::storage::Storage;
 
+fn ttl_seconds_for_context_id(context_id: &trustnet_core::types::ContextId) -> u64 {
+    // Default: no TTL pruning for unknown contexts (MVP-safe).
+    let id = context_id.inner();
+    if *id == trustnet_core::CTX_PAYMENTS {
+        return 30 * 24 * 60 * 60; // 30 days
+    }
+    if *id == trustnet_core::CTX_CODE_EXEC {
+        return 7 * 24 * 60 * 60; // 7 days
+    }
+    if *id == trustnet_core::CTX_WRITES {
+        return 7 * 24 * 60 * 60; // 7 days
+    }
+    if *id == trustnet_core::CTX_DEFI_EXEC {
+        return 7 * 24 * 60 * 60; // 7 days
+    }
+    0
+}
+
+fn edge_is_expired(edge: &crate::storage::EdgeRecord, as_of_u64: u64) -> bool {
+    let ttl_seconds = ttl_seconds_for_context_id(&edge.context_id);
+    if ttl_seconds == 0 {
+        return false;
+    }
+
+    if edge.updated_at_u64 == 0 {
+        // If we can't prove freshness, treat as expired for TTL-pruned contexts.
+        return true;
+    }
+
+    edge.updated_at_u64.saturating_add(ttl_seconds) < as_of_u64
+}
+
 /// Cached SMM state.
 #[derive(Debug, Clone)]
 pub struct SmmState {
@@ -107,20 +139,31 @@ impl PeriodicSmmBuilder {
     async fn rebuild_smm(&self) -> Result<()> {
         info!("Building SMM from current edges...");
 
+        let built_at_u64 = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_secs();
+
         // Fetch all edges
-        let edges = self
+        let mut edges = self
             .storage
-            .get_all_edges()
+            .get_all_edges_latest()
             .await
             .context("Failed to fetch edges from storage")?;
 
+        // Apply v0.4 root-builder normalization:
+        // - TTL pruning per context (manifested)
+        // - treat neutral edges (level 0) as absence
+        edges.retain(|e| e.level.value() != 0);
+        edges.retain(|e| !edge_is_expired(e, built_at_u64));
+
         if edges.is_empty() {
-            info!("No edges found, SMM root will be zero");
+            info!("No edges found, SMM root will be default empty-tree root");
+            let empty_root = trustnet_smm::SmmBuilder::new().build().root();
             let state = SmmState {
-                root: alloy::primitives::B256::ZERO,
+                root: empty_root,
                 edge_count: 0,
                 built_at_block: self.storage.get_sync_state().await?.last_block_number,
-                built_at: chrono::Utc::now().timestamp(),
+                built_at: built_at_u64 as i64,
             };
             *self.current_state.write().await = Some(state);
             return Ok(());
@@ -129,12 +172,21 @@ impl PeriodicSmmBuilder {
         info!("Building SMM from {} edges", edges.len());
 
         // Build SMM
+        // Sort by edgeKey for deterministic construction (even though the map structure is order-independent).
+        edges.sort_by_key(|edge| compute_edge_key(&edge.rater, &edge.target, &edge.context_id));
+
         let mut builder = SmmBuilder::new();
         for edge in &edges {
             let key = compute_edge_key(&edge.rater, &edge.target, &edge.context_id);
-            let smm_value = edge.level.to_smm_value();
+            let leaf_value = trustnet_core::LeafValueV1 {
+                level: edge.level,
+                updated_at_u64: edge.updated_at_u64,
+                evidence_hash: edge.evidence_hash,
+            }
+            .encode()
+            .to_vec();
             builder
-                .insert(key, smm_value)
+                .insert(key, leaf_value)
                 .context("Failed to insert edge into SMM builder")?;
         }
 
@@ -149,7 +201,7 @@ impl PeriodicSmmBuilder {
             root,
             edge_count: edges.len() as u64,
             built_at_block: sync_state.last_block_number,
-            built_at: chrono::Utc::now().timestamp(),
+            built_at: built_at_u64 as i64,
         };
 
         info!(
@@ -170,9 +222,8 @@ impl PeriodicSmmBuilder {
 mod tests {
     use super::*;
     use crate::storage::EdgeRecord;
-    use alloy::primitives::Address;
     use tempfile::NamedTempFile;
-    use trustnet_core::types::{ContextId, Level};
+    use trustnet_core::types::{ContextId, Level, PrincipalId};
 
     async fn setup_storage_with_edges() -> (Storage, NamedTempFile) {
         let temp_db = NamedTempFile::new().unwrap();
@@ -182,10 +233,10 @@ mod tests {
         storage.run_migrations().await.unwrap();
 
         // Insert some test edges
-        let rater1 = Address::from([0x11; 20]);
-        let rater2 = Address::from([0x22; 20]);
-        let target1 = Address::from([0xaa; 20]);
-        let target2 = Address::from([0xbb; 20]);
+        let rater1 = PrincipalId::from([0x11; 32]);
+        let rater2 = PrincipalId::from([0x22; 32]);
+        let target1 = PrincipalId::from([0xaa; 32]);
+        let target2 = PrincipalId::from([0xbb; 32]);
         let context = ContextId::from([0x01; 32]);
 
         let edge1 = EdgeRecord {
@@ -193,12 +244,15 @@ mod tests {
             target: target1,
             context_id: context,
             level: Level::positive(),
-            block_number: 100,
-            tx_index: 0,
-            log_index: 0,
-            ingested_at: 1234567890,
+            updated_at_u64: 1234567890,
+            evidence_hash: alloy::primitives::B256::ZERO,
             source: crate::storage::EdgeSource::TrustGraph,
+            chain_id: Some(1),
+            block_number: Some(100),
+            tx_index: Some(0),
+            log_index: Some(0),
             tx_hash: None,
+            server_seq: None,
         };
 
         let edge2 = EdgeRecord {
@@ -206,16 +260,21 @@ mod tests {
             target: target2,
             context_id: context,
             level: Level::strong_positive(),
-            block_number: 101,
-            tx_index: 0,
-            log_index: 0,
-            ingested_at: 1234567891,
+            updated_at_u64: 1234567891,
+            evidence_hash: alloy::primitives::B256::ZERO,
             source: crate::storage::EdgeSource::TrustGraph,
+            chain_id: Some(1),
+            block_number: Some(101),
+            tx_index: Some(0),
+            log_index: Some(0),
             tx_hash: None,
+            server_seq: None,
         };
 
-        storage.upsert_edge(&edge1).await.unwrap();
-        storage.upsert_edge(&edge2).await.unwrap();
+        storage.append_edge_raw(&edge1).await.unwrap();
+        storage.upsert_edge_latest(&edge1).await.unwrap();
+        storage.append_edge_raw(&edge2).await.unwrap();
+        storage.upsert_edge_latest(&edge2).await.unwrap();
 
         (storage, temp_db)
     }
@@ -234,7 +293,8 @@ mod tests {
         builder.rebuild_smm().await.unwrap();
 
         let state = builder.get_current_state().await.unwrap();
-        assert_eq!(state.root, alloy::primitives::B256::ZERO);
+        let expected_root = trustnet_smm::SmmBuilder::new().build().root();
+        assert_eq!(state.root, expected_root);
         assert_eq!(state.edge_count, 0);
 
         storage.close().await;
@@ -305,18 +365,22 @@ mod tests {
 
         // Add another edge
         let edge3 = EdgeRecord {
-            rater: Address::from([0x33; 20]),
-            target: Address::from([0xcc; 20]),
+            rater: PrincipalId::from([0x33; 32]),
+            target: PrincipalId::from([0xcc; 32]),
             context_id: ContextId::from([0x01; 32]),
             level: Level::negative(),
-            block_number: 102,
-            tx_index: 0,
-            log_index: 0,
-            ingested_at: 1234567892,
+            updated_at_u64: 1234567892,
+            evidence_hash: alloy::primitives::B256::ZERO,
             source: crate::storage::EdgeSource::TrustGraph,
+            chain_id: Some(1),
+            block_number: Some(102),
+            tx_index: Some(0),
+            log_index: Some(0),
             tx_hash: None,
+            server_seq: None,
         };
-        storage.upsert_edge(&edge3).await.unwrap();
+        storage.append_edge_raw(&edge3).await.unwrap();
+        storage.upsert_edge_latest(&edge3).await.unwrap();
 
         // Rebuild
         builder.rebuild_smm().await.unwrap();

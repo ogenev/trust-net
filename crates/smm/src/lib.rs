@@ -22,8 +22,8 @@
 //! use alloy_primitives::B256;
 //!
 //! let mut builder = SmmBuilder::new();
-//! builder.insert(B256::from([0x01; 32]), 2).unwrap();
-//! builder.insert(B256::from([0x02; 32]), 3).unwrap();
+//! builder.insert(B256::from([0x01; 32]), vec![2]).unwrap();
+//! builder.insert(B256::from([0x02; 32]), vec![3]).unwrap();
 //!
 //! let smm = builder.build();
 //! let root = smm.root();

@@ -9,6 +9,7 @@ description = "Axum-based API server for TrustNet (endpoints: /v1/root, /v1/scor
 # Core
 trustnet-core = { path = "../core" }
 trustnet-smm = { path = "../smm" }
+trustnet-engine = { path = "../engine" }
 
 # Web framework
 axum = "0.7"
@@ -21,6 +22,13 @@ sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "sqlite", "macros"
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+serde_bytes = "0.11"
+serde_jcs = "0.1"
+
+# Signature verification (server mode ratings)
+alloy-primitives = { version = "0.8", features = ["k256"] }
+base64 = "0.22"
+chrono = { version = "0.4", features = ["serde"] }
 
 # Utils
 anyhow = "1.0"
@@ -30,3 +38,6 @@ hex = "0.4"
 tower = "0.5"
 hyper = "1.0"
 http-body-util = "0.1"
+tempfile = "3.14"
+k256 = { version = "0.13", features = ["ecdsa"] }
+signature = "2.2"

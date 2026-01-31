@@ -1,10 +1,15 @@
 # TrustNet — Verifiable, Explainable Reputation for AI Agents
 
 ## Project Overview
-TrustNet is a reputation layer that turns ERC‑8004 agent feedback + curator ratings into a single Merkle root and portable proofs.
-Gateways and contracts use these proofs to allow/deny agent actions (payments, code‑exec, writes, DeFi) and always show a short “Why?” (two edges + direct override).
+**TrustNet** is an auditable “trust-to-act” layer for agent gateways and (optionally) smart contracts:
 
-Whitepaper: ./WHITEPAPER.md
+- **Context-scoped trust** (trust for payments ≠ trust for code execution).
+- **Decider-relative trust** (no global score; each gateway chooses whose ratings count).
+- **Verifiable proofs** (tiny bundles verifiable against a committed `graphRoot`).
+- **Why-by-default** explainability (the exact edges used to allow/ask/deny).
+
+Current specs: ./docs/TrustNet_SPec_v0.4.md
+Upgrade
 
 ## ERC-8004
 Specs: https://eips.ethereum.org/EIPS/eip-8004

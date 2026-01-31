@@ -1,0 +1,11 @@
+[package]
+name = "trustnet-engine"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Decision engine for TrustNet (Spec v0.4)"
+
+[dependencies]
+trustnet-core = { path = "../core" }
+thiserror = "2.0"
+

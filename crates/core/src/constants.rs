@@ -5,10 +5,10 @@
 use alloy_primitives::{b256, B256};
 
 /// Tag for ERC-8004 feedback that should be ingested by TrustNet.
-/// Only feedback with tag2 == TAG_AGENTTRUST_V1 will be processed.
-/// keccak256("agenttrust:v1")
-pub const TAG_AGENTTRUST_V1: B256 =
-    b256!("c771e68faa4855f3de408c70236a60784cc3bcb63b9ddd40d51be2f5602da729");
+/// Only feedback with tag2 == TAG_TRUSTNET_V1 will be processed.
+/// keccak256("trustnet:v1")
+pub const TAG_TRUSTNET_V1: B256 =
+    b256!("3539b20dd2af81ad9c3c5953baeb60770eead262c1eee5a537a4b54c199e1215");
 
 // Canonical context identifiers
 // These MUST match TrustNetContexts.sol exactly
@@ -67,9 +67,9 @@ mod tests {
 
     #[test]
     fn test_tag_constant() {
-        // Verify TAG_AGENTTRUST_V1 matches keccak256("agenttrust:v1")
-        let result = keccak256(b"agenttrust:v1");
-        assert_eq!(result, TAG_AGENTTRUST_V1);
+        // Verify TAG_TRUSTNET_V1 matches keccak256("trustnet:v1")
+        let result = keccak256(b"trustnet:v1");
+        assert_eq!(result, TAG_TRUSTNET_V1);
     }
 
     #[test]
