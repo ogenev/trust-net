@@ -81,6 +81,17 @@ async fn health(State(_state): State<AppState>) -> &'static str {
     "OK"
 }
 
+fn is_allowlisted_context_id(context_id: &ContextId) -> bool {
+    matches!(
+        *context_id.inner(),
+        trustnet_core::CTX_GLOBAL
+            | trustnet_core::CTX_PAYMENTS
+            | trustnet_core::CTX_CODE_EXEC
+            | trustnet_core::CTX_WRITES
+            | trustnet_core::CTX_DEFI_EXEC
+    )
+}
+
 #[derive(Serialize)]
 struct ErrorResponse {
     error: String,
@@ -513,6 +524,10 @@ async fn get_decision(
         .parse::<ContextId>()
         .map_err(|_| bad_request("Invalid contextId (expected 0x-bytes32)"))?;
 
+    if !is_allowlisted_context_id(&context_id) {
+        return Err(bad_request("Unknown contextId"));
+    }
+
     let epoch = db::get_latest_epoch(&state.db)
         .await
         .map_err(internal_error)?
@@ -757,6 +772,10 @@ async fn post_rating(
         .context_id
         .parse::<ContextId>()
         .map_err(|_| bad_request("Invalid contextId"))?;
+
+    if !is_allowlisted_context_id(&context_id) {
+        return Err(bad_request("Unknown contextId"));
+    }
 
     let level = Level::new(event.level).map_err(|e| bad_request(e.to_string()))?;
 
@@ -1188,6 +1207,29 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_get_decision_rejects_unknown_context_id() {
+        let (state, _tmp, decider, _endorser, target, _context_id) = setup_state().await;
+        let app = Router::new()
+            .route("/v1/decision", get(get_decision))
+            .with_state(state);
+
+        let unknown_context_id = ContextId::from(B256::repeat_byte(0x99));
+        let uri = format!(
+            "/v1/decision?decider={}&target={}&contextId={}",
+            hex_bytes(decider.as_bytes()),
+            hex_bytes(target.as_bytes()),
+            hex_b256(unknown_context_id.inner())
+        );
+
+        let response = app
+            .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
     async fn test_post_rating_appends_private_log_edge() {
         let (state, _tmp, _decider, _endorser, target, context_id) = setup_state().await;
         let app = Router::new()
@@ -1261,5 +1303,73 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(latest_count, 1);
+    }
+
+    #[tokio::test]
+    async fn test_post_rating_rejects_unknown_context_id() {
+        let (state, _tmp, _decider, _endorser, target, _context_id) = setup_state().await;
+        let app = Router::new()
+            .route("/v1/ratings", post(post_rating))
+            .with_state(state.clone());
+
+        // Create a signer and corresponding rater address.
+        let signing_key = k256::ecdsa::SigningKey::from_slice(&[0x11u8; 32]).unwrap();
+        let rater_addr = trustnet_core::Address::from_private_key(&signing_key);
+
+        let created_at = "1970-01-01T00:16:40Z".to_string(); // 1000s
+        let unknown_context_id = ContextId::from(B256::repeat_byte(0x99));
+
+        let mut event = RatingEventV1 {
+            ty: "trustnet.rating.v1".to_string(),
+            rater: format!("0x{}", hex::encode(rater_addr.as_slice())),
+            target: hex_bytes(target.as_bytes()),
+            context_id: hex_b256(unknown_context_id.inner()),
+            level: 2,
+            evidence_uri: None,
+            evidence_hash: None,
+            created_at: Some(created_at.clone()),
+            signature: String::new(),
+        };
+
+        let unsigned = RatingEventUnsignedV1 {
+            ty: event.ty.clone(),
+            rater: event.rater.clone(),
+            target: event.target.clone(),
+            context_id: event.context_id.clone(),
+            level: event.level,
+            evidence_uri: None,
+            evidence_hash: None,
+            created_at: Some(created_at),
+        };
+
+        let unsigned_canonical = serde_jcs::to_vec(&unsigned).unwrap();
+        let prehash = alloy_primitives::eip191_hash_message(&unsigned_canonical);
+        let (sig, recid) = signing_key
+            .sign_prehash_recoverable(prehash.as_slice())
+            .unwrap();
+        let primitive_sig = alloy_primitives::PrimitiveSignature::from((sig, recid));
+        let sig_bytes: [u8; 65] = primitive_sig.into();
+        event.signature = base64::engine::general_purpose::STANDARD.encode(sig_bytes);
+
+        let body = serde_json::to_vec(&event).unwrap();
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/ratings")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+        let raw_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM edges_raw")
+            .fetch_one(&state.db)
+            .await
+            .unwrap();
+        assert_eq!(raw_count, 0);
     }
 }
