@@ -1,3 +1,4 @@
+use anyhow::Context;
 use axum::{
     extract::{Query, State},
     http::StatusCode,
@@ -9,7 +10,7 @@ use ed25519_dalek::{Signature as Ed25519Signature, VerifyingKey};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use sqlx::{sqlite::SqliteConnectOptions, SqlitePool};
-use std::{net::SocketAddr, str::FromStr, sync::Arc};
+use std::{collections::HashMap, net::SocketAddr, str::FromStr, sync::Arc};
 use tower_http::cors::CorsLayer;
 use trustnet_core::{hashing::compute_edge_key, ContextId, LeafValueV1, Level, PrincipalId, B256};
 use trustnet_engine::{decide, Candidate, Decision, Thresholds};
@@ -18,12 +19,114 @@ use trustnet_smm::Smm;
 mod db;
 mod smm_cache;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct DecisionPolicyResolved {
+    thresholds: Thresholds,
+    ttl_seconds: u64,
+}
+
+#[derive(Debug, Clone)]
+struct DecisionPolicy {
+    default: DecisionPolicyResolved,
+    by_context: HashMap<ContextId, DecisionPolicyResolved>,
+}
+
+impl DecisionPolicy {
+    fn for_context(&self, context_id: &ContextId) -> DecisionPolicyResolved {
+        self.by_context
+            .get(context_id)
+            .copied()
+            .unwrap_or(self.default)
+    }
+}
+
 #[derive(Clone)]
 struct AppState {
     db: SqlitePool,
     smm_cache: Arc<smm_cache::SmmCache>,
-    thresholds: Thresholds,
+    decision_policy: DecisionPolicy,
     write_enabled: bool,
+}
+
+fn parse_env_i8(name: &str) -> anyhow::Result<Option<i8>> {
+    let Ok(raw) = std::env::var(name) else {
+        return Ok(None);
+    };
+    let raw = raw.trim();
+    anyhow::ensure!(!raw.is_empty(), "{} is set but empty", name);
+    let v: i8 = raw
+        .parse()
+        .with_context(|| format!("Invalid {} (expected i8)", name))?;
+    Ok(Some(v))
+}
+
+fn parse_env_u64(name: &str) -> anyhow::Result<Option<u64>> {
+    let Ok(raw) = std::env::var(name) else {
+        return Ok(None);
+    };
+    let raw = raw.trim();
+    anyhow::ensure!(!raw.is_empty(), "{} is set but empty", name);
+    let v: u64 = raw
+        .parse()
+        .with_context(|| format!("Invalid {} (expected u64)", name))?;
+    Ok(Some(v))
+}
+
+fn load_decision_policy_from_env() -> anyhow::Result<DecisionPolicy> {
+    let allow = parse_env_i8("TRUSTNET_ALLOW_THRESHOLD")?.unwrap_or(2);
+    let ask = parse_env_i8("TRUSTNET_ASK_THRESHOLD")?.unwrap_or(1);
+    let default_thresholds = Thresholds::new(allow, ask)
+        .map_err(|e| anyhow::anyhow!(e))
+        .context("Invalid TRUSTNET_{ALLOW,ASK}_THRESHOLD")?;
+
+    let default_ttl_seconds = parse_env_u64("TRUSTNET_DECISION_TTL_SECONDS")?.unwrap_or(300);
+
+    let default = DecisionPolicyResolved {
+        thresholds: default_thresholds,
+        ttl_seconds: default_ttl_seconds,
+    };
+
+    // Optional per-context overrides (MVP-friendly):
+    // - TRUSTNET_ALLOW_THRESHOLD_<CONTEXT>
+    // - TRUSTNET_ASK_THRESHOLD_<CONTEXT>
+    // - TRUSTNET_DECISION_TTL_SECONDS_<CONTEXT>
+    //
+    // Context suffixes: GLOBAL, PAYMENTS, CODE_EXEC, WRITES, DEFI_EXEC.
+    let known_contexts = [
+        ("GLOBAL", ContextId::from(trustnet_core::CTX_GLOBAL)),
+        ("PAYMENTS", ContextId::from(trustnet_core::CTX_PAYMENTS)),
+        ("CODE_EXEC", ContextId::from(trustnet_core::CTX_CODE_EXEC)),
+        ("WRITES", ContextId::from(trustnet_core::CTX_WRITES)),
+        ("DEFI_EXEC", ContextId::from(trustnet_core::CTX_DEFI_EXEC)),
+    ];
+
+    let mut by_context = HashMap::new();
+    for (suffix, context_id) in known_contexts {
+        let allow = parse_env_i8(&format!("TRUSTNET_ALLOW_THRESHOLD_{}", suffix))?
+            .unwrap_or(default.thresholds.allow);
+        let ask = parse_env_i8(&format!("TRUSTNET_ASK_THRESHOLD_{}", suffix))?
+            .unwrap_or(default.thresholds.ask);
+        let thresholds = Thresholds::new(allow, ask)
+            .map_err(|e| anyhow::anyhow!(e))
+            .with_context(|| format!("Invalid thresholds for {}", suffix))?;
+
+        let ttl_seconds = parse_env_u64(&format!("TRUSTNET_DECISION_TTL_SECONDS_{}", suffix))?
+            .unwrap_or(default.ttl_seconds);
+
+        let resolved = DecisionPolicyResolved {
+            thresholds,
+            ttl_seconds,
+        };
+
+        if resolved != default {
+            by_context.insert(context_id, resolved);
+        }
+    }
+
+    Ok(DecisionPolicy {
+        default,
+        by_context,
+    })
 }
 
 #[tokio::main]
@@ -48,12 +151,12 @@ async fn main() -> anyhow::Result<()> {
     let cache_dir = std::env::var("SMM_CACHE_DIR").unwrap_or_else(|_| "./smm_cache".to_string());
     let smm_cache = Arc::new(smm_cache::SmmCache::new(&cache_dir));
 
-    let thresholds = Thresholds::new(2, 1).expect("static thresholds");
+    let decision_policy = load_decision_policy_from_env()?;
 
     let state = AppState {
         db,
         smm_cache,
-        thresholds,
+        decision_policy,
         write_enabled,
     };
 
@@ -94,52 +197,119 @@ fn is_allowlisted_context_id(context_id: &ContextId) -> bool {
     )
 }
 
+const ERROR_CODE_INVALID_REQUEST: &str = "invalid_request";
+const ERROR_CODE_UNKNOWN_CONTEXT: &str = "unknown_context";
+const ERROR_CODE_ROOT_UNAVAILABLE: &str = "root_unavailable";
+const ERROR_CODE_PROOF_UNAVAILABLE: &str = "proof_unavailable";
+const ERROR_CODE_INVALID_SIGNATURE: &str = "invalid_signature";
+const ERROR_CODE_INTERNAL_ERROR: &str = "internal_error";
+
 #[derive(Serialize)]
 struct ErrorResponse {
-    error: String,
+    error: ErrorInfo,
+}
+
+#[derive(Serialize)]
+struct ErrorInfo {
+    code: &'static str,
+    message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    details: Option<serde_json::Value>,
+}
+
+fn api_error(
+    status: StatusCode,
+    code: &'static str,
+    message: impl Into<String>,
+) -> (StatusCode, Json<ErrorResponse>) {
+    (
+        status,
+        Json(ErrorResponse {
+            error: ErrorInfo {
+                code,
+                message: message.into(),
+                details: None,
+            },
+        }),
+    )
+}
+
+fn api_error_details(
+    status: StatusCode,
+    code: &'static str,
+    message: impl Into<String>,
+    details: serde_json::Value,
+) -> (StatusCode, Json<ErrorResponse>) {
+    (
+        status,
+        Json(ErrorResponse {
+            error: ErrorInfo {
+                code,
+                message: message.into(),
+                details: Some(details),
+            },
+        }),
+    )
 }
 
 fn bad_request(msg: impl Into<String>) -> (StatusCode, Json<ErrorResponse>) {
-    (
+    api_error(StatusCode::BAD_REQUEST, ERROR_CODE_INVALID_REQUEST, msg)
+}
+
+fn unknown_context(msg: impl Into<String>) -> (StatusCode, Json<ErrorResponse>) {
+    api_error_details(
         StatusCode::BAD_REQUEST,
-        Json(ErrorResponse { error: msg.into() }),
+        ERROR_CODE_UNKNOWN_CONTEXT,
+        msg,
+        serde_json::json!({ "field": "contextId" }),
     )
 }
 
 fn forbidden(msg: impl Into<String>) -> (StatusCode, Json<ErrorResponse>) {
-    (
-        StatusCode::FORBIDDEN,
-        Json(ErrorResponse { error: msg.into() }),
-    )
+    api_error(StatusCode::FORBIDDEN, ERROR_CODE_INVALID_REQUEST, msg)
 }
 
 fn not_found(msg: impl Into<String>) -> (StatusCode, Json<ErrorResponse>) {
-    (
-        StatusCode::NOT_FOUND,
-        Json(ErrorResponse { error: msg.into() }),
-    )
+    api_error(StatusCode::NOT_FOUND, ERROR_CODE_ROOT_UNAVAILABLE, msg)
 }
 
 fn conflict(msg: impl Into<String>) -> (StatusCode, Json<ErrorResponse>) {
-    (
-        StatusCode::CONFLICT,
-        Json(ErrorResponse { error: msg.into() }),
+    api_error(StatusCode::CONFLICT, ERROR_CODE_INVALID_REQUEST, msg)
+}
+
+fn root_unavailable(msg: impl Into<String>) -> (StatusCode, Json<ErrorResponse>) {
+    api_error(
+        StatusCode::SERVICE_UNAVAILABLE,
+        ERROR_CODE_ROOT_UNAVAILABLE,
+        msg,
     )
 }
 
-fn service_unavailable(msg: impl Into<String>) -> (StatusCode, Json<ErrorResponse>) {
-    (
+fn proof_unavailable(msg: impl Into<String>) -> (StatusCode, Json<ErrorResponse>) {
+    api_error(
         StatusCode::SERVICE_UNAVAILABLE,
-        Json(ErrorResponse { error: msg.into() }),
+        ERROR_CODE_PROOF_UNAVAILABLE,
+        msg,
+    )
+}
+
+fn invalid_signature(msg: impl Into<String>) -> (StatusCode, Json<ErrorResponse>) {
+    api_error(StatusCode::BAD_REQUEST, ERROR_CODE_INVALID_SIGNATURE, msg)
+}
+
+fn service_unavailable(msg: impl Into<String>) -> (StatusCode, Json<ErrorResponse>) {
+    api_error(
+        StatusCode::SERVICE_UNAVAILABLE,
+        ERROR_CODE_INTERNAL_ERROR,
+        msg,
     )
 }
 
 fn internal_error<E: std::fmt::Display>(err: E) -> (StatusCode, Json<ErrorResponse>) {
-    (
+    api_error(
         StatusCode::INTERNAL_SERVER_ERROR,
-        Json(ErrorResponse {
-            error: format!("Internal error: {}", err),
-        }),
+        ERROR_CODE_INTERNAL_ERROR,
+        format!("Internal error: {}", err),
     )
 }
 
@@ -248,7 +418,7 @@ async fn ensure_smm_for_epoch(
 
     let as_of_u64 = epoch
         .created_at_u64
-        .ok_or_else(|| service_unavailable("Epoch missing created_at_u64 (v0.4 required)"))?
+        .ok_or_else(|| root_unavailable("Epoch missing created_at_u64 (v0.4 required)"))?
         .max(0) as u64;
 
     if state.smm_cache.is_stale(published_root).await {
@@ -264,7 +434,7 @@ async fn ensure_smm_for_epoch(
             .map_err(internal_error)?;
 
         if !success && state.smm_cache.get().await.is_none() {
-            return Err(service_unavailable(
+            return Err(proof_unavailable(
                 "Proofs unavailable: edges_latest does not match published root",
             ));
         }
@@ -274,10 +444,10 @@ async fn ensure_smm_for_epoch(
         .smm_cache
         .get()
         .await
-        .ok_or_else(|| service_unavailable("SMM not available"))?;
+        .ok_or_else(|| proof_unavailable("SMM not available"))?;
 
     if smm.root() != published_root {
-        return Err(service_unavailable(
+        return Err(proof_unavailable(
             "SMM cache root mismatch; waiting for rebuild",
         ));
     }
@@ -316,9 +486,9 @@ async fn get_root(
     let manifest_hash_bytes = epoch
         .manifest_hash
         .as_deref()
-        .ok_or_else(|| service_unavailable("Epoch missing manifestHash (v0.4 required)"))?;
+        .ok_or_else(|| root_unavailable("Epoch missing manifestHash (v0.4 required)"))?;
     if manifest_hash_bytes.len() != 32 {
-        return Err(service_unavailable(format!(
+        return Err(root_unavailable(format!(
             "Epoch has invalid manifestHash length (expected 32, got {})",
             manifest_hash_bytes.len()
         )));
@@ -328,9 +498,9 @@ async fn get_root(
     let publisher_sig_bytes = epoch
         .publisher_sig
         .as_deref()
-        .ok_or_else(|| service_unavailable("Epoch missing publisherSig (v0.4 required)"))?;
+        .ok_or_else(|| root_unavailable("Epoch missing publisherSig (v0.4 required)"))?;
     if publisher_sig_bytes.len() != 65 {
-        return Err(service_unavailable(format!(
+        return Err(root_unavailable(format!(
             "Epoch has invalid publisherSig length (expected 65, got {})",
             publisher_sig_bytes.len()
         )));
@@ -552,7 +722,7 @@ async fn get_decision(
         .map_err(|_| bad_request("Invalid contextId (expected 0x-bytes32)"))?;
 
     if !is_allowlisted_context_id(&context_id) {
-        return Err(bad_request("Unknown contextId"));
+        return Err(unknown_context("Unknown contextId"));
     }
 
     let epoch = db::get_latest_epoch(&state.db)
@@ -564,7 +734,7 @@ async fn get_decision(
     let manifest_hash = epoch
         .manifest_hash
         .as_deref()
-        .ok_or_else(|| service_unavailable("Epoch missing manifestHash (v0.4 required)"))?;
+        .ok_or_else(|| root_unavailable("Epoch missing manifestHash (v0.4 required)"))?;
     let manifest_hash = parse_b256(manifest_hash).map_err(internal_error)?;
 
     let smm = ensure_smm_for_epoch(&state, &epoch).await?;
@@ -622,7 +792,8 @@ async fn get_decision(
         })
         .collect();
 
-    let result = decide(state.thresholds, dt_leaf.level, &engine_candidates);
+    let policy = state.decision_policy.for_context(&context_id);
+    let result = decide(policy.thresholds, dt_leaf.level, &engine_candidates);
 
     let (chosen_proof_de, chosen_proof_et, leaf_de, leaf_et) =
         if let Some(endorser) = result.endorser {
@@ -672,8 +843,8 @@ async fn get_decision(
         decision: decision_str,
         score: result.score,
         thresholds: ThresholdsJson {
-            allow: state.thresholds.allow,
-            ask: state.thresholds.ask,
+            allow: policy.thresholds.allow,
+            ask: policy.thresholds.ask,
         },
         endorser: result.endorser.map(|p| hex_bytes(p.as_bytes())),
         why: WhyJson {
@@ -681,7 +852,9 @@ async fn get_decision(
             edge_et: leaf_value_json_from_v1(&leaf_et),
             edge_dt: leaf_value_json_from_v1(&dt_leaf),
         },
-        constraints: ConstraintsJson { ttl_seconds: 300 },
+        constraints: ConstraintsJson {
+            ttl_seconds: policy.ttl_seconds,
+        },
         proofs: ProofsJson {
             de: chosen_proof_de,
             et: chosen_proof_et,
@@ -805,7 +978,7 @@ async fn post_rating(
         .map_err(|_| bad_request("Invalid contextId"))?;
 
     if !is_allowlisted_context_id(&context_id) {
-        return Err(bad_request("Unknown contextId"));
+        return Err(unknown_context("Unknown contextId"));
     }
 
     let level = Level::new(event.level).map_err(|e| bad_request(e.to_string()))?;
@@ -838,12 +1011,13 @@ async fn post_rating(
     };
 
     let unsigned_canonical = serde_jcs::to_vec(&unsigned).map_err(internal_error)?;
-    let sig_bytes = decode_binary_field("signature", &event.signature).map_err(bad_request)?;
+    let sig_bytes =
+        decode_binary_field("signature", &event.signature).map_err(invalid_signature)?;
 
     if let Some(expected) = rater.to_evm_address_opt() {
         let signature =
             alloy_primitives::PrimitiveSignature::from_raw(&sig_bytes).map_err(|e| {
-                bad_request(format!(
+                invalid_signature(format!(
                     "Invalid signature bytes (expected 65 bytes): {}",
                     e
                 ))
@@ -851,10 +1025,10 @@ async fn post_rating(
 
         let recovered = signature
             .recover_address_from_msg(&unsigned_canonical)
-            .map_err(|e| bad_request(format!("Invalid signature: {}", e)))?;
+            .map_err(|e| invalid_signature(format!("Invalid signature: {}", e)))?;
 
         if recovered != expected {
-            return Err(bad_request("Signature does not match rater"));
+            return Err(invalid_signature("Signature does not match rater"));
         }
     } else {
         // Non-EVM PrincipalId: treat as agentRef (self-certifying local identity).
@@ -871,17 +1045,17 @@ async fn post_rating(
 
         let agent_ref: [u8; 32] = Sha256::digest(pubkey_bytes).into();
         if agent_ref != *rater.as_bytes() {
-            return Err(bad_request("raterPubKey does not match agentRef"));
+            return Err(invalid_signature("raterPubKey does not match agentRef"));
         }
 
         let verifying_key = VerifyingKey::from_bytes(&pubkey_bytes)
             .map_err(|e| bad_request(format!("Invalid raterPubKey: {}", e)))?;
         let signature = Ed25519Signature::from_slice(&sig_bytes)
-            .map_err(|e| bad_request(format!("Invalid ed25519 signature: {}", e)))?;
+            .map_err(|e| invalid_signature(format!("Invalid ed25519 signature: {}", e)))?;
 
         verifying_key
             .verify_strict(&unsigned_canonical, &signature)
-            .map_err(|_| bad_request("Invalid signature"))?;
+            .map_err(|_| invalid_signature("Invalid signature"))?;
     }
 
     let event_json = String::from_utf8(serde_jcs::to_vec(&event).map_err(internal_error)?)
@@ -1174,7 +1348,13 @@ mod tests {
         let state = AppState {
             db,
             smm_cache: Arc::new(smm_cache::SmmCache::new(tmp.path())),
-            thresholds: Thresholds::new(2, 1).unwrap(),
+            decision_policy: DecisionPolicy {
+                default: DecisionPolicyResolved {
+                    thresholds: Thresholds::new(2, 1).unwrap(),
+                    ttl_seconds: 300,
+                },
+                by_context: HashMap::new(),
+            },
             write_enabled: true,
         };
 
@@ -1401,6 +1581,9 @@ mod tests {
             .unwrap();
 
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["error"]["code"], "unknown_context");
     }
 
     #[tokio::test]
@@ -1619,6 +1802,9 @@ mod tests {
             .unwrap();
 
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["error"]["code"], "unknown_context");
 
         let raw_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM edges_raw")
             .fetch_one(&state.db)
