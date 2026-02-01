@@ -251,7 +251,7 @@ mod tests {
             block_number: Some(100),
             tx_index: Some(0),
             log_index: Some(0),
-            tx_hash: None,
+            tx_hash: Some(alloy::primitives::B256::repeat_byte(0xaa)),
             server_seq: None,
         };
 
@@ -267,7 +267,7 @@ mod tests {
             block_number: Some(101),
             tx_index: Some(0),
             log_index: Some(0),
-            tx_hash: None,
+            tx_hash: Some(alloy::primitives::B256::repeat_byte(0xbb)),
             server_seq: None,
         };
 
@@ -376,7 +376,7 @@ mod tests {
             block_number: Some(102),
             tx_index: Some(0),
             log_index: Some(0),
-            tx_hash: None,
+            tx_hash: Some(alloy::primitives::B256::repeat_byte(0xcc)),
             server_seq: None,
         };
         storage.append_edge_raw(&edge3).await.unwrap();
