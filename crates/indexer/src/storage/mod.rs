@@ -19,6 +19,24 @@ pub mod types;
 
 pub use types::*;
 
+/// Deployment mode used to prevent mixed-source roots in a single DB (spec §9.3 MVP simplification).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeploymentMode {
+    /// Chain-only mode: ingest on-chain signals and build chain roots.
+    Chain,
+    /// Server-only mode: ingest private log signals and build server roots.
+    Server,
+}
+
+impl DeploymentMode {
+    fn as_str(&self) -> &'static str {
+        match self {
+            DeploymentMode::Chain => "chain",
+            DeploymentMode::Server => "server",
+        }
+    }
+}
+
 /// Database storage for the indexer.
 ///
 /// Provides async access to SQLite database with connection pooling.
@@ -102,6 +120,47 @@ impl Storage {
             .context("Failed to run migrations")?;
 
         info!("Migrations completed successfully");
+
+        Ok(())
+    }
+
+    /// Enforce a single-source deployment mode in this database.
+    ///
+    /// This is a hard guardrail against mixed-source roots (chain + private log) which require
+    /// a formalized cross-source `observedAt` ordering.
+    pub async fn enforce_deployment_mode(&self, expected: DeploymentMode) -> Result<()> {
+        let expected = expected.as_str();
+
+        // First writer wins: claim the mode if unset.
+        sqlx::query(
+            r#"
+            INSERT INTO deployment_mode (id, mode)
+            VALUES (1, ?)
+            ON CONFLICT(id) DO NOTHING
+            "#,
+        )
+        .bind(expected)
+        .execute(&self.pool)
+        .await
+        .context("Failed to claim deployment_mode")?;
+
+        let current: Option<String> =
+            sqlx::query_scalar("SELECT mode FROM deployment_mode WHERE id = 1")
+                .fetch_optional(&self.pool)
+                .await
+                .context("Failed to read deployment_mode")?;
+
+        let Some(current) = current else {
+            anyhow::bail!("deployment_mode missing row (id=1)");
+        };
+
+        if current != expected {
+            anyhow::bail!(
+                "deployment_mode mismatch: expected '{}', got '{}'. Use separate DBs per mode.",
+                expected,
+                current
+            );
+        }
 
         Ok(())
     }
@@ -203,6 +262,30 @@ mod tests {
         assert_eq!(stats.epoch_count, 0);
         assert_eq!(stats.block_count, 0);
         assert_eq!(stats.last_block_number, 0);
+
+        storage.close().await;
+    }
+
+    #[tokio::test]
+    async fn test_enforce_deployment_mode_first_writer_wins() {
+        let _temp_db = NamedTempFile::new().unwrap();
+        let db_path = _temp_db.path();
+
+        let storage = Storage::new_with_path(db_path, None, None).await.unwrap();
+        storage.run_migrations().await.unwrap();
+
+        storage
+            .enforce_deployment_mode(DeploymentMode::Chain)
+            .await
+            .unwrap();
+
+        let err = storage
+            .enforce_deployment_mode(DeploymentMode::Server)
+            .await
+            .unwrap_err();
+
+        let msg = format!("{:#}", err);
+        assert!(msg.contains("deployment_mode mismatch"));
 
         storage.close().await;
     }
