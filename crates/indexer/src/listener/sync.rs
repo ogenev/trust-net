@@ -1,5 +1,6 @@
 //! Sync engine for historical and live block processing.
 
+use alloy::primitives::Address;
 use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::time::Duration;
@@ -16,16 +17,24 @@ pub struct SyncEngine {
     storage: Storage,
     config: SyncConfig,
     chain_id: u64,
+    erc8004_namespace: Address,
 }
 
 impl SyncEngine {
     /// Create a new sync engine.
-    pub fn new(provider: RpcProvider, storage: Storage, config: SyncConfig, chain_id: u64) -> Self {
+    pub fn new(
+        provider: RpcProvider,
+        storage: Storage,
+        config: SyncConfig,
+        chain_id: u64,
+        erc8004_namespace: Address,
+    ) -> Self {
         Self {
             provider,
             storage,
             config,
             chain_id,
+            erc8004_namespace,
         }
     }
 
@@ -126,7 +135,9 @@ impl SyncEngine {
                 ChainEvent::TrustGraph(ev) => {
                     Some(ev.to_edge_record(self.chain_id, updated_at_u64)?)
                 }
-                ChainEvent::Erc8004(ev) => ev.to_edge_record(self.chain_id, updated_at_u64)?,
+                ChainEvent::Erc8004(ev) => {
+                    ev.to_edge_record(self.chain_id, updated_at_u64, self.erc8004_namespace)?
+                }
             };
 
             let Some(edge) = maybe_edge else {
@@ -197,7 +208,9 @@ impl SyncEngine {
                     ChainEvent::TrustGraph(ev) => {
                         Some(ev.to_edge_record(self.chain_id, updated_at_u64)?)
                     }
-                    ChainEvent::Erc8004(ev) => ev.to_edge_record(self.chain_id, updated_at_u64)?,
+                    ChainEvent::Erc8004(ev) => {
+                        ev.to_edge_record(self.chain_id, updated_at_u64, self.erc8004_namespace)?
+                    }
                 };
 
                 let Some(edge) = maybe_edge else {

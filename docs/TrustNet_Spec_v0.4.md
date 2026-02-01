@@ -357,10 +357,16 @@ When ingesting ERC‑8004 `NewFeedback`, TrustNet MUST apply a deterministic map
 
 **Mapping:**
 - `rater = principalId(clientAddress)`
-- `target = principalId( agentWallet(agentId) )` (resolved via ERC‑8004 identity)
+- `target = principalId( agentKey(chainId, registry, agentId) )` (stable agent identity; no wallet resolution required)
 - `contextId = tag1` (tag1 should be the TrustNet `contextId`)
 - `level = quantize(value)` (see below)
 - `evidenceUri/evidenceHash` from feedback URI/hash fields if present
+
+Where `agentKey` is a deterministic `bytes32` identifier derived from ERC‑8004 agent identity:
+
+`agentKey = keccak256( abi.encodePacked(uint256(chainId), address(registry), bytes32(agentId)) )`
+
+(`registry` SHOULD be the ERC‑8004 identity registry address; if unavailable, deployments MAY use the reputation contract address as the namespace. The chosen namespace MUST be reflected in the Root Manifest for reproducibility. Reference implementation rule: if `erc8004_identity` is configured, use it as `registry`, otherwise use `erc8004_reputation`.)
 
 **Quantization (default buckets):**
 - 80..100 → +2
