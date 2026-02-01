@@ -29,6 +29,8 @@ serde_jcs = "0.1"
 alloy-primitives = { version = "0.8", features = ["k256"] }
 base64 = "0.22"
 chrono = { version = "0.4", features = ["serde"] }
+ed25519-dalek = "2.1"
+sha2 = "0.10"
 
 # Utils
 anyhow = "1.0"
