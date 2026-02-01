@@ -120,6 +120,13 @@ fn not_found(msg: impl Into<String>) -> (StatusCode, Json<ErrorResponse>) {
     )
 }
 
+fn conflict(msg: impl Into<String>) -> (StatusCode, Json<ErrorResponse>) {
+    (
+        StatusCode::CONFLICT,
+        Json(ErrorResponse { error: msg.into() }),
+    )
+}
+
 fn service_unavailable(msg: impl Into<String>) -> (StatusCode, Json<ErrorResponse>) {
     (
         StatusCode::SERVICE_UNAVAILABLE,
@@ -289,10 +296,10 @@ struct RootResponseV1 {
     manifest_uri: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     manifest: Option<serde_json::Value>,
-    #[serde(rename = "manifestHash", skip_serializing_if = "Option::is_none")]
-    manifest_hash: Option<String>,
-    #[serde(rename = "publisherSig", skip_serializing_if = "Option::is_none")]
-    publisher_sig: Option<String>,
+    #[serde(rename = "manifestHash")]
+    manifest_hash: String,
+    #[serde(rename = "publisherSig")]
+    publisher_sig: String,
     #[serde(rename = "createdAt", skip_serializing_if = "Option::is_none")]
     created_at_u64: Option<u64>,
 }
@@ -306,11 +313,29 @@ async fn get_root(
         .ok_or_else(|| not_found("No epochs published"))?;
 
     let graph_root = parse_b256(&epoch.graph_root).map_err(internal_error)?;
-    let manifest_hash = epoch
+    let manifest_hash_bytes = epoch
         .manifest_hash
         .as_deref()
-        .and_then(|b| (b.len() == 32).then(|| hex_bytes(b)));
-    let publisher_sig = epoch.publisher_sig.as_deref().map(hex_bytes);
+        .ok_or_else(|| service_unavailable("Epoch missing manifestHash (v0.4 required)"))?;
+    if manifest_hash_bytes.len() != 32 {
+        return Err(service_unavailable(format!(
+            "Epoch has invalid manifestHash length (expected 32, got {})",
+            manifest_hash_bytes.len()
+        )));
+    }
+    let manifest_hash = hex_bytes(manifest_hash_bytes);
+
+    let publisher_sig_bytes = epoch
+        .publisher_sig
+        .as_deref()
+        .ok_or_else(|| service_unavailable("Epoch missing publisherSig (v0.4 required)"))?;
+    if publisher_sig_bytes.len() != 65 {
+        return Err(service_unavailable(format!(
+            "Epoch has invalid publisherSig length (expected 65, got {})",
+            publisher_sig_bytes.len()
+        )));
+    }
+    let publisher_sig = hex_bytes(publisher_sig_bytes);
 
     let manifest = match epoch.manifest_json.as_deref() {
         Some(json) => serde_json::from_str::<serde_json::Value>(json)
@@ -864,6 +889,41 @@ async fn post_rating(
 
     let mut tx = state.db.begin().await.map_err(internal_error)?;
 
+    // Hard guardrail (spec §9.3 MVP simplification): do not mix chain + private-log ingestion in one DB.
+    //
+    // First successful writer claims the DB's mode; subsequent mismatched writers are rejected.
+    sqlx::query(
+        r#"
+        INSERT INTO deployment_mode (id, mode)
+        VALUES (1, 'server')
+        ON CONFLICT(id) DO NOTHING
+        "#,
+    )
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| {
+        service_unavailable(format!(
+            "Failed to claim deployment_mode (run migrations?): {}",
+            e
+        ))
+    })?;
+
+    let current_mode: Option<String> =
+        sqlx::query_scalar("SELECT mode FROM deployment_mode WHERE id = 1")
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(internal_error)?;
+
+    let Some(current_mode) = current_mode else {
+        return Err(internal_error("deployment_mode missing row (id=1)"));
+    };
+
+    if current_mode != "server" {
+        return Err(conflict(
+            "DB is configured for chain mode; use a separate DB for server ingestion",
+        ));
+    }
+
     // Append immutable raw event (auditable).
     let result = sqlx::query(
         r#"
@@ -989,6 +1049,12 @@ mod tests {
 
         sqlx::query(
             r#"
+            CREATE TABLE deployment_mode (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                mode TEXT NOT NULL CHECK (mode IN ('server', 'chain')),
+                set_at INTEGER NOT NULL DEFAULT (unixepoch())
+            ) STRICT;
+
             CREATE TABLE edges_raw (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 rater_pid BLOB NOT NULL,
@@ -1142,6 +1208,81 @@ mod tests {
         let response = get_contexts().await;
         assert_eq!(response.0.contexts.len(), 5);
         assert_eq!(response.0.contexts[0].name, "trustnet:ctx:global:v1");
+    }
+
+    #[tokio::test]
+    async fn test_get_root_includes_manifest_hash_and_publisher_sig() {
+        let (state, _tmp, _decider, _endorser, _target, _context_id) = setup_state().await;
+        let app = Router::new()
+            .route("/v1/root", get(get_root))
+            .with_state(state);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/root")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+        assert_eq!(json["manifestHash"], format!("0x{}", "aa".repeat(32)));
+        assert_eq!(json["publisherSig"], format!("0x{}", "11".repeat(65)));
+    }
+
+    #[tokio::test]
+    async fn test_get_root_rejects_missing_manifest_hash() {
+        let (state, _tmp, _decider, _endorser, _target, _context_id) = setup_state().await;
+        sqlx::query("UPDATE epochs SET manifest_hash = NULL")
+            .execute(&state.db)
+            .await
+            .unwrap();
+
+        let app = Router::new()
+            .route("/v1/root", get(get_root))
+            .with_state(state);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/root")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    #[tokio::test]
+    async fn test_get_root_rejects_missing_publisher_sig() {
+        let (state, _tmp, _decider, _endorser, _target, _context_id) = setup_state().await;
+        sqlx::query("UPDATE epochs SET publisher_sig = NULL")
+            .execute(&state.db)
+            .await
+            .unwrap();
+
+        let app = Router::new()
+            .route("/v1/root", get(get_root))
+            .with_state(state);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/root")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
     }
 
     #[tokio::test]

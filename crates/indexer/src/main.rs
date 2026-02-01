@@ -91,7 +91,7 @@ fn init_logging(debug: bool) -> Result<()> {
 /// Main indexer service - runs event sync and root publishing
 async fn run_indexer(config_path: &str) -> Result<()> {
     use trustnet_indexer::config::Config;
-    use trustnet_indexer::storage::Storage;
+    use trustnet_indexer::storage::{DeploymentMode, Storage};
 
     info!("Starting indexer service with config: {}", config_path);
 
@@ -117,6 +117,11 @@ async fn run_indexer(config_path: &str) -> Result<()> {
         .run_migrations()
         .await
         .context("Failed to run migrations")?;
+
+    storage
+        .enforce_deployment_mode(DeploymentMode::Chain)
+        .await
+        .context("Database is not configured for chain deployment mode")?;
 
     info!("Database initialized");
 
@@ -353,7 +358,7 @@ async fn publish_root_manual(config_path: &str) -> Result<()> {
     use trustnet_indexer::config::Config;
     use trustnet_indexer::publisher::EventDrivenPublisher;
     use trustnet_indexer::smm_service::PeriodicSmmBuilder;
-    use trustnet_indexer::storage::Storage;
+    use trustnet_indexer::storage::{DeploymentMode, Storage};
 
     info!("Manual root publishing triggered");
 
@@ -375,6 +380,11 @@ async fn publish_root_manual(config_path: &str) -> Result<()> {
         .run_migrations()
         .await
         .context("Failed to run migrations")?;
+
+    storage
+        .enforce_deployment_mode(DeploymentMode::Chain)
+        .await
+        .context("Database is not configured for chain deployment mode")?;
 
     info!("Database connected");
 
