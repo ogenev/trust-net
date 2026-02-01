@@ -69,6 +69,9 @@ impl Storage {
     }
 
     async fn upsert_edge_latest_chain(&self, edge: &EdgeRecord) -> Result<bool> {
+        let Some(chain_id) = edge.chain_id else {
+            anyhow::bail!("chain edge missing chain_id");
+        };
         let Some(block_number) = edge.block_number else {
             anyhow::bail!("chain edge missing block_number");
         };
@@ -78,12 +81,15 @@ impl Storage {
         let Some(log_index) = edge.log_index else {
             anyhow::bail!("chain edge missing log_index");
         };
+        let Some(tx_hash) = edge.tx_hash else {
+            anyhow::bail!("chain edge missing tx_hash");
+        };
 
         let rater_pid = edge.rater.as_bytes().as_slice();
         let target_pid = edge.target.as_bytes().as_slice();
         let context_id = edge.context_id.as_bytes().as_slice();
         let evidence_hash = edge.evidence_hash.as_slice();
-        let tx_hash_bytes = edge.tx_hash.as_ref().map(|h| h.as_slice());
+        let tx_hash_bytes = tx_hash.as_slice();
 
         let result = sqlx::query(
             r#"
@@ -110,6 +116,7 @@ impl Storage {
                OR (excluded.block_number > edges_latest.block_number)
                OR (excluded.block_number = edges_latest.block_number AND excluded.tx_index > edges_latest.tx_index)
                OR (excluded.block_number = edges_latest.block_number AND excluded.tx_index = edges_latest.tx_index AND excluded.log_index > edges_latest.log_index)
+               OR (excluded.block_number = edges_latest.block_number AND excluded.tx_index = edges_latest.tx_index AND excluded.log_index = edges_latest.log_index AND (edges_latest.tx_hash IS NULL OR excluded.tx_hash > edges_latest.tx_hash))
             "#,
         )
         .bind(rater_pid)
@@ -119,7 +126,7 @@ impl Storage {
         .bind(edge.updated_at_u64 as i64)
         .bind(evidence_hash)
         .bind(edge.source.as_str())
-        .bind(edge.chain_id.map(|v| v as i64))
+        .bind(chain_id as i64)
         .bind(block_number as i64)
         .bind(tx_index as i64)
         .bind(log_index as i64)
@@ -353,7 +360,7 @@ mod tests {
             block_number: Some(100),
             tx_index: Some(1),
             log_index: Some(1),
-            tx_hash: None,
+            tx_hash: Some(B256::repeat_byte(0xaa)),
             server_seq: None,
         };
 
@@ -384,5 +391,59 @@ mod tests {
         assert_eq!(got.level, Level::strong_negative());
         assert_eq!(got.block_number, Some(100));
         assert_eq!(got.tx_index, Some(2));
+    }
+
+    #[tokio::test]
+    async fn test_latest_wins_chain_tie_breaker_by_tx_hash() {
+        let (storage, _temp_db) = setup_storage().await;
+
+        let rater = PrincipalId::from([0x11u8; 32]);
+        let target = PrincipalId::from([0x22u8; 32]);
+        let context_id = ContextId::from([0x33u8; 32]);
+
+        let mut a = EdgeRecord {
+            rater,
+            target,
+            context_id,
+            level: Level::positive(),
+            updated_at_u64: 1,
+            evidence_hash: B256::ZERO,
+            source: EdgeSource::TrustGraph,
+            chain_id: Some(1),
+            block_number: Some(100),
+            tx_index: Some(1),
+            log_index: Some(1),
+            tx_hash: Some(B256::repeat_byte(0x01)),
+            server_seq: None,
+        };
+
+        let mut b = a.clone();
+        b.level = Level::strong_negative();
+        b.tx_hash = Some(B256::repeat_byte(0x02));
+
+        storage.append_edge_raw(&a).await.unwrap();
+        assert!(storage.upsert_edge_latest(&a).await.unwrap());
+
+        storage.append_edge_raw(&b).await.unwrap();
+        assert!(storage.upsert_edge_latest(&b).await.unwrap());
+
+        let got = storage
+            .get_edge_latest(&rater, &target, &context_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(got.level, Level::strong_negative());
+        assert_eq!(got.tx_hash, Some(B256::repeat_byte(0x02)));
+
+        // Ingesting the lower txHash later must not change the result.
+        a.level = Level::strong_positive();
+        storage.append_edge_raw(&a).await.unwrap();
+        assert!(!storage.upsert_edge_latest(&a).await.unwrap());
+        let got = storage
+            .get_edge_latest(&rater, &target, &context_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(got.tx_hash, Some(B256::repeat_byte(0x02)));
     }
 }
