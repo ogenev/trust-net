@@ -1176,6 +1176,7 @@ Success criteria:
 {
   "type": "trustnet.rating.v1",
   "rater": "0x… or agentRef:…",
+  "raterPubKey": "base64:… (required for agentRef raters)",
   "target": "0x… or agentRef:…",
   "contextId": "0x…",
   "level": 1,
@@ -1185,6 +1186,14 @@ Success criteria:
   "signature": "base64..."
 }
 ```
+
+**Signature semantics (MVP):**
+- Define `unsignedEvent` as the same JSON object **without** the `signature` field.
+- Define `signingBytes = JCS(unsignedEvent)` (RFC 8785).
+- If `rater` is an **EVM address** (20 bytes), `signature` MUST be an ECDSA/secp256k1 signature (65 bytes) over `signingBytes` using Ethereum `personal_sign` / EIP‑191 semantics.
+- If `rater` is `agentRef:<bytes32>`, `signature` MUST be an `ed25519` signature (64 bytes) over `signingBytes`, and:
+  - `raterPubKey` MUST be the 32-byte ed25519 public key, and
+  - `agentRef == sha256(raterPubKey)`.
 
 ### Appendix B — Root Manifest schema (sketch)
 

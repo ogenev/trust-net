@@ -5,7 +5,9 @@ use axum::{
     Json, Router,
 };
 use base64::Engine;
+use ed25519_dalek::{Signature as Ed25519Signature, VerifyingKey};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use sqlx::{sqlite::SqliteConnectOptions, SqlitePool};
 use std::{net::SocketAddr, str::FromStr, sync::Arc};
 use tower_http::cors::CorsLayer;
@@ -693,6 +695,8 @@ struct RatingEventV1 {
     #[serde(rename = "type")]
     ty: String,
     rater: String,
+    #[serde(rename = "raterPubKey", default)]
+    rater_pub_key: Option<String>,
     target: String,
     #[serde(rename = "contextId")]
     context_id: String,
@@ -711,6 +715,8 @@ struct RatingEventUnsignedV1 {
     #[serde(rename = "type")]
     ty: String,
     rater: String,
+    #[serde(rename = "raterPubKey", skip_serializing_if = "Option::is_none")]
+    rater_pub_key: Option<String>,
     target: String,
     #[serde(rename = "contextId")]
     context_id: String,
@@ -730,14 +736,14 @@ struct RatingIngestResponse {
     server_seq: i64,
 }
 
-fn decode_signature_bytes(sig: &str) -> Result<Vec<u8>, String> {
-    let sig = sig.strip_prefix("base64:").unwrap_or(sig);
-    if let Some(hex_str) = sig.strip_prefix("0x") {
-        return hex::decode(hex_str).map_err(|e| format!("Invalid hex signature: {}", e));
+fn decode_binary_field(field: &str, value: &str) -> Result<Vec<u8>, String> {
+    let value = value.strip_prefix("base64:").unwrap_or(value);
+    if let Some(hex_str) = value.strip_prefix("0x") {
+        return hex::decode(hex_str).map_err(|e| format!("Invalid hex {}: {}", field, e));
     }
     base64::engine::general_purpose::STANDARD
-        .decode(sig)
-        .map_err(|e| format!("Invalid base64 signature: {}", e))
+        .decode(value)
+        .map_err(|e| format!("Invalid base64 {}: {}", field, e))
 }
 
 fn parse_rfc3339_seconds(s: &str) -> Result<u64, String> {
@@ -797,6 +803,7 @@ async fn post_rating(
     let unsigned = RatingEventUnsignedV1 {
         ty: event.ty.clone(),
         rater: event.rater.clone(),
+        rater_pub_key: event.rater_pub_key.clone(),
         target: event.target.clone(),
         context_id: event.context_id.clone(),
         level: level.value(),
@@ -806,25 +813,50 @@ async fn post_rating(
     };
 
     let unsigned_canonical = serde_jcs::to_vec(&unsigned).map_err(internal_error)?;
-    let sig_bytes = decode_signature_bytes(&event.signature).map_err(bad_request)?;
+    let sig_bytes = decode_binary_field("signature", &event.signature).map_err(bad_request)?;
 
-    let signature = alloy_primitives::PrimitiveSignature::from_raw(&sig_bytes).map_err(|e| {
-        bad_request(format!(
-            "Invalid signature bytes (expected 65 bytes): {}",
-            e
-        ))
-    })?;
+    if let Some(expected) = rater.to_evm_address_opt() {
+        let signature =
+            alloy_primitives::PrimitiveSignature::from_raw(&sig_bytes).map_err(|e| {
+                bad_request(format!(
+                    "Invalid signature bytes (expected 65 bytes): {}",
+                    e
+                ))
+            })?;
 
-    let recovered = signature
-        .recover_address_from_msg(&unsigned_canonical)
-        .map_err(|e| bad_request(format!("Invalid signature: {}", e)))?;
+        let recovered = signature
+            .recover_address_from_msg(&unsigned_canonical)
+            .map_err(|e| bad_request(format!("Invalid signature: {}", e)))?;
 
-    let expected = rater
-        .to_evm_address_opt()
-        .ok_or_else(|| bad_request("rater must be an EVM address (20 bytes)"))?;
+        if recovered != expected {
+            return Err(bad_request("Signature does not match rater"));
+        }
+    } else {
+        // Non-EVM PrincipalId: treat as agentRef (self-certifying local identity).
+        //
+        // v0.4 rule: agentRef == sha256(agentPublicKey). See spec §6.1.
+        let pubkey_str = event
+            .rater_pub_key
+            .as_deref()
+            .ok_or_else(|| bad_request("raterPubKey is required for agentRef raters"))?;
+        let pubkey_bytes = decode_binary_field("raterPubKey", pubkey_str).map_err(bad_request)?;
+        let pubkey_bytes: [u8; 32] = pubkey_bytes
+            .try_into()
+            .map_err(|_| bad_request("Invalid raterPubKey (expected 32 bytes)"))?;
 
-    if recovered != expected {
-        return Err(bad_request("Signature does not match rater"));
+        let agent_ref: [u8; 32] = Sha256::digest(pubkey_bytes).into();
+        if agent_ref != *rater.as_bytes() {
+            return Err(bad_request("raterPubKey does not match agentRef"));
+        }
+
+        let verifying_key = VerifyingKey::from_bytes(&pubkey_bytes)
+            .map_err(|e| bad_request(format!("Invalid raterPubKey: {}", e)))?;
+        let signature = Ed25519Signature::from_slice(&sig_bytes)
+            .map_err(|e| bad_request(format!("Invalid ed25519 signature: {}", e)))?;
+
+        verifying_key
+            .verify_strict(&unsigned_canonical, &signature)
+            .map_err(|_| bad_request("Invalid signature"))?;
     }
 
     let event_json = String::from_utf8(serde_jcs::to_vec(&event).map_err(internal_error)?)
@@ -920,6 +952,7 @@ mod tests {
         body::Body,
         http::{Request, StatusCode},
     };
+    use ed25519_dalek::{Signer, SigningKey};
     use http_body_util::BodyExt;
     use tempfile::TempDir;
     use tower::ServiceExt;
@@ -1245,6 +1278,7 @@ mod tests {
         let mut event = RatingEventV1 {
             ty: "trustnet.rating.v1".to_string(),
             rater: format!("0x{}", hex::encode(rater_addr.as_slice())),
+            rater_pub_key: None,
             target: hex_bytes(target.as_bytes()),
             context_id: hex_b256(context_id.inner()),
             level: 2,
@@ -1258,6 +1292,7 @@ mod tests {
         let unsigned = RatingEventUnsignedV1 {
             ty: event.ty.clone(),
             rater: event.rater.clone(),
+            rater_pub_key: None,
             target: event.target.clone(),
             context_id: event.context_id.clone(),
             level: event.level,
@@ -1306,6 +1341,82 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_post_rating_accepts_agentref_ed25519() {
+        let (state, _tmp, _decider, _endorser, target, context_id) = setup_state().await;
+        let app = Router::new()
+            .route("/v1/ratings", post(post_rating))
+            .with_state(state.clone());
+
+        // Create an ed25519 signer and derive agentRef = sha256(pubkey).
+        let signing_key = SigningKey::from_bytes(&[0x22u8; 32]);
+        let verifying_key = signing_key.verifying_key();
+        let pubkey_bytes = verifying_key.to_bytes();
+
+        let agent_ref: [u8; 32] = Sha256::digest(pubkey_bytes).into();
+        let rater = format!("agentRef:0x{}", hex::encode(agent_ref));
+
+        let created_at = "1970-01-01T00:16:40Z".to_string(); // 1000s
+
+        let mut event = RatingEventV1 {
+            ty: "trustnet.rating.v1".to_string(),
+            rater: rater.clone(),
+            rater_pub_key: Some(base64::engine::general_purpose::STANDARD.encode(pubkey_bytes)),
+            target: hex_bytes(target.as_bytes()),
+            context_id: hex_b256(context_id.inner()),
+            level: 2,
+            evidence_uri: None,
+            evidence_hash: None,
+            created_at: Some(created_at.clone()),
+            signature: String::new(),
+        };
+
+        let unsigned = RatingEventUnsignedV1 {
+            ty: event.ty.clone(),
+            rater: event.rater.clone(),
+            rater_pub_key: event.rater_pub_key.clone(),
+            target: event.target.clone(),
+            context_id: event.context_id.clone(),
+            level: event.level,
+            evidence_uri: None,
+            evidence_hash: None,
+            created_at: Some(created_at),
+        };
+
+        let unsigned_canonical = serde_jcs::to_vec(&unsigned).unwrap();
+        let sig = signing_key.sign(&unsigned_canonical);
+        event.signature = base64::engine::general_purpose::STANDARD.encode(sig.to_bytes());
+
+        let body = serde_json::to_vec(&event).unwrap();
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/ratings")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Ensure rows were appended.
+        let raw_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM edges_raw")
+            .fetch_one(&state.db)
+            .await
+            .unwrap();
+        assert_eq!(raw_count, 1);
+
+        let latest_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM edges_latest WHERE source = 'private_log'")
+                .fetch_one(&state.db)
+                .await
+                .unwrap();
+        assert_eq!(latest_count, 1);
+    }
+
+    #[tokio::test]
     async fn test_post_rating_rejects_unknown_context_id() {
         let (state, _tmp, _decider, _endorser, target, _context_id) = setup_state().await;
         let app = Router::new()
@@ -1322,6 +1433,7 @@ mod tests {
         let mut event = RatingEventV1 {
             ty: "trustnet.rating.v1".to_string(),
             rater: format!("0x{}", hex::encode(rater_addr.as_slice())),
+            rater_pub_key: None,
             target: hex_bytes(target.as_bytes()),
             context_id: hex_b256(unknown_context_id.inner()),
             level: 2,
@@ -1334,6 +1446,7 @@ mod tests {
         let unsigned = RatingEventUnsignedV1 {
             ty: event.ty.clone(),
             rater: event.rater.clone(),
+            rater_pub_key: None,
             target: event.target.clone(),
             context_id: event.context_id.clone(),
             level: event.level,
