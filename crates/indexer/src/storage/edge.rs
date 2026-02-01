@@ -34,6 +34,7 @@ impl Storage {
                 server_seq
             )
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(chain_id, tx_hash, log_index) DO NOTHING
             "#,
         )
         .bind(rater_pid)
@@ -53,7 +54,38 @@ impl Storage {
         .await
         .context("Failed to append edges_raw")?;
 
-        Ok(result.last_insert_rowid())
+        if result.rows_affected() > 0 {
+            return Ok(result.last_insert_rowid());
+        }
+
+        // Idempotent replays: return the existing row id.
+        let Some(chain_id) = edge.chain_id else {
+            anyhow::bail!("edges_raw insert ignored without chain_id");
+        };
+        let Some(tx_hash) = edge.tx_hash else {
+            anyhow::bail!("edges_raw insert ignored without tx_hash");
+        };
+        let Some(log_index) = edge.log_index else {
+            anyhow::bail!("edges_raw insert ignored without log_index");
+        };
+
+        let id: i64 = sqlx::query_scalar(
+            r#"
+            SELECT id
+            FROM edges_raw
+            WHERE chain_id = ?
+              AND tx_hash = ?
+              AND log_index = ?
+            "#,
+        )
+        .bind(chain_id as i64)
+        .bind(tx_hash.as_slice())
+        .bind(log_index as i64)
+        .fetch_one(&self.pool)
+        .await
+        .context("Failed to fetch existing edges_raw id")?;
+
+        Ok(id)
     }
 
     /// Upsert an edge into `edges_latest` with deterministic latest-wins semantics.
@@ -372,6 +404,7 @@ mod tests {
         let mut older = base.clone();
         older.level = Level::strong_positive();
         older.block_number = Some(99);
+        older.tx_hash = Some(B256::repeat_byte(0xbb));
         storage.append_edge_raw(&older).await.unwrap();
         assert!(!storage.upsert_edge_latest(&older).await.unwrap());
 
@@ -380,6 +413,7 @@ mod tests {
         newer.level = Level::strong_negative();
         newer.block_number = Some(100);
         newer.tx_index = Some(2);
+        newer.tx_hash = Some(B256::repeat_byte(0xcc));
         storage.append_edge_raw(&newer).await.unwrap();
         assert!(storage.upsert_edge_latest(&newer).await.unwrap());
 
@@ -445,5 +479,36 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(got.tx_hash, Some(B256::repeat_byte(0x02)));
+    }
+
+    #[tokio::test]
+    async fn test_append_edge_raw_chain_is_idempotent() {
+        let (storage, _temp_db) = setup_storage().await;
+
+        let edge = EdgeRecord {
+            rater: PrincipalId::from([0x11u8; 32]),
+            target: PrincipalId::from([0x22u8; 32]),
+            context_id: ContextId::from([0x33u8; 32]),
+            level: Level::positive(),
+            updated_at_u64: 1,
+            evidence_hash: B256::ZERO,
+            source: EdgeSource::TrustGraph,
+            chain_id: Some(1),
+            block_number: Some(100),
+            tx_index: Some(1),
+            log_index: Some(1),
+            tx_hash: Some(B256::repeat_byte(0xaa)),
+            server_seq: None,
+        };
+
+        let id1 = storage.append_edge_raw(&edge).await.unwrap();
+        let id2 = storage.append_edge_raw(&edge).await.unwrap();
+        assert_eq!(id1, id2);
+
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM edges_raw")
+            .fetch_one(storage.pool())
+            .await
+            .unwrap();
+        assert_eq!(count, 1);
     }
 }
