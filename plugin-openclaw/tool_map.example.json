@@ -1,0 +1,40 @@
+{
+  "version": 1,
+  "entries": [
+    {
+      "pattern": "^exec$",
+      "context": "trustnet:ctx:code-exec:v1",
+      "contextId": "0x5efe84ba1b51e4f09cf7666eca4d0685fcccf1ee1f5c051bfd1b40c537b4565b",
+      "riskTier": "high",
+      "constraints": { "ttlSeconds": 60 }
+    },
+    {
+      "pattern": "^payments\\.send$",
+      "context": "trustnet:ctx:payments:v1",
+      "contextId": "0x195c31d552212fd148934033b94b89c00b603e2b73e757a2b7684b4cc9602147",
+      "riskTier": "high",
+      "constraints": { "ttlSeconds": 300 }
+    },
+    {
+      "pattern": "^fs\\.write$",
+      "context": "trustnet:ctx:writes:v1",
+      "contextId": "0xa4d767d43a1aa6ce314b2c1df834966b812e18b0b99fcce9faf1591c0a6f2674",
+      "riskTier": "medium",
+      "constraints": { "ttlSeconds": 300 }
+    },
+    {
+      "pattern": "^messaging\\.send$",
+      "context": "trustnet:ctx:messaging:v1",
+      "contextId": "0x9a61a0d65a04cee1ab884471f6d8f2b07d58922715c5a822f2a3caaf7e587841",
+      "riskTier": "medium",
+      "constraints": { "ttlSeconds": 300 }
+    },
+    {
+      "pattern": ".*",
+      "context": "trustnet:ctx:global:v1",
+      "contextId": "0x430faa5635b6f437d8b5a2d66333fe4fbcf75602232a76b67e94fd4a3275169b",
+      "riskTier": "low",
+      "constraints": { "ttlSeconds": 300 }
+    }
+  ]
+}
