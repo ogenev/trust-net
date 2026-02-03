@@ -1,9 +1,9 @@
-//! TrustNet offline verifier (Spec v0.4).
+//! TrustNet offline verifier (Spec v0.6).
 //!
 //! Verifies:
 //! - root authenticity via publisher signature (server mode)
 //! - Sparse Merkle proofs for DT / DE / ET edges
-//! - score + decision consistency with the v0.4 rule
+//! - score + decision consistency with v0.6 evidence gating
 
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
@@ -27,6 +27,8 @@ pub struct RootResponseV1 {
     pub epoch: u64,
     #[serde(rename = "graphRoot")]
     pub graph_root: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub manifest: Option<serde_json::Value>,
     #[serde(rename = "manifestHash")]
     pub manifest_hash: Option<String>,
     #[serde(rename = "publisherSig")]
@@ -56,6 +58,8 @@ impl LeafValueJson {
 /// Canonical JSON proof format (uncompressed).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SmmProofV1Json {
+    #[serde(rename = "type")]
+    pub ty: String,
     #[serde(rename = "edgeKey")]
     pub edge_key: String,
     #[serde(rename = "contextId")]
@@ -67,11 +71,14 @@ pub struct SmmProofV1Json {
     #[serde(rename = "leafValue")]
     pub leaf_value: Option<LeafValueJson>,
     pub siblings: Vec<String>,
+    pub format: String,
 }
 
 /// Decision bundle response (Spec v0.4 shape).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DecisionBundleV1Json {
+    #[serde(rename = "type")]
+    pub ty: String,
     pub epoch: u64,
     #[serde(rename = "graphRoot")]
     pub graph_root: String,
@@ -86,6 +93,7 @@ pub struct DecisionBundleV1Json {
     pub thresholds: ThresholdsJson,
     pub endorser: Option<String>,
     pub why: WhyJson,
+    pub constraints: ConstraintsJson,
     pub proofs: ProofsJson,
 }
 
@@ -93,6 +101,16 @@ pub struct DecisionBundleV1Json {
 pub struct ThresholdsJson {
     pub allow: i8,
     pub ask: i8,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConstraintsJson {
+    #[serde(rename = "ttlSeconds")]
+    pub ttl_seconds: u64,
+    #[serde(rename = "requireEvidenceForPositiveET")]
+    pub require_evidence_for_positive_et: bool,
+    #[serde(rename = "requireEvidenceForPositiveDT")]
+    pub require_evidence_for_positive_dt: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -190,6 +208,16 @@ fn verify_smm_proof_against_root(
     proof: &SmmProofV1Json,
     root: &B256,
 ) -> anyhow::Result<LeafValueV1> {
+    anyhow::ensure!(
+        proof.ty == "trustnet.smmProof.v1",
+        "unsupported proof type: {}",
+        proof.ty
+    );
+    anyhow::ensure!(
+        proof.format == "uncompressed",
+        "unsupported proof format: {}",
+        proof.format
+    );
     let edge_key = parse_b256(&proof.edge_key)?;
     anyhow::ensure!(
         proof.siblings.len() == 256,
@@ -234,32 +262,6 @@ fn verify_smm_proof_against_root(
     }
 }
 
-fn score_v0_4(l_dt: i8, l_de: i8, l_et: i8) -> i8 {
-    if l_dt == -2 {
-        return -2;
-    }
-    let base = if l_de > 0 && l_et > 0 {
-        l_de.min(l_et)
-    } else {
-        0
-    };
-    if l_dt > 0 {
-        base.max(l_dt)
-    } else {
-        base
-    }
-}
-
-fn decision_from_thresholds(score: i8, thresholds: &ThresholdsJson) -> &'static str {
-    if score >= thresholds.allow {
-        "allow"
-    } else if score >= thresholds.ask {
-        "ask"
-    } else {
-        "deny"
-    }
-}
-
 fn verify_edge_key_binding(proof: &SmmProofV1Json) -> anyhow::Result<()> {
     let Some(rater) = proof.rater.as_deref() else {
         return Ok(());
@@ -288,6 +290,24 @@ fn verify_edge_key_binding(proof: &SmmProofV1Json) -> anyhow::Result<()> {
     Ok(())
 }
 
+fn verify_manifest_hash(root: &RootResponseV1) -> anyhow::Result<()> {
+    let Some(manifest) = root.manifest.as_ref() else {
+        return Ok(());
+    };
+    let manifest_hash = root
+        .manifest_hash
+        .as_deref()
+        .context("root.manifestHash missing")?;
+    let manifest_hash = parse_b256(manifest_hash)?;
+    let canonical = serde_jcs::to_vec(manifest).context("failed to canonicalize manifest")?;
+    let computed = trustnet_core::hashing::keccak256(&canonical);
+    anyhow::ensure!(
+        computed == manifest_hash,
+        "manifestHash mismatch (root.manifest does not match manifestHash)"
+    );
+    Ok(())
+}
+
 /// Verify a decision bundle against a root response (server/chain mode).
 pub fn verify_decision_bundle(
     root: &RootResponseV1,
@@ -295,6 +315,13 @@ pub fn verify_decision_bundle(
     expected_publisher: Option<trustnet_core::Address>,
 ) -> anyhow::Result<()> {
     let recovered = verify_root_signature(root, expected_publisher)?;
+    verify_manifest_hash(root)?;
+
+    anyhow::ensure!(
+        bundle.ty == "trustnet.decisionBundle.v1",
+        "decision bundle type mismatch: {}",
+        bundle.ty
+    );
 
     // Bind bundle to root.
     anyhow::ensure!(
@@ -314,18 +341,32 @@ pub fn verify_decision_bundle(
     verify_edge_key_binding(&bundle.proofs.dt)?;
     let dt = verify_smm_proof_against_root(&bundle.proofs.dt, &graph_root)?;
 
-    let (de, et) = match (&bundle.proofs.de, &bundle.proofs.et) {
-        (Some(de), Some(et)) => {
+    let (de, et, endorser) = match (
+        bundle.endorser.as_deref(),
+        &bundle.proofs.de,
+        &bundle.proofs.et,
+    ) {
+        (Some(endorser), Some(de), Some(et)) => {
             verify_edge_key_binding(de)?;
             verify_edge_key_binding(et)?;
             let de_lv = verify_smm_proof_against_root(de, &graph_root)?;
             let et_lv = verify_smm_proof_against_root(et, &graph_root)?;
-            (de_lv, et_lv)
+            let endorser = endorser
+                .parse::<PrincipalId>()
+                .context("invalid bundle.endorser")?;
+            (de_lv, et_lv, Some(endorser))
         }
-        _ => (
+        (None, None, None) => (
             LeafValueV1::default_neutral(),
             LeafValueV1::default_neutral(),
+            None,
         ),
+        (Some(_), _, _) => {
+            anyhow::bail!("endorser present but DE/ET proofs missing");
+        }
+        (None, Some(_), _) | (None, _, Some(_)) => {
+            anyhow::bail!("DE/ET proofs present but endorser missing");
+        }
     };
 
     // Verify "why" matches decoded proof values.
@@ -337,29 +378,65 @@ pub fn verify_decision_bundle(
     anyhow::ensure!(why_de == de, "why.edgeDE does not match DE proof leafValue");
     anyhow::ensure!(why_et == et, "why.edgeET does not match ET proof leafValue");
 
-    // Verify score + decision consistency.
-    let computed_score = score_v0_4(dt.level.value(), de.level.value(), et.level.value());
-    anyhow::ensure!(
-        computed_score == bundle.score,
-        "score mismatch (computed={}, bundle={})",
-        computed_score,
-        bundle.score
+    // Verify score + decision consistency (v0.6 evidence gating).
+    let thresholds =
+        trustnet_engine::Thresholds::new(bundle.thresholds.allow, bundle.thresholds.ask)
+            .map_err(|e| anyhow::anyhow!("invalid thresholds: {}", e))?;
+
+    let evidence_policy = trustnet_engine::EvidencePolicy {
+        require_positive_et_evidence: bundle.constraints.require_evidence_for_positive_et,
+        require_positive_dt_evidence: bundle.constraints.require_evidence_for_positive_dt,
+    };
+    let dt_has_evidence = dt.evidence_hash != B256::ZERO;
+    let candidates = endorser
+        .map(|endorser| {
+            vec![trustnet_engine::CandidateEvidence {
+                endorser,
+                level_de: de.level,
+                level_et: et.level,
+                et_has_evidence: et.evidence_hash != B256::ZERO,
+            }]
+        })
+        .unwrap_or_default();
+
+    let result = trustnet_engine::decide_with_evidence(
+        thresholds,
+        evidence_policy,
+        dt.level,
+        dt_has_evidence,
+        &candidates,
     );
 
-    let computed_decision = decision_from_thresholds(computed_score, &bundle.thresholds);
     anyhow::ensure!(
-        computed_decision == bundle.decision,
+        result.score == bundle.score,
+        "score mismatch (computed={}, bundle={})",
+        result.score,
+        bundle.score
+    );
+    anyhow::ensure!(
+        result.decision.as_str() == bundle.decision,
         "decision mismatch (computed={}, bundle={})",
-        computed_decision,
+        result.decision.as_str(),
         bundle.decision
     );
 
-    // Optional: sanity-check endorser presence vs DE/ET proofs.
-    if bundle.endorser.is_some() {
-        anyhow::ensure!(
-            bundle.proofs.de.is_some() && bundle.proofs.et.is_some(),
-            "endorser present but DE/ET proofs missing"
-        );
+    let bundle_endorser = bundle.endorser.as_deref();
+    match (endorser, result.endorser) {
+        (Some(parsed), Some(computed)) => {
+            anyhow::ensure!(
+                parsed == computed,
+                "endorser mismatch (bundle={}, computed=0x{})",
+                bundle_endorser.unwrap_or("<missing>"),
+                hex::encode(computed.as_bytes())
+            );
+        }
+        (Some(_), None) => {
+            anyhow::bail!("endorser present but decision does not select it");
+        }
+        (None, Some(_)) => {
+            anyhow::bail!("decision selected an endorser but bundle.endorser is missing");
+        }
+        (None, None) => {}
     }
 
     // If we reached here, everything verifies.

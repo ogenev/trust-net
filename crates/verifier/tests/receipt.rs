@@ -69,6 +69,7 @@ fn action_receipt_roundtrip_verifies() -> anyhow::Result<()> {
     });
 
     let dt_proof_json = trustnet_verifier::SmmProofV1Json {
+        ty: "trustnet.smmProof.v1".to_string(),
         edge_key: hex_b256(&dt_proof.key),
         context_id: Some(hex_b256(context_id.inner())),
         rater: Some(hex_32(decider.as_bytes())),
@@ -80,9 +81,11 @@ fn action_receipt_roundtrip_verifies() -> anyhow::Result<()> {
             evidence_hash: hex_b256(&dt_leaf.evidence_hash),
         }),
         siblings: dt_proof.siblings.iter().map(hex_b256).collect(),
+        format: "uncompressed".to_string(),
     };
 
     let decision_json = trustnet_verifier::DecisionBundleV1Json {
+        ty: "trustnet.decisionBundle.v1".to_string(),
         epoch,
         graph_root: hex_b256(&graph_root),
         manifest_hash: hex_b256(&manifest_hash),
@@ -109,6 +112,11 @@ fn action_receipt_roundtrip_verifies() -> anyhow::Result<()> {
                 updated_at: dt_leaf.updated_at_u64,
                 evidence_hash: hex_b256(&dt_leaf.evidence_hash),
             },
+        },
+        constraints: trustnet_verifier::ConstraintsJson {
+            ttl_seconds: 3600,
+            require_evidence_for_positive_et: false,
+            require_evidence_for_positive_dt: false,
         },
         proofs: trustnet_verifier::ProofsJson {
             de: None,
