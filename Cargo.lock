@@ -4518,6 +4518,7 @@ dependencies = [
  "trustnet-core",
  "trustnet-engine",
  "trustnet-smm",
+ "trustnet-verifier",
 ]
 
 [[package]]

@@ -449,9 +449,8 @@ mod tests {
     use crate::ordering::observed_at_for_chain;
     use trustnet_core::types::Level;
 
-    #[test]
-    fn test_to_edge_record() {
-        let event = NewFeedbackEvent {
+    fn base_event() -> NewFeedbackEvent {
+        NewFeedbackEvent {
             agent_id: U256::from(1u64),
             client_address: Address::repeat_byte(0x02),
             feedback_index: U256::from(7u64),
@@ -466,7 +465,12 @@ mod tests {
             tx_index: 5,
             log_index: 2,
             tx_hash: B256::repeat_byte(0xaa),
-        };
+        }
+    }
+
+    #[test]
+    fn test_to_edge_record() {
+        let event = base_event();
 
         // Core quantizer uses [80, 60, 40, 20] buckets:
         // 80-100 → +2
@@ -511,22 +515,8 @@ mod tests {
 
     #[test]
     fn test_to_edge_record_guard_rejects_untagged() {
-        let event = NewFeedbackEvent {
-            agent_id: U256::from(1u64),
-            client_address: Address::repeat_byte(0x02),
-            feedback_index: U256::from(7u64),
-            value: 85,
-            value_decimals: 0,
-            tag1: "trustnet:ctx:payments:v1".to_string(),
-            tag2: "not-trustnet".to_string(),
-            endpoint: "trustnet".to_string(),
-            feedback_uri: Some("ipfs://example".to_string()),
-            feedback_hash: B256::repeat_byte(0x11),
-            block_number: 100,
-            tx_index: 5,
-            log_index: 2,
-            tx_hash: B256::repeat_byte(0xaa),
-        };
+        let mut event = base_event();
+        event.tag2 = "not-trustnet".to_string();
 
         let observed_at_u64 =
             observed_at_for_chain(event.block_number, event.tx_index, event.log_index);
@@ -538,6 +528,69 @@ mod tests {
                 observed_at_u64,
                 Some(Address::repeat_byte(0x33)),
                 Some(Address::repeat_byte(0x44)),
+            )
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn test_to_edge_record_guard_rejects_bad_endpoint() {
+        let mut event = base_event();
+        event.endpoint = "not-trustnet".to_string();
+
+        let observed_at_u64 =
+            observed_at_for_chain(event.block_number, event.tx_index, event.log_index);
+
+        assert!(event
+            .to_edge_record(
+                1,
+                1,
+                observed_at_u64,
+                Some(Address::repeat_byte(0x33)),
+                Some(Address::repeat_byte(0x44)),
+            )
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn test_to_edge_record_parses_hex_context_id() {
+        let mut event = base_event();
+        event.tag1 = format!("0x{}", hex::encode(trustnet_core::CTX_PAYMENTS.as_slice()));
+
+        let observed_at_u64 =
+            observed_at_for_chain(event.block_number, event.tx_index, event.log_index);
+
+        let edge = event
+            .to_edge_record(
+                1,
+                1,
+                observed_at_u64,
+                Some(Address::repeat_byte(0x33)),
+                Some(Address::repeat_byte(0x44)),
+            )
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(
+            edge.context_id,
+            ContextId::from(trustnet_core::CTX_PAYMENTS)
+        );
+    }
+
+    #[test]
+    fn test_to_edge_record_requires_agent_wallet() {
+        let event = base_event();
+        let observed_at_u64 =
+            observed_at_for_chain(event.block_number, event.tx_index, event.log_index);
+
+        assert!(event
+            .to_edge_record(
+                1,
+                1,
+                observed_at_u64,
+                Some(Address::repeat_byte(0x33)),
+                None,
             )
             .unwrap()
             .is_none());

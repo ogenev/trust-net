@@ -1276,6 +1276,8 @@ mod tests {
     use http_body_util::BodyExt;
     use tempfile::TempDir;
     use tower::ServiceExt;
+    use trustnet_engine::{CandidateEvidence, EvidencePolicy};
+    use trustnet_verifier::{DecisionBundleV1Json, RootResponseV1};
 
     async fn setup_state() -> (
         AppState,
@@ -1631,27 +1633,190 @@ mod tests {
         assert!(proof_de.verify(graph_root));
         assert!(proof_et.verify(graph_root));
 
+        assert_eq!(json["proofs"]["DT"]["type"], "trustnet.smmProof.v1");
+        assert_eq!(json["proofs"]["DT"]["format"], "uncompressed");
+
+        let ttl_seconds = json["constraints"]["ttlSeconds"].as_u64().unwrap();
+        let require_et = json["constraints"]["requireEvidenceForPositiveET"]
+            .as_bool()
+            .unwrap();
+        let require_dt = json["constraints"]["requireEvidenceForPositiveDT"]
+            .as_bool()
+            .unwrap();
+        assert_eq!(ttl_seconds, 300);
+        assert!(!require_et);
+        assert!(!require_dt);
+
         // Verify decision score rule locally (gateway behavior).
         let l_dt = json["why"]["edgeDT"]["level"].as_i64().unwrap() as i8;
         let l_de = json["why"]["edgeDE"]["level"].as_i64().unwrap() as i8;
         let l_et = json["why"]["edgeET"]["level"].as_i64().unwrap() as i8;
 
-        // v0.4 scoring: veto dominates; else base = min(lDE,lET) if both > 0; direct positive overrides.
-        let score = if l_dt == -2 {
-            -2
-        } else {
-            let base = if l_de > 0 && l_et > 0 {
-                l_de.min(l_et)
-            } else {
-                0
-            };
-            if l_dt > 0 {
-                base.max(l_dt)
-            } else {
-                base
-            }
+        let thresholds = Thresholds::new(
+            json["thresholds"]["allow"].as_i64().unwrap() as i8,
+            json["thresholds"]["ask"].as_i64().unwrap() as i8,
+        )
+        .unwrap();
+
+        let dt_evidence = json["why"]["edgeDT"]["evidenceHash"]
+            .as_str()
+            .unwrap()
+            .parse::<B256>()
+            .unwrap();
+        let et_evidence = json["why"]["edgeET"]["evidenceHash"]
+            .as_str()
+            .unwrap()
+            .parse::<B256>()
+            .unwrap();
+
+        let mut candidates = Vec::new();
+        if json["endorser"].is_string() {
+            candidates.push(CandidateEvidence {
+                endorser,
+                level_de: Level::new(l_de).unwrap(),
+                level_et: Level::new(l_et).unwrap(),
+                et_has_evidence: et_evidence != B256::ZERO,
+            });
+        }
+
+        let evidence_policy = EvidencePolicy {
+            require_positive_et_evidence: require_et,
+            require_positive_dt_evidence: require_dt,
         };
-        assert_eq!(json["score"].as_i64().unwrap() as i8, score);
+        let result = trustnet_engine::decide_with_evidence(
+            thresholds,
+            evidence_policy,
+            Level::new(l_dt).unwrap(),
+            dt_evidence != B256::ZERO,
+            &candidates,
+        );
+
+        assert_eq!(json["score"].as_i64().unwrap() as i8, result.score);
+        assert_eq!(json["decision"].as_str().unwrap(), result.decision.as_str());
+    }
+
+    #[tokio::test]
+    async fn test_decision_bundle_applies_evidence_gating() {
+        let (mut state, _tmp, decider, _endorser, target, context_id) = setup_state().await;
+        state.decision_policy.default.require_evidence_et = true;
+
+        let app = Router::new()
+            .route("/v1/decision", get(get_decision))
+            .with_state(state);
+
+        let uri = format!(
+            "/v1/decision?decider={}&target={}&contextId={}",
+            hex_bytes(decider.as_bytes()),
+            hex_bytes(target.as_bytes()),
+            hex_b256(context_id.inner())
+        );
+
+        let response = app
+            .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+        assert_eq!(json["decision"], "deny");
+        assert!(json["endorser"].is_null());
+        assert!(json["proofs"]["DE"].is_null());
+        assert!(json["proofs"]["ET"].is_null());
+        assert_eq!(json["score"].as_i64().unwrap() as i8, 0);
+        assert_eq!(json["why"]["edgeDE"]["level"].as_i64().unwrap(), 0);
+        assert_eq!(json["why"]["edgeET"]["level"].as_i64().unwrap(), 0);
+
+        assert_eq!(json["constraints"]["requireEvidenceForPositiveET"], true);
+        assert_eq!(json["constraints"]["requireEvidenceForPositiveDT"], false);
+    }
+
+    #[tokio::test]
+    async fn test_decision_bundle_verifies_with_verifier() {
+        let (state, _tmp, decider, _endorser, target, context_id) = setup_state().await;
+
+        let graph_root_bytes: Vec<u8> =
+            sqlx::query_scalar("SELECT graph_root FROM epochs WHERE epoch = 1")
+                .fetch_one(&state.db)
+                .await
+                .unwrap();
+        let graph_root = B256::from_slice(&graph_root_bytes);
+
+        let manifest_value = serde_json::json!({ "specVersion": "trustnet-spec-0.6" });
+        let canonical = serde_jcs::to_vec(&manifest_value).unwrap();
+        let manifest_hash = trustnet_core::hashing::keccak256(&canonical);
+
+        let publisher_key = [0x42u8; 32];
+        let signing_key = k256::ecdsa::SigningKey::from_bytes((&publisher_key).into()).unwrap();
+        let publisher_addr = trustnet_core::Address::from_private_key(&signing_key);
+
+        let digest =
+            trustnet_core::hashing::compute_root_signature_hash(1, &graph_root, &manifest_hash);
+        let (sig, recid) = signing_key
+            .sign_prehash_recoverable(digest.as_slice())
+            .unwrap();
+        let sig = alloy_primitives::PrimitiveSignature::from((sig, recid));
+        let sig_bytes: [u8; 65] = sig.into();
+
+        let manifest_json = String::from_utf8(canonical).unwrap();
+        sqlx::query(
+            "UPDATE epochs SET manifest_json = ?, manifest_hash = ?, publisher_sig = ? WHERE epoch = 1",
+        )
+        .bind(manifest_json)
+        .bind(manifest_hash.as_slice())
+        .bind(sig_bytes.as_slice())
+        .execute(&state.db)
+        .await
+        .unwrap();
+
+        let app_root = Router::new()
+            .route("/v1/root", get(get_root))
+            .with_state(state.clone());
+        let app_decision = Router::new()
+            .route("/v1/decision", get(get_decision))
+            .with_state(state);
+
+        let root_response = app_root
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/root")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(root_response.status(), StatusCode::OK);
+        let root_body = root_response
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes();
+        let root_json: serde_json::Value = serde_json::from_slice(&root_body).unwrap();
+        let root: RootResponseV1 = serde_json::from_value(root_json).unwrap();
+
+        let uri = format!(
+            "/v1/decision?decider={}&target={}&contextId={}",
+            hex_bytes(decider.as_bytes()),
+            hex_bytes(target.as_bytes()),
+            hex_b256(context_id.inner())
+        );
+        let decision_response = app_decision
+            .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(decision_response.status(), StatusCode::OK);
+        let decision_body = decision_response
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes();
+        let decision_json: serde_json::Value = serde_json::from_slice(&decision_body).unwrap();
+        let bundle: DecisionBundleV1Json = serde_json::from_value(decision_json).unwrap();
+
+        trustnet_verifier::verify_decision_bundle(&root, &bundle, Some(publisher_addr)).unwrap();
     }
 
     #[tokio::test]

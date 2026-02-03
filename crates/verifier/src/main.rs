@@ -218,7 +218,7 @@ fn main() -> anyhow::Result<()> {
         }
 
         Command::Vectors => {
-            let vectors = trustnet_verifier::generate_vectors_v0_4();
+            let vectors = trustnet_verifier::generate_vectors_v0_6();
             println!("{}", serde_json::to_string_pretty(&vectors)?);
         }
     }

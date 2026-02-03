@@ -12,7 +12,7 @@ contract TrustPathVerifierTest is Test {
 
     function _vectorsPath() private view returns (string memory) {
         // Foundry projectRoot() is the `solidity/` folder; vectors live in `../docs/`.
-        return string.concat(vm.projectRoot(), "/../docs/Test_Vectors_v0.4.json");
+        return string.concat(vm.projectRoot(), "/../docs/Test_Vectors_v0.6.json");
     }
 
     function _loadVectors() private view returns (string memory json) {
