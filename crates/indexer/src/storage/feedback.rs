@@ -7,6 +7,14 @@ fn u256_to_bytes(value: &alloy::primitives::U256) -> [u8; 32] {
     value.to_be_bytes()
 }
 
+fn i128_to_bytes(value: i128) -> [u8; 32] {
+    let mut out = [0u8; 32];
+    let pad = if value < 0 { 0xFF } else { 0x00 };
+    out[..16].fill(pad);
+    out[16..].copy_from_slice(&value.to_be_bytes());
+    out
+}
+
 impl Storage {
     /// Append a raw ERC-8004 NewFeedback record.
     ///
@@ -14,7 +22,7 @@ impl Storage {
     pub async fn append_feedback_raw(&self, record: &FeedbackRecord) -> Result<i64> {
         let agent_id_bytes = u256_to_bytes(&record.agent_id);
         let feedback_index_bytes = u256_to_bytes(&record.feedback_index);
-        let value_bytes = u256_to_bytes(&record.value);
+        let value_bytes = i128_to_bytes(record.value);
 
         let tx_hash_bytes = record.tx_hash.as_ref().map(|h| h.as_slice());
 
@@ -206,7 +214,7 @@ mod tests {
             agent_id: U256::from(123u64),
             client_address: Address::repeat_byte(0x22),
             feedback_index: U256::from(1u64),
-            value: U256::from(100u64),
+            value: 100,
             value_decimals: 0,
             tag1: "trustnet:ctx:payments:v1".to_string(),
             tag2: "trustnet:v1".to_string(),

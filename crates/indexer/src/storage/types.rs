@@ -74,8 +74,8 @@ pub struct FeedbackRecord {
     pub client_address: Address,
     /// Feedback index (uint256).
     pub feedback_index: U256,
-    /// Raw value (uint256).
-    pub value: U256,
+    /// Raw value (int128, fixed-point).
+    pub value: i128,
     /// Value decimals.
     pub value_decimals: u8,
     /// Tag1 string.
