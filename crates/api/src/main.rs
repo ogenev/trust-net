@@ -1336,7 +1336,7 @@ mod tests {
         .bind(1i64)
         .bind(graph_root.as_slice())
         .bind(2i64)
-        .bind(r#"{"specVersion":"trustnet-spec-0.4"}"#)
+        .bind(r#"{"specVersion":"trustnet-spec-0.6"}"#)
         .bind([0xaau8; 32].as_slice())
         .bind([0x11u8; 65].as_slice())
         .bind(created_at_u64 as i64)

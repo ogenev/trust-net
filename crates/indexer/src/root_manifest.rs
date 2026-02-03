@@ -42,7 +42,7 @@ pub struct ChainManifestConfigV1 {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RootManifestV1 {
-    /// Spec version string (e.g., "trustnet-spec-0.4").
+    /// Spec version string (e.g., "trustnet-spec-0.6").
     pub spec_version: String,
 
     /// Epoch number for this root (monotonic).
@@ -229,7 +229,7 @@ pub fn build_chain_root_manifest_v1(
     let to_block_hash = to_block_hash.unwrap_or(B256::ZERO);
 
     RootManifestV1 {
-        spec_version: "trustnet-spec-0.4".to_string(),
+        spec_version: "trustnet-spec-0.6".to_string(),
         epoch,
         graph_root: hex_b256(graph_root),
         source_mode: SourceModeV1::Chain,
@@ -275,7 +275,7 @@ pub fn build_server_root_manifest_v1(
     let stream_hash = stream_hash.unwrap_or(B256::ZERO);
 
     RootManifestV1 {
-        spec_version: "trustnet-spec-0.4".to_string(),
+        spec_version: "trustnet-spec-0.6".to_string(),
         epoch,
         graph_root: hex_b256(graph_root),
         source_mode: SourceModeV1::Server,
