@@ -7,7 +7,7 @@ pragma solidity ^0.8.26;
  * @dev These context IDs are used to scope trust ratings to specific capabilities,
  *      preventing privilege escalation across different capability domains.
  *
- * Spec: https://github.com/trustnet/whitepaper Section 8.4
+ * Spec: TrustNet_Spec_v0.6.md §7
  */
 library TrustNetContexts {
     /**

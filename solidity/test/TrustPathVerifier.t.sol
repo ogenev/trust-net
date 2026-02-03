@@ -95,7 +95,9 @@ contract TrustPathVerifierTest is Test {
             proofDE: empty,
             proofET: empty,
             allowThreshold: 2,
-            askThreshold: 1
+            askThreshold: 1,
+            requirePositiveEtEvidence: false,
+            requirePositiveDtEvidence: false
         });
 
         TrustPathVerifier.DecisionResult memory result = TrustPathVerifier.verifyAndDecide(req);
@@ -123,6 +125,35 @@ contract TrustPathVerifierTest is Test {
     function test_ComputeScore_DirectOverridesUpwards() public pure {
         assertEq(TrustPathVerifier.computeScore(2, 2, 1), int8(2));
         assertEq(TrustPathVerifier.computeScore(1, 2, 2), int8(2));
+    }
+
+    function test_ComputeScoreWithEvidence_GatesMissingEvidence() public pure {
+        TrustPathVerifier.LeafValueV1 memory dt = TrustPathVerifier.LeafValueV1({
+            level: 1,
+            updatedAt: 0,
+            evidenceHash: bytes32(0)
+        });
+        TrustPathVerifier.LeafValueV1 memory de = TrustPathVerifier.LeafValueV1({
+            level: 2,
+            updatedAt: 0,
+            evidenceHash: bytes32(0)
+        });
+        TrustPathVerifier.LeafValueV1 memory et = TrustPathVerifier.LeafValueV1({
+            level: 2,
+            updatedAt: 0,
+            evidenceHash: bytes32(0)
+        });
+
+        int8 score = TrustPathVerifier.computeScoreWithEvidence(dt, de, et, true, true);
+        assertEq(score, int8(0), "gated score");
+
+        TrustPathVerifier.LeafValueV1 memory etEvidence = TrustPathVerifier.LeafValueV1({
+            level: 2,
+            updatedAt: 0,
+            evidenceHash: bytes32(uint256(1))
+        });
+        score = TrustPathVerifier.computeScoreWithEvidence(dt, de, etEvidence, true, false);
+        assertEq(score, int8(2), "score with et evidence");
     }
 
     function test_Decide_InvalidThresholdsReverts() public {

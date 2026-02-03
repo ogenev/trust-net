@@ -3,15 +3,17 @@ pragma solidity ^0.8.26;
 
 /**
  * @title TrustPathVerifier
- * @notice TrustNet v0.4 on-chain verifier (optional for MVP).
+ * @notice TrustNet v0.6 on-chain verifier (optional for MVP).
  *
  * This library verifies uncompressed Sparse Merkle Map proofs (256 siblings)
- * and applies the v0.4 trust-to-act decision rule:
+ * and applies the v0.6 trust-to-act decision rule:
  * - Hard veto: `lDT == -2` => DENY
  * - Endorsements only contribute when both edges are positive:
  *   `base = min(lDE, lET)` where `lDE > 0 && lET > 0`
  * - Direct trust can override upwards: if `lDT > 0`, `score = max(base, lDT)`
  * - Thresholds map score => ALLOW / ASK / DENY
+ * - Evidence gating (optional): if enabled, positive `lDT` or `lET` without evidence hash
+ *   are treated as neutral (0). Hard veto still applies.
  *
  * Hashing (must match Rust `trustnet-core`):
  * - edgeKey = keccak256(raterPid32 || targetPid32 || contextId)
@@ -20,7 +22,7 @@ pragma solidity ^0.8.26;
  * - leafHash = keccak256(0x00 || edgeKey || leafValueBytes)
  * - internalHash = keccak256(0x01 || left || right)
  *
- * Leaf value encoding (v0.4 MVP) is 41 bytes:
+ * Leaf value encoding (v0.6) is 41 bytes:
  * - levelEnc (1 byte): uint8(level + 2) ∈ [0..4]
  * - updatedAtEnc (8 bytes): uint64 big-endian
  * - evidenceHash (32 bytes): bytes32 (zero if none)
@@ -75,6 +77,8 @@ library TrustPathVerifier {
         SmmProof proofET;
         int8 allowThreshold;
         int8 askThreshold;
+        bool requirePositiveEtEvidence;
+        bool requirePositiveDtEvidence;
     }
 
     function _defaultLeaf() private pure returns (LeafValueV1 memory) {
@@ -167,7 +171,7 @@ library TrustPathVerifier {
         }
     }
 
-    /// Compute v0.4 score from decoded levels.
+    /// Compute v0.6 base score from decoded levels (no evidence gating).
     function computeScore(int8 lDT, int8 lDE, int8 lET) internal pure returns (int8) {
         if (lDT == -2) {
             return -2;
@@ -183,6 +187,28 @@ library TrustPathVerifier {
         }
 
         return base;
+    }
+
+    /// Compute v0.6 score with evidence gating for positive edges.
+    function computeScoreWithEvidence(
+        LeafValueV1 memory dt,
+        LeafValueV1 memory de,
+        LeafValueV1 memory et,
+        bool requirePositiveEtEvidence,
+        bool requirePositiveDtEvidence
+    ) internal pure returns (int8) {
+        int8 lDT = dt.level;
+        int8 lDE = de.level;
+        int8 lET = et.level;
+
+        if (requirePositiveEtEvidence && lET > 0 && et.evidenceHash == bytes32(0)) {
+            lET = 0;
+        }
+        if (requirePositiveDtEvidence && lDT > 0 && dt.evidenceHash == bytes32(0)) {
+            lDT = 0;
+        }
+
+        return computeScore(lDT, lDE, lET);
     }
 
     /// Map score + thresholds to a decision.
@@ -215,7 +241,13 @@ library TrustPathVerifier {
             et = verifyProof(req.graphRoot, keyET, req.proofET);
         }
 
-        int8 score = computeScore(dt.level, de.level, et.level);
+        int8 score = computeScoreWithEvidence(
+            dt,
+            de,
+            et,
+            req.requirePositiveEtEvidence,
+            req.requirePositiveDtEvidence
+        );
         Decision d = decide(score, req.allowThreshold, req.askThreshold);
 
         result = DecisionResult({
