@@ -4,6 +4,8 @@
 
 use alloy::primitives::{Address, B256};
 use serde::Serialize;
+use std::collections::BTreeMap;
+use trustnet_core::types::ContextId;
 
 fn hex_b256(v: &B256) -> String {
     format!("0x{}", hex::encode(v.as_slice()))
@@ -38,7 +40,7 @@ pub struct ChainManifestConfigV1 {
     pub confirmations: u64,
 }
 
-/// Root Manifest (v0.4 MVP).
+/// Root Manifest (v0.6 MVP).
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RootManifestV1 {
@@ -60,11 +62,20 @@ pub struct RootManifestV1 {
     /// Hash of the canonical context registry (see spec §10.3).
     pub context_registry_hash: String,
 
+    /// Guard for ERC-8004 TrustNet edges (required when ingesting ERC-8004 edges).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub erc8004_trust_edge_guard: Option<Erc8004TrustEdgeGuardV1>,
+
+    /// Binding policy for ERC-8004 subject → principal (required when ingesting ERC-8004 edges).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub erc8004_target_binding_policy: Option<Erc8004TargetBindingPolicyV1>,
+
     /// Quantization policy used for mapping ERC-8004 signals into levels.
-    pub quantization_policy: QuantizationPolicyV1,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub erc8004_quantization_policy: Option<QuantizationPolicyV1>,
 
     /// TTL policy used to prune stale edges during root building.
-    pub ttl_policy: serde_json::Value,
+    pub ttl_policy: TtlPolicyV1,
 
     /// Leaf value format identifier (e.g., "levelUpdatedAtEvidenceV1").
     pub leaf_value_format: String,
@@ -167,6 +178,30 @@ pub struct ManifestWindowV1 {
     pub to_block_hash: String,
 }
 
+/// Guard for ERC-8004 TrustNet edges.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Erc8004TrustEdgeGuardV1 {
+    /// Required endpoint string.
+    pub endpoint: String,
+    /// Required tag2 string.
+    pub tag2: String,
+    /// Accepted tag1 formats (e.g., "contextString", "bytes32Hex").
+    pub tag1_formats: Vec<String>,
+}
+
+/// Binding policy for ERC-8004 agentId → agentWallet.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Erc8004TargetBindingPolicyV1 {
+    /// Policy type (e.g., "agentWalletAtBlock").
+    pub r#type: String,
+    /// ERC-8004 Identity Registry address.
+    pub identity_registry: String,
+    /// Block height at which binding is resolved.
+    pub at_block: u64,
+}
+
 /// Quantization policy (v0.4 MVP uses buckets).
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -177,6 +212,17 @@ pub struct QuantizationPolicyV1 {
     /// Score bucket cutoffs (0-100) used to map to levels.
     pub buckets: Vec<u8>,
 }
+
+/// TTL policy entry for a context.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TtlPolicyEntryV1 {
+    /// Time-to-live in seconds (0 disables pruning).
+    pub ttl_seconds: u64,
+}
+
+/// TTL policy keyed by canonical context strings.
+pub type TtlPolicyV1 = BTreeMap<String, TtlPolicyEntryV1>;
 
 /// Default edge value committed by the sparse map (neutral).
 #[derive(Debug, Clone, Serialize)]
@@ -205,15 +251,56 @@ pub fn build_context_registry_hash_v1() -> B256 {
 /// Default TTL policy (MVP).
 ///
 /// Represented as a JSON object keyed by canonical context strings.
-pub fn default_ttl_policy_v1() -> serde_json::Value {
+pub fn default_ttl_policy_v1() -> TtlPolicyV1 {
     // These defaults are intentionally conservative and can be made configurable.
-    serde_json::json!({
-        "trustnet:ctx:global:v1": { "ttlSeconds": 0 },
-        "trustnet:ctx:payments:v1": { "ttlSeconds": 2592000 }, // 30 days
-        "trustnet:ctx:code-exec:v1": { "ttlSeconds": 604800 }, // 7 days
-        "trustnet:ctx:writes:v1": { "ttlSeconds": 604800 }, // 7 days
-        "trustnet:ctx:messaging:v1": { "ttlSeconds": 604800 } // 7 days
-    })
+    let mut policy = TtlPolicyV1::new();
+    policy.insert(
+        "trustnet:ctx:global:v1".to_string(),
+        TtlPolicyEntryV1 { ttl_seconds: 0 },
+    );
+    policy.insert(
+        "trustnet:ctx:payments:v1".to_string(),
+        TtlPolicyEntryV1 {
+            ttl_seconds: 30 * 24 * 60 * 60,
+        },
+    );
+    policy.insert(
+        "trustnet:ctx:code-exec:v1".to_string(),
+        TtlPolicyEntryV1 {
+            ttl_seconds: 7 * 24 * 60 * 60,
+        },
+    );
+    policy.insert(
+        "trustnet:ctx:writes:v1".to_string(),
+        TtlPolicyEntryV1 {
+            ttl_seconds: 7 * 24 * 60 * 60,
+        },
+    );
+    policy.insert(
+        "trustnet:ctx:messaging:v1".to_string(),
+        TtlPolicyEntryV1 {
+            ttl_seconds: 7 * 24 * 60 * 60,
+        },
+    );
+    policy
+}
+
+/// Resolve TTL seconds for a context id using the default policy.
+pub fn ttl_seconds_for_context_id(context_id: &ContextId) -> u64 {
+    let id = context_id.inner();
+    if *id == trustnet_core::CTX_PAYMENTS {
+        return 30 * 24 * 60 * 60;
+    }
+    if *id == trustnet_core::CTX_CODE_EXEC {
+        return 7 * 24 * 60 * 60;
+    }
+    if *id == trustnet_core::CTX_WRITES {
+        return 7 * 24 * 60 * 60;
+    }
+    if *id == trustnet_core::CTX_MESSAGING {
+        return 7 * 24 * 60 * 60;
+    }
+    0
 }
 
 /// Build a chain-mode Root Manifest (v0.4).
@@ -249,10 +336,22 @@ pub fn build_chain_root_manifest_v1(
             confirmations: config.confirmations,
         }),
         context_registry_hash: hex_b256(&context_registry_hash),
-        quantization_policy: QuantizationPolicyV1 {
+        erc8004_trust_edge_guard: Some(Erc8004TrustEdgeGuardV1 {
+            endpoint: "trustnet".to_string(),
+            tag2: "trustnet:v1".to_string(),
+            tag1_formats: vec!["contextString".to_string(), "bytes32Hex".to_string()],
+        }),
+        erc8004_target_binding_policy: config.erc8004_identity.as_ref().map(|addr| {
+            Erc8004TargetBindingPolicyV1 {
+                r#type: "agentWalletAtBlock".to_string(),
+                identity_registry: hex_addr(addr),
+                at_block: built_at_block,
+            }
+        }),
+        erc8004_quantization_policy: Some(QuantizationPolicyV1 {
             r#type: "buckets".to_string(),
             buckets: vec![80, 60, 40, 20],
-        },
+        }),
         ttl_policy: default_ttl_policy_v1(),
         leaf_value_format: "levelUpdatedAtEvidenceV1".to_string(),
         default_edge_value: DefaultEdgeValueV1 { level: 0 },
@@ -286,10 +385,9 @@ pub fn build_server_root_manifest_v1(
             stream_hash: hex_b256(&stream_hash),
         }),
         context_registry_hash: hex_b256(&context_registry_hash),
-        quantization_policy: QuantizationPolicyV1 {
-            r#type: "buckets".to_string(),
-            buckets: vec![80, 60, 40, 20],
-        },
+        erc8004_trust_edge_guard: None,
+        erc8004_target_binding_policy: None,
+        erc8004_quantization_policy: None,
         ttl_policy: default_ttl_policy_v1(),
         leaf_value_format: "levelUpdatedAtEvidenceV1".to_string(),
         default_edge_value: DefaultEdgeValueV1 { level: 0 },

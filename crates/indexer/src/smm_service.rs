@@ -13,26 +13,8 @@ use trustnet_smm::SmmBuilder;
 
 use crate::storage::Storage;
 
-fn ttl_seconds_for_context_id(context_id: &trustnet_core::types::ContextId) -> u64 {
-    // Default: no TTL pruning for unknown contexts (MVP-safe).
-    let id = context_id.inner();
-    if *id == trustnet_core::CTX_PAYMENTS {
-        return 30 * 24 * 60 * 60; // 30 days
-    }
-    if *id == trustnet_core::CTX_CODE_EXEC {
-        return 7 * 24 * 60 * 60; // 7 days
-    }
-    if *id == trustnet_core::CTX_WRITES {
-        return 7 * 24 * 60 * 60; // 7 days
-    }
-    if *id == trustnet_core::CTX_MESSAGING {
-        return 7 * 24 * 60 * 60; // 7 days
-    }
-    0
-}
-
 fn edge_is_expired(edge: &crate::storage::EdgeRecord, as_of_u64: u64) -> bool {
-    let ttl_seconds = ttl_seconds_for_context_id(&edge.context_id);
+    let ttl_seconds = crate::root_manifest::ttl_seconds_for_context_id(&edge.context_id);
     if ttl_seconds == 0 {
         return false;
     }
