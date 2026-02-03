@@ -892,6 +892,8 @@ async fn get_proof(
 struct RatingEventV1 {
     #[serde(rename = "type")]
     ty: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    source: Option<String>,
     rater: String,
     #[serde(rename = "raterPubKey", default)]
     rater_pub_key: Option<String>,
@@ -905,6 +907,12 @@ struct RatingEventV1 {
     evidence_hash: Option<String>,
     #[serde(rename = "createdAt", default)]
     created_at: Option<String>,
+    #[serde(
+        rename = "observedAt",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    observed_at: Option<u64>,
     signature: String,
 }
 
@@ -912,6 +920,8 @@ struct RatingEventV1 {
 struct RatingEventUnsignedV1 {
     #[serde(rename = "type")]
     ty: String,
+    #[serde(rename = "source", skip_serializing_if = "Option::is_none")]
+    source: Option<String>,
     rater: String,
     #[serde(rename = "raterPubKey", skip_serializing_if = "Option::is_none")]
     rater_pub_key: Option<String>,
@@ -964,6 +974,12 @@ async fn post_rating(
         return Err(bad_request("Invalid type (expected trustnet.rating.v1)"));
     }
 
+    if let Some(source) = &event.source {
+        if source.to_lowercase() != "private_log" {
+            return Err(bad_request("Invalid source (expected private_log)"));
+        }
+    }
+
     let rater = event
         .rater
         .parse::<PrincipalId>()
@@ -1000,6 +1016,7 @@ async fn post_rating(
 
     let unsigned = RatingEventUnsignedV1 {
         ty: event.ty.clone(),
+        source: event.source.clone(),
         rater: event.rater.clone(),
         rater_pub_key: event.rater_pub_key.clone(),
         target: event.target.clone(),
@@ -1103,13 +1120,15 @@ async fn post_rating(
         r#"
         INSERT INTO edges_raw (
             rater_pid, target_pid, context_id,
-            level_i8, updated_at_u64, evidence_hash,
+            level_i8, updated_at_u64, evidence_hash, evidence_uri,
             source,
+            observed_at_u64,
+            subject_id,
             chain_id, block_number, tx_index, log_index, tx_hash,
             server_seq,
             event_json, signature
         )
-        VALUES (?, ?, ?, ?, ?, ?, 'private_log', NULL, NULL, NULL, NULL, NULL, NULL, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 'private_log', ?, NULL, NULL, NULL, NULL, NULL, NULL, NULL, ?, ?)
         "#,
     )
     .bind(rater.as_bytes().as_slice())
@@ -1118,6 +1137,8 @@ async fn post_rating(
     .bind(level.value() as i32)
     .bind(created_at_u64 as i64)
     .bind(evidence_hash.as_slice())
+    .bind(event.evidence_uri.as_deref())
+    .bind(0i64)
     .bind(&event_json)
     .bind(&sig_bytes)
     .execute(&mut *tx)
@@ -1127,7 +1148,8 @@ async fn post_rating(
     let server_seq = result.last_insert_rowid();
 
     // Store the server seq on the raw row for easy reproduction via seq windows.
-    sqlx::query("UPDATE edges_raw SET server_seq = ? WHERE id = ?")
+    sqlx::query("UPDATE edges_raw SET server_seq = ?, observed_at_u64 = ? WHERE id = ?")
+        .bind(server_seq)
         .bind(server_seq)
         .bind(server_seq)
         .execute(&mut *tx)
@@ -1139,17 +1161,22 @@ async fn post_rating(
         r#"
         INSERT INTO edges_latest (
             rater_pid, target_pid, context_id,
-            level_i8, updated_at_u64, evidence_hash, source,
+            level_i8, updated_at_u64, evidence_hash, evidence_uri, source,
+            observed_at_u64,
+            subject_id,
             chain_id, block_number, tx_index, log_index, tx_hash,
             server_seq
         )
-        VALUES (?, ?, ?, ?, ?, ?, 'private_log', NULL, NULL, NULL, NULL, NULL, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 'private_log', ?, NULL, NULL, NULL, NULL, NULL, NULL, ?)
         ON CONFLICT(rater_pid, target_pid, context_id)
         DO UPDATE SET
             level_i8 = excluded.level_i8,
             updated_at_u64 = excluded.updated_at_u64,
             evidence_hash = excluded.evidence_hash,
+            evidence_uri = excluded.evidence_uri,
             source = excluded.source,
+            observed_at_u64 = excluded.observed_at_u64,
+            subject_id = excluded.subject_id,
             chain_id = NULL,
             block_number = NULL,
             tx_index = NULL,
@@ -1166,6 +1193,8 @@ async fn post_rating(
     .bind(level.value() as i32)
     .bind(created_at_u64 as i64)
     .bind(evidence_hash.as_slice())
+    .bind(event.evidence_uri.as_deref())
+    .bind(server_seq)
     .bind(server_seq)
     .execute(&mut *tx)
     .await
@@ -1237,7 +1266,10 @@ mod tests {
                 level_i8 INTEGER NOT NULL,
                 updated_at_u64 INTEGER NOT NULL,
                 evidence_hash BLOB NOT NULL,
+                evidence_uri TEXT,
                 source TEXT NOT NULL,
+                observed_at_u64 INTEGER NOT NULL DEFAULT 0,
+                subject_id BLOB,
                 chain_id INTEGER,
                 block_number INTEGER,
                 tx_index INTEGER,
@@ -1255,7 +1287,10 @@ mod tests {
                 level_i8 INTEGER NOT NULL,
                 updated_at_u64 INTEGER NOT NULL,
                 evidence_hash BLOB NOT NULL,
+                evidence_uri TEXT,
                 source TEXT NOT NULL,
+                observed_at_u64 INTEGER NOT NULL DEFAULT 0,
+                subject_id BLOB,
                 chain_id INTEGER,
                 block_number INTEGER,
                 tx_index INTEGER,
@@ -1601,6 +1636,7 @@ mod tests {
 
         let mut event = RatingEventV1 {
             ty: "trustnet.rating.v1".to_string(),
+            source: None,
             rater: format!("0x{}", hex::encode(rater_addr.as_slice())),
             rater_pub_key: None,
             target: hex_bytes(target.as_bytes()),
@@ -1609,12 +1645,14 @@ mod tests {
             evidence_uri: None,
             evidence_hash: None,
             created_at: Some(created_at.clone()),
+            observed_at: None,
             signature: String::new(),
         };
 
         // Sign canonical JCS of the unsigned event with EIP-191 message prefix.
         let unsigned = RatingEventUnsignedV1 {
             ty: event.ty.clone(),
+            source: None,
             rater: event.rater.clone(),
             rater_pub_key: None,
             target: event.target.clone(),
@@ -1683,6 +1721,7 @@ mod tests {
 
         let mut event = RatingEventV1 {
             ty: "trustnet.rating.v1".to_string(),
+            source: None,
             rater: rater.clone(),
             rater_pub_key: Some(base64::engine::general_purpose::STANDARD.encode(pubkey_bytes)),
             target: hex_bytes(target.as_bytes()),
@@ -1691,11 +1730,13 @@ mod tests {
             evidence_uri: None,
             evidence_hash: None,
             created_at: Some(created_at.clone()),
+            observed_at: None,
             signature: String::new(),
         };
 
         let unsigned = RatingEventUnsignedV1 {
             ty: event.ty.clone(),
+            source: None,
             rater: event.rater.clone(),
             rater_pub_key: event.rater_pub_key.clone(),
             target: event.target.clone(),
@@ -1756,6 +1797,7 @@ mod tests {
 
         let mut event = RatingEventV1 {
             ty: "trustnet.rating.v1".to_string(),
+            source: None,
             rater: format!("0x{}", hex::encode(rater_addr.as_slice())),
             rater_pub_key: None,
             target: hex_bytes(target.as_bytes()),
@@ -1764,11 +1806,13 @@ mod tests {
             evidence_uri: None,
             evidence_hash: None,
             created_at: Some(created_at.clone()),
+            observed_at: None,
             signature: String::new(),
         };
 
         let unsigned = RatingEventUnsignedV1 {
             ty: event.ty.clone(),
+            source: None,
             rater: event.rater.clone(),
             rater_pub_key: None,
             target: event.target.clone(),

@@ -136,6 +136,68 @@ impl FromStr for PrincipalId {
     }
 }
 
+/// SubjectId (stable identity representation).
+///
+/// A 32-byte identifier for a stable agent identity that can outlive key rotation.
+///
+/// v0.6 encoding rules (see spec §6.1.2):
+/// - ERC-8004 subject: keccak256(abi.encodePacked(uint256(chainId), address(identityRegistry), uint256(agentId))).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct SubjectId(B256);
+
+impl SubjectId {
+    /// Create a SubjectId from raw bytes.
+    pub const fn new(bytes: B256) -> Self {
+        Self(bytes)
+    }
+
+    /// Get the inner bytes.
+    pub const fn inner(&self) -> &B256 {
+        &self.0
+    }
+
+    /// Get bytes.
+    pub fn as_bytes(&self) -> &[u8; 32] {
+        self.0.as_ref()
+    }
+}
+
+impl From<B256> for SubjectId {
+    fn from(value: B256) -> Self {
+        Self(value)
+    }
+}
+
+impl From<[u8; 32]> for SubjectId {
+    fn from(value: [u8; 32]) -> Self {
+        Self(B256::from(value))
+    }
+}
+
+impl fmt::Display for SubjectId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl FromStr for SubjectId {
+    type Err = CoreError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let b256 = B256::from_str(s).map_err(|_| CoreError::Other("Invalid SubjectId".into()))?;
+        Ok(Self(b256))
+    }
+}
+
+/// Target binding policy used to map subject identities to actionable principals.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum TargetBindingPolicy {
+    /// Resolve `agentId -> agentWallet` at a specific block height.
+    AgentWalletAtBlock,
+}
+
 /// Trust level ranging from -2 to +2.
 ///
 /// This type enforces validation during both construction and deserialization
@@ -411,6 +473,7 @@ impl Edge {
 mod tests {
     use super::*;
     use alloy_primitives::hex;
+    use hex::encode;
 
     #[test]
     fn test_address_creation() {
@@ -606,6 +669,15 @@ mod tests {
         let ctx = ContextId::from(bytes);
         let display = format!("{}", ctx);
         assert!(display.starts_with("0x430faa"));
+    }
+
+    #[test]
+    fn test_subject_id_roundtrip() {
+        let bytes = [0x11u8; 32];
+        let hex_str = format!("0x{}", encode(bytes));
+        let subject = hex_str.parse::<SubjectId>().expect("parse SubjectId");
+        assert_eq!(subject.as_bytes(), &bytes);
+        assert_eq!(format!("{}", subject), hex_str);
     }
 
     #[test]
