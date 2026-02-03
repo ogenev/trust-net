@@ -81,7 +81,7 @@ contract TestHelpers is Test {
                 TrustNetContexts.PAYMENTS,
                 TrustNetContexts.CODE_EXEC,
                 TrustNetContexts.WRITES,
-                TrustNetContexts.DEFI_EXEC
+                TrustNetContexts.MESSAGING
             ];
 
             for (uint256 i = 0; i < count; i++) {

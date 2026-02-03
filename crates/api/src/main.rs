@@ -91,13 +91,13 @@ fn load_decision_policy_from_env() -> anyhow::Result<DecisionPolicy> {
     // - TRUSTNET_ASK_THRESHOLD_<CONTEXT>
     // - TRUSTNET_DECISION_TTL_SECONDS_<CONTEXT>
     //
-    // Context suffixes: GLOBAL, PAYMENTS, CODE_EXEC, WRITES, DEFI_EXEC.
+    // Context suffixes: GLOBAL, PAYMENTS, CODE_EXEC, WRITES, MESSAGING.
     let known_contexts = [
         ("GLOBAL", ContextId::from(trustnet_core::CTX_GLOBAL)),
         ("PAYMENTS", ContextId::from(trustnet_core::CTX_PAYMENTS)),
         ("CODE_EXEC", ContextId::from(trustnet_core::CTX_CODE_EXEC)),
         ("WRITES", ContextId::from(trustnet_core::CTX_WRITES)),
-        ("DEFI_EXEC", ContextId::from(trustnet_core::CTX_DEFI_EXEC)),
+        ("MESSAGING", ContextId::from(trustnet_core::CTX_MESSAGING)),
     ];
 
     let mut by_context = HashMap::new();
@@ -193,7 +193,7 @@ fn is_allowlisted_context_id(context_id: &ContextId) -> bool {
             | trustnet_core::CTX_PAYMENTS
             | trustnet_core::CTX_CODE_EXEC
             | trustnet_core::CTX_WRITES
-            | trustnet_core::CTX_DEFI_EXEC
+            | trustnet_core::CTX_MESSAGING
     )
 }
 
@@ -324,7 +324,7 @@ fn ttl_seconds_for_context_id(context_id: &ContextId) -> u64 {
     if *id == trustnet_core::CTX_WRITES {
         return 7 * 24 * 60 * 60;
     }
-    if *id == trustnet_core::CTX_DEFI_EXEC {
+    if *id == trustnet_core::CTX_MESSAGING {
         return 7 * 24 * 60 * 60;
     }
     0
@@ -563,9 +563,9 @@ async fn get_contexts() -> Json<ContextsResponse> {
                 description: "Writes/modification context".to_string(),
             },
             ContextInfo {
-                name: "trustnet:ctx:defi-exec:v1".to_string(),
-                context_id: hex_b256(&trustnet_core::CTX_DEFI_EXEC),
-                description: "DeFi execution context".to_string(),
+                name: "trustnet:ctx:messaging:v1".to_string(),
+                context_id: hex_b256(&trustnet_core::CTX_MESSAGING),
+                description: "Messaging context".to_string(),
             },
         ],
     })

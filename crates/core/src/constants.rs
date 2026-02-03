@@ -33,10 +33,10 @@ pub const CTX_CODE_EXEC: B256 =
 pub const CTX_WRITES: B256 =
     b256!("a4d767d43a1aa6ce314b2c1df834966b812e18b0b99fcce9faf1591c0a6f2674");
 
-/// DeFi execution context - for DeFi protocol interactions.
-/// keccak256("trustnet:ctx:defi-exec:v1")
-pub const CTX_DEFI_EXEC: B256 =
-    b256!("3372ad16565f09e46bfdcd8668e8ddb764599c1e6088d92a088c17ecb464ad65");
+/// Messaging context - for messaging or notification operations.
+/// keccak256("trustnet:ctx:messaging:v1")
+pub const CTX_MESSAGING: B256 =
+    b256!("9a61a0d65a04cee1ab884471f6d8f2b07d58922715c5a822f2a3caaf7e587841");
 
 // SMM (Sparse Merkle Map) constants
 
@@ -81,7 +81,7 @@ mod tests {
             ("trustnet:ctx:payments:v1", CTX_PAYMENTS),
             ("trustnet:ctx:code-exec:v1", CTX_CODE_EXEC),
             ("trustnet:ctx:writes:v1", CTX_WRITES),
-            ("trustnet:ctx:defi-exec:v1", CTX_DEFI_EXEC),
+            ("trustnet:ctx:messaging:v1", CTX_MESSAGING),
         ];
 
         for (input, expected) in test_cases {

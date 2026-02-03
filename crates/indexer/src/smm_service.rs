@@ -25,7 +25,7 @@ fn ttl_seconds_for_context_id(context_id: &trustnet_core::types::ContextId) -> u
     if *id == trustnet_core::CTX_WRITES {
         return 7 * 24 * 60 * 60; // 7 days
     }
-    if *id == trustnet_core::CTX_DEFI_EXEC {
+    if *id == trustnet_core::CTX_MESSAGING {
         return 7 * 24 * 60 * 60; // 7 days
     }
     0

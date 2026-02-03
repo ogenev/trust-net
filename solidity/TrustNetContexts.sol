@@ -42,12 +42,12 @@ library TrustNetContexts {
         0xa4d767d43a1aa6ce314b2c1df834966b812e18b0b99fcce9faf1591c0a6f2674;
 
     /**
-     * @notice DeFi execution context - trust for DeFi protocol interactions
-     * @dev keccak256("trustnet:ctx:defi-exec:v1")
-     * @dev Used for gating DeFi operations (e.g., rebalancing, yield farming)
+     * @notice Messaging context - trust for messaging/notification operations
+     * @dev keccak256("trustnet:ctx:messaging:v1")
+     * @dev Used for gating outbound messaging (e.g., email, Slack, SMS)
      */
-    bytes32 public constant DEFI_EXEC =
-        0x3372ad16565f09e46bfdcd8668e8ddb764599c1e6088d92a088c17ecb464ad65;
+    bytes32 public constant MESSAGING =
+        0x9a61a0d65a04cee1ab884471f6d8f2b07d58922715c5a822f2a3caaf7e587841;
 
     /**
      * @notice Compute the context ID for a custom capability namespace
@@ -86,7 +86,7 @@ library TrustNetContexts {
             contextId == PAYMENTS ||
             contextId == CODE_EXEC ||
             contextId == WRITES ||
-            contextId == DEFI_EXEC;
+            contextId == MESSAGING;
     }
 
     /**
@@ -103,7 +103,7 @@ library TrustNetContexts {
         if (contextId == PAYMENTS) return "payments";
         if (contextId == CODE_EXEC) return "code-exec";
         if (contextId == WRITES) return "writes";
-        if (contextId == DEFI_EXEC) return "defi-exec";
+        if (contextId == MESSAGING) return "messaging";
         return "unknown";
     }
 }

@@ -34,9 +34,9 @@ contract TrustNetContextsTest is Test {
         );
 
         assertEq(
-            TrustNetContexts.DEFI_EXEC,
-            keccak256(abi.encodePacked("trustnet:ctx:defi-exec:v1")),
-            "DEFI_EXEC context ID mismatch"
+            TrustNetContexts.MESSAGING,
+            keccak256(abi.encodePacked("trustnet:ctx:messaging:v1")),
+            "MESSAGING context ID mismatch"
         );
     }
 
@@ -63,8 +63,8 @@ contract TrustNetContextsTest is Test {
         );
 
         assertEq(
-            TrustNetContexts.DEFI_EXEC,
-            0x3372ad16565f09e46bfdcd8668e8ddb764599c1e6088d92a088c17ecb464ad65
+            TrustNetContexts.MESSAGING,
+            0x9a61a0d65a04cee1ab884471f6d8f2b07d58922715c5a822f2a3caaf7e587841
         );
     }
 
@@ -75,7 +75,7 @@ contract TrustNetContextsTest is Test {
         contexts[1] = TrustNetContexts.PAYMENTS;
         contexts[2] = TrustNetContexts.CODE_EXEC;
         contexts[3] = TrustNetContexts.WRITES;
-        contexts[4] = TrustNetContexts.DEFI_EXEC;
+        contexts[4] = TrustNetContexts.MESSAGING;
 
         for (uint i = 0; i < contexts.length; i++) {
             for (uint j = i + 1; j < contexts.length; j++) {
@@ -142,8 +142,8 @@ contract TrustNetContextsTest is Test {
         );
 
         assertEq(
-            TrustNetContexts.computeContextId("defi-exec", "v1"),
-            TrustNetContexts.DEFI_EXEC
+            TrustNetContexts.computeContextId("messaging", "v1"),
+            TrustNetContexts.MESSAGING
         );
     }
 
@@ -162,7 +162,7 @@ contract TrustNetContextsTest is Test {
         assertTrue(TrustNetContexts.isCanonical(TrustNetContexts.PAYMENTS));
         assertTrue(TrustNetContexts.isCanonical(TrustNetContexts.CODE_EXEC));
         assertTrue(TrustNetContexts.isCanonical(TrustNetContexts.WRITES));
-        assertTrue(TrustNetContexts.isCanonical(TrustNetContexts.DEFI_EXEC));
+        assertTrue(TrustNetContexts.isCanonical(TrustNetContexts.MESSAGING));
     }
 
     function test_IsCanonical_FalseForCustomContexts() public {
@@ -195,7 +195,7 @@ contract TrustNetContextsTest is Test {
                 contextId == TrustNetContexts.PAYMENTS ||
                 contextId == TrustNetContexts.CODE_EXEC ||
                 contextId == TrustNetContexts.WRITES ||
-                contextId == TrustNetContexts.DEFI_EXEC,
+                contextId == TrustNetContexts.MESSAGING,
                 "isCanonical returned true for non-canonical context"
             );
         }
@@ -225,8 +225,8 @@ contract TrustNetContextsTest is Test {
         );
 
         assertEq(
-            TrustNetContexts.getContextName(TrustNetContexts.DEFI_EXEC),
-            "defi-exec"
+            TrustNetContexts.getContextName(TrustNetContexts.MESSAGING),
+            "messaging"
         );
     }
 
@@ -257,7 +257,7 @@ contract TrustNetContextsTest is Test {
                 keccak256(bytes(name)) == keccak256("payments") ||
                 keccak256(bytes(name)) == keccak256("code-exec") ||
                 keccak256(bytes(name)) == keccak256("writes") ||
-                keccak256(bytes(name)) == keccak256("defi-exec"),
+                keccak256(bytes(name)) == keccak256("messaging"),
                 "Invalid name for canonical context"
             );
         } else {

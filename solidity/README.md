@@ -6,7 +6,7 @@ Smart contracts for the TrustNet reputation layer on ERC-8004.
 
 TrustNet provides verifiable, explainable trust-to-act decisions for AI agents using:
 - **Decider-relative** trust scoring (no global reputation)
-- **Context-isolated** ratings (payments, code-exec, writes, defi-exec)
+- **Context-isolated** ratings (payments, code-exec, writes, messaging)
 - **2-hop proofs** with Sparse Merkle Maps
 - **Explainable** decisions showing which edges contributed
 
@@ -64,7 +64,7 @@ TrustNetContexts.GLOBAL       // General trust
 TrustNetContexts.PAYMENTS     // Payment capabilities
 TrustNetContexts.CODE_EXEC    // Code execution
 TrustNetContexts.WRITES       // Data write access
-TrustNetContexts.DEFI_EXEC    // DeFi operations
+TrustNetContexts.MESSAGING    // Messaging/notification operations
 
 // Custom contexts
 bytes32 customCtx = TrustNetContexts.computeContextId("api-access", "v1");
@@ -178,7 +178,7 @@ GLOBAL     = 0x430faa5635b6f437d8b5a2d66333fe4fbcf75602232a76b67e94fd4a3275169b
 PAYMENTS   = 0x195c31d552212fd148934033b94b89c00b603e2b73e757a2b7684b4cc9602147
 CODE_EXEC  = 0x5efe84ba1b51e4f09cf7666eca4d0685fcccf1ee1f5c051bfd1b40c537b4565b
 WRITES     = 0xa4d767d43a1aa6ce314b2c1df834966b812e18b0b99fcce9faf1591c0a6f2674
-DEFI_EXEC  = 0x3372ad16565f09e46bfdcd8668e8ddb764599c1e6088d92a088c17ecb464ad65
+MESSAGING  = 0x9a61a0d65a04cee1ab884471f6d8f2b07d58922715c5a822f2a3caaf7e587841
 ```
 
 ---

@@ -5,10 +5,10 @@
 
 ## What this repo is upgrading to
 
-This repo is being upgraded to **TrustNet Unified Spec v0.4**:
-- Spec: `docs/TrustNet_Spec_v0.4.md`
-- Upgrade plan: `docs/Upgrade_Plan.md`
-- Progress tracker: `docs/Upgrade_Progress.md`
+This repo is being upgraded to **TrustNet Spec v0.6**:
+- Spec: `docs/TrustNet_Spec_v0.6.md`
+- Upgrade plan: `docs/Upgrade_Plan_v0.6.md`
+- Progress tracker: `docs/Upgrade_Progress_v0.6.md`
 
 TrustNet’s core properties:
 - **Context-scoped trust** (payments ≠ code exec).
