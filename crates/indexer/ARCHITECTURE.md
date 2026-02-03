@@ -5,8 +5,8 @@
 TrustNet uses a **modular architecture** with separate binaries for chain ingestion and HTTP serving.
 
 This repo is upgrading to match:
-- Spec: `docs/TrustNet_Spec_v0.4.md`
-- Upgrade plan: `docs/Upgrade_Plan.md`
+- Spec: `docs/TrustNet_Spec_v0.6.md`
+- Upgrade plan: `docs/Upgrade_Plan_v0.6.md`
 
 ```
 ┌──────────────────────────────┐

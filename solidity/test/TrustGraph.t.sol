@@ -59,7 +59,7 @@ contract TrustGraphTest is Test {
             TrustNetContexts.PAYMENTS,
             TrustNetContexts.CODE_EXEC,
             TrustNetContexts.WRITES,
-            TrustNetContexts.DEFI_EXEC
+            TrustNetContexts.MESSAGING
         ];
 
         for (uint i = 0; i < contexts.length; i++) {
@@ -177,11 +177,11 @@ contract TrustGraphTest is Test {
         levels[0] = 1;
 
         bytes32[] memory contexts = new bytes32[](1);
-        contexts[0] = TrustNetContexts.DEFI_EXEC;
+        contexts[0] = TrustNetContexts.MESSAGING;
 
         vm.startPrank(alice);
         vm.expectEmit(true, true, true, true);
-        emit EdgeRated(alice, bob, 1, TrustNetContexts.DEFI_EXEC);
+        emit EdgeRated(alice, bob, 1, TrustNetContexts.MESSAGING);
         trustGraph.rateEdgeBatch(targets, levels, contexts);
         vm.stopPrank();
     }

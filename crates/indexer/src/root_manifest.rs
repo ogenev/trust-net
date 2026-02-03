@@ -186,7 +186,7 @@ pub struct DefaultEdgeValueV1 {
     pub level: i8,
 }
 
-/// Compute the `contextRegistryHash` for the canonical v0.4 registry.
+/// Compute the `contextRegistryHash` for the canonical registry used by this implementation.
 ///
 /// This is `keccak256(JCS(contextStrings[]))`.
 pub fn build_context_registry_hash_v1() -> B256 {
@@ -196,7 +196,7 @@ pub fn build_context_registry_hash_v1() -> B256 {
         "trustnet:ctx:payments:v1",
         "trustnet:ctx:code-exec:v1",
         "trustnet:ctx:writes:v1",
-        "trustnet:ctx:defi-exec:v1",
+        "trustnet:ctx:messaging:v1",
     ];
     let canonical = serde_jcs::to_vec(&contexts).expect("JCS serialization");
     trustnet_core::hashing::keccak256(&canonical)
@@ -212,7 +212,7 @@ pub fn default_ttl_policy_v1() -> serde_json::Value {
         "trustnet:ctx:payments:v1": { "ttlSeconds": 2592000 }, // 30 days
         "trustnet:ctx:code-exec:v1": { "ttlSeconds": 604800 }, // 7 days
         "trustnet:ctx:writes:v1": { "ttlSeconds": 604800 }, // 7 days
-        "trustnet:ctx:defi-exec:v1": { "ttlSeconds": 604800 } // 7 days
+        "trustnet:ctx:messaging:v1": { "ttlSeconds": 604800 } // 7 days
     })
 }
 

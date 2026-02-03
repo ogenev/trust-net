@@ -502,7 +502,7 @@ pub fn generate_vectors_v0_4() -> serde_json::Value {
         },
         "hashes": {
             "tagTrustnetV1": format!("0x{}", hex::encode(trustnet_core::TAG_TRUSTNET_V1.as_slice())),
-            "contextRegistryHash": format!("0x{}", hex::encode(keccak256(br#"[\"trustnet:ctx:global:v1\",\"trustnet:ctx:payments:v1\",\"trustnet:ctx:code-exec:v1\",\"trustnet:ctx:writes:v1\",\"trustnet:ctx:defi-exec:v1\"]"#).as_slice()))
+            "contextRegistryHash": format!("0x{}", hex::encode(keccak256(br#"[\"trustnet:ctx:global:v1\",\"trustnet:ctx:payments:v1\",\"trustnet:ctx:code-exec:v1\",\"trustnet:ctx:writes:v1\",\"trustnet:ctx:messaging:v1\"]"#).as_slice()))
         }
     })
 }
