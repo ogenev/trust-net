@@ -32,7 +32,7 @@ Status legend: TODO, IN PROGRESS, DONE, N/A
 - DONE: Update verifier to enforce v0.6 decision + proof requirements.
 - DONE: Update `TrustNetContexts.sol` and optionally `TrustPathVerifier.sol` for v0.6.
 - DONE: Add OpenClaw plugin reference + ActionReceipt emission.
-- TODO: Add/refresh test vectors and end-to-end verification tests.
+- DONE: Add/refresh test vectors and end-to-end verification tests.
 
 ## Open questions / decisions
 - Do we need bitmap-compressed proofs for MVP, or ship uncompressed first?

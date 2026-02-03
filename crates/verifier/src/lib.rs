@@ -518,8 +518,8 @@ pub fn verify_action_receipt_v1(
     Ok(recovered)
 }
 
-/// Generate a small v0.4 vector bundle for cross-language hashing verification.
-pub fn generate_vectors_v0_4() -> serde_json::Value {
+/// Generate a small v0.6 vector bundle for cross-language hashing verification.
+pub fn generate_vectors_v0_6() -> serde_json::Value {
     use trustnet_core::hashing::{compute_leaf_hash, keccak256};
     use trustnet_smm::SmmBuilder;
 
@@ -582,4 +582,9 @@ pub fn generate_vectors_v0_4() -> serde_json::Value {
             "contextRegistryHash": format!("0x{}", hex::encode(keccak256(br#"[\"trustnet:ctx:global:v1\",\"trustnet:ctx:payments:v1\",\"trustnet:ctx:code-exec:v1\",\"trustnet:ctx:writes:v1\",\"trustnet:ctx:messaging:v1\"]"#).as_slice()))
         }
     })
+}
+
+/// Backwards-compatible alias for older vector consumers.
+pub fn generate_vectors_v0_4() -> serde_json::Value {
+    generate_vectors_v0_6()
 }

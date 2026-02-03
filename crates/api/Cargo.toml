@@ -43,3 +43,4 @@ http-body-util = "0.1"
 tempfile = "3.14"
 k256 = { version = "0.13", features = ["ecdsa"] }
 signature = "2.2"
+trustnet-verifier = { path = "../verifier" }
