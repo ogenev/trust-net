@@ -3,7 +3,7 @@ name = "trustnet-verifier"
 version = "0.1.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
-description = "Offline verifier and gateway utilities for TrustNet (Spec v0.4)"
+description = "Offline verifier and gateway utilities for TrustNet (Spec v0.6)"
 
 [[bin]]
 name = "trustnet-verify"
@@ -31,4 +31,3 @@ chrono = { version = "0.4", features = ["serde"] }
 alloy-primitives = { version = "0.8", features = ["k256"] }
 k256 = { version = "0.13", features = ["ecdsa"] }
 signature = "2.2"
-

@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 #[derive(Parser)]
 #[command(name = "trustnet-verify")]
-#[command(about = "Offline verification utilities for TrustNet v0.4", long_about = None)]
+#[command(about = "Offline verification utilities for TrustNet v0.6", long_about = None)]
 struct Cli {
     #[command(subcommand)]
     cmd: Command,
@@ -72,7 +72,7 @@ enum Command {
         signer: Option<String>,
     },
 
-    /// Print deterministic v0.4 hashing vectors as JSON.
+    /// Print deterministic v0.6 hashing vectors as JSON.
     Vectors,
 }
 
