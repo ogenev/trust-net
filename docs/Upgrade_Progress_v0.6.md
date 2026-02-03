@@ -31,7 +31,7 @@ Status legend: TODO, IN PROGRESS, DONE, N/A
 - DONE: Update proof JSON format (`type`, `format`, optional compression).
 - DONE: Update verifier to enforce v0.6 decision + proof requirements.
 - DONE: Update `TrustNetContexts.sol` and optionally `TrustPathVerifier.sol` for v0.6.
-- TODO: Add OpenClaw plugin reference + ActionReceipt emission.
+- DONE: Add OpenClaw plugin reference + ActionReceipt emission.
 - TODO: Add/refresh test vectors and end-to-end verification tests.
 
 ## Open questions / decisions

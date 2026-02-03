@@ -1,0 +1,30 @@
+{
+  "plugins": {
+    "entries": {
+      "trustnet": {
+        "enabled": true,
+        "mode": "server", // local|server|chain
+        "apiBaseUrl": "http://127.0.0.1:8088",
+        "rootPublisherPubKey": "base64:…",
+        "policyManifestHash": "0x…", // optional, included in ActionReceipts
+        "toolMapPath": "./tool_map.example.json",
+        "policy": {
+          "decider": "0xDECIDER…",
+          "thresholds": {
+            "trustnet:ctx:payments:v1": { "allow": 1, "ask": 0 },
+            "trustnet:ctx:code-exec:v1": { "allow": 2, "ask": 1 }
+          },
+          "evidenceRequirements": {
+            "trustnet:ctx:payments:v1": { "requireEvidenceForPositiveET": true },
+            "trustnet:ctx:code-exec:v1": { "requireEvidenceForPositiveET": true }
+          },
+          "fallback": {
+            "highRisk": "deny",
+            "mediumRisk": "ask",
+            "lowRisk": "ask"
+          }
+        }
+      }
+    }
+  }
+}
