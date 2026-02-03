@@ -13,7 +13,9 @@ use sqlx::{sqlite::SqliteConnectOptions, SqlitePool};
 use std::{collections::HashMap, net::SocketAddr, str::FromStr, sync::Arc};
 use tower_http::cors::CorsLayer;
 use trustnet_core::{hashing::compute_edge_key, ContextId, LeafValueV1, Level, PrincipalId, B256};
-use trustnet_engine::{decide, Candidate, Decision, Thresholds};
+use trustnet_engine::{
+    decide_with_evidence, CandidateEvidence, Decision, EvidencePolicy, Thresholds,
+};
 use trustnet_smm::Smm;
 
 mod db;
@@ -23,6 +25,8 @@ mod smm_cache;
 struct DecisionPolicyResolved {
     thresholds: Thresholds,
     ttl_seconds: u64,
+    require_evidence_et: bool,
+    require_evidence_dt: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -72,6 +76,26 @@ fn parse_env_u64(name: &str) -> anyhow::Result<Option<u64>> {
     Ok(Some(v))
 }
 
+fn parse_env_bool(name: &str) -> anyhow::Result<Option<bool>> {
+    let Ok(raw) = std::env::var(name) else {
+        return Ok(None);
+    };
+    let raw = raw.trim();
+    anyhow::ensure!(!raw.is_empty(), "{} is set but empty", name);
+    let normalized = raw.to_ascii_lowercase();
+    let value = match normalized.as_str() {
+        "1" | "true" | "yes" | "y" | "on" => true,
+        "0" | "false" | "no" | "n" | "off" => false,
+        _ => {
+            return Err(anyhow::anyhow!(
+                "Invalid {} (expected boolean-like value)",
+                name
+            ))
+        }
+    };
+    Ok(Some(value))
+}
+
 fn load_decision_policy_from_env() -> anyhow::Result<DecisionPolicy> {
     let allow = parse_env_i8("TRUSTNET_ALLOW_THRESHOLD")?.unwrap_or(2);
     let ask = parse_env_i8("TRUSTNET_ASK_THRESHOLD")?.unwrap_or(1);
@@ -80,10 +104,16 @@ fn load_decision_policy_from_env() -> anyhow::Result<DecisionPolicy> {
         .context("Invalid TRUSTNET_{ALLOW,ASK}_THRESHOLD")?;
 
     let default_ttl_seconds = parse_env_u64("TRUSTNET_DECISION_TTL_SECONDS")?.unwrap_or(300);
+    let default_require_evidence_et =
+        parse_env_bool("TRUSTNET_REQUIRE_EVIDENCE_ET")?.unwrap_or(false);
+    let default_require_evidence_dt =
+        parse_env_bool("TRUSTNET_REQUIRE_EVIDENCE_DT")?.unwrap_or(false);
 
     let default = DecisionPolicyResolved {
         thresholds: default_thresholds,
         ttl_seconds: default_ttl_seconds,
+        require_evidence_et: default_require_evidence_et,
+        require_evidence_dt: default_require_evidence_dt,
     };
 
     // Optional per-context overrides (MVP-friendly):
@@ -113,9 +143,18 @@ fn load_decision_policy_from_env() -> anyhow::Result<DecisionPolicy> {
         let ttl_seconds = parse_env_u64(&format!("TRUSTNET_DECISION_TTL_SECONDS_{}", suffix))?
             .unwrap_or(default.ttl_seconds);
 
+        let require_evidence_et =
+            parse_env_bool(&format!("TRUSTNET_REQUIRE_EVIDENCE_ET_{}", suffix))?
+                .unwrap_or(default.require_evidence_et);
+        let require_evidence_dt =
+            parse_env_bool(&format!("TRUSTNET_REQUIRE_EVIDENCE_DT_{}", suffix))?
+                .unwrap_or(default.require_evidence_dt);
+
         let resolved = DecisionPolicyResolved {
             thresholds,
             ttl_seconds,
+            require_evidence_et,
+            require_evidence_dt,
         };
 
         if resolved != default {
@@ -608,6 +647,10 @@ struct WhyJson {
 struct ConstraintsJson {
     #[serde(rename = "ttlSeconds")]
     ttl_seconds: u64,
+    #[serde(rename = "requireEvidenceForPositiveET")]
+    require_evidence_for_positive_et: bool,
+    #[serde(rename = "requireEvidenceForPositiveDT")]
+    require_evidence_for_positive_dt: bool,
 }
 
 #[derive(Serialize)]
@@ -783,17 +826,29 @@ async fn get_decision(
         });
     }
 
-    let engine_candidates: Vec<Candidate> = candidates
+    let policy = state.decision_policy.for_context(&context_id);
+    let engine_candidates: Vec<CandidateEvidence> = candidates
         .iter()
-        .map(|c| Candidate {
+        .map(|c| CandidateEvidence {
             endorser: c.endorser,
             level_de: c.leaf_de.level,
             level_et: c.leaf_et.level,
+            et_has_evidence: c.leaf_et.evidence_hash != B256::ZERO,
         })
         .collect();
 
-    let policy = state.decision_policy.for_context(&context_id);
-    let result = decide(policy.thresholds, dt_leaf.level, &engine_candidates);
+    let evidence_policy = EvidencePolicy {
+        require_positive_et_evidence: policy.require_evidence_et,
+        require_positive_dt_evidence: policy.require_evidence_dt,
+    };
+    let dt_has_evidence = dt_leaf.evidence_hash != B256::ZERO;
+    let result = decide_with_evidence(
+        policy.thresholds,
+        evidence_policy,
+        dt_leaf.level,
+        dt_has_evidence,
+        &engine_candidates,
+    );
 
     let (chosen_proof_de, chosen_proof_et, leaf_de, leaf_et) =
         if let Some(endorser) = result.endorser {
@@ -854,6 +909,8 @@ async fn get_decision(
         },
         constraints: ConstraintsJson {
             ttl_seconds: policy.ttl_seconds,
+            require_evidence_for_positive_et: policy.require_evidence_et,
+            require_evidence_for_positive_dt: policy.require_evidence_dt,
         },
         proofs: ProofsJson {
             de: chosen_proof_de,
@@ -1387,6 +1444,8 @@ mod tests {
                 default: DecisionPolicyResolved {
                     thresholds: Thresholds::new(2, 1).unwrap(),
                     ttl_seconds: 300,
+                    require_evidence_et: false,
+                    require_evidence_dt: false,
                 },
                 by_context: HashMap::new(),
             },

@@ -68,6 +68,28 @@ pub struct Candidate {
     pub level_et: Level,
 }
 
+/// Evidence-aware candidate input for `(D -> E -> T)`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CandidateEvidence {
+    /// The endorser principal.
+    pub endorser: PrincipalId,
+    /// Level for `D -> E`.
+    pub level_de: Level,
+    /// Level for `E -> T`.
+    pub level_et: Level,
+    /// Whether `E -> T` has evidence committed.
+    pub et_has_evidence: bool,
+}
+
+/// Evidence gating policy for positive trust.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EvidencePolicy {
+    /// Require evidence for positive `E -> T`.
+    pub require_positive_et_evidence: bool,
+    /// Require evidence for positive `D -> T`.
+    pub require_positive_dt_evidence: bool,
+}
+
 /// Decision result with explainability fields.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DecisionResult {
@@ -155,6 +177,50 @@ pub fn decide(thresholds: Thresholds, level_dt: Level, candidates: &[Candidate])
     }
 }
 
+/// Compute the TrustNet score + decision with evidence gating.
+///
+/// Evidence gating applies only to **positive** edges:
+/// - If `require_positive_et_evidence` is true and `lET > 0` without evidence, treat `lET := 0`.
+/// - If `require_positive_dt_evidence` is true and `lDT > 0` without evidence, treat `lDT := 0`.
+/// - Hard veto (`lDT == -2`) still applies regardless of evidence.
+pub fn decide_with_evidence(
+    thresholds: Thresholds,
+    evidence_policy: EvidencePolicy,
+    level_dt: Level,
+    dt_has_evidence: bool,
+    candidates: &[CandidateEvidence],
+) -> DecisionResult {
+    let gated_level_dt =
+        if evidence_policy.require_positive_dt_evidence && level_dt.value() > 0 && !dt_has_evidence
+        {
+            Level::neutral()
+        } else {
+            level_dt
+        };
+
+    let gated_candidates: Vec<Candidate> = candidates
+        .iter()
+        .map(|candidate| {
+            let level_et = if evidence_policy.require_positive_et_evidence
+                && candidate.level_et.value() > 0
+                && !candidate.et_has_evidence
+            {
+                Level::neutral()
+            } else {
+                candidate.level_et
+            };
+
+            Candidate {
+                endorser: candidate.endorser,
+                level_de: candidate.level_de,
+                level_et,
+            }
+        })
+        .collect();
+
+    decide(thresholds, gated_level_dt, &gated_candidates)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -217,5 +283,42 @@ mod tests {
         assert_eq!(result.score, 1);
         assert_eq!(result.decision, Decision::Ask);
         assert_eq!(result.endorser, Some(PrincipalId::from([0x01; 32])));
+    }
+
+    #[test]
+    fn evidence_gating_filters_et_without_evidence() {
+        let policy = EvidencePolicy {
+            require_positive_et_evidence: true,
+            require_positive_dt_evidence: false,
+        };
+
+        let candidates = [CandidateEvidence {
+            endorser: PrincipalId::from([0x01; 32]),
+            level_de: Level::positive(),
+            level_et: Level::positive(),
+            et_has_evidence: false,
+        }];
+
+        let result =
+            decide_with_evidence(thresholds(), policy, Level::neutral(), true, &candidates);
+        assert_eq!(result.decision, Decision::Deny);
+        assert_eq!(result.score, 0);
+        assert!(result.endorser.is_none());
+    }
+
+    #[test]
+    fn evidence_gating_filters_dt_without_evidence() {
+        let policy = EvidencePolicy {
+            require_positive_et_evidence: false,
+            require_positive_dt_evidence: true,
+        };
+
+        let result = decide_with_evidence(thresholds(), policy, Level::positive(), false, &[]);
+        assert_eq!(result.decision, Decision::Deny);
+        assert_eq!(result.score, 0);
+
+        let result = decide_with_evidence(thresholds(), policy, Level::positive(), true, &[]);
+        assert_eq!(result.decision, Decision::Ask);
+        assert_eq!(result.score, 1);
     }
 }

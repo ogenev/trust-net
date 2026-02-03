@@ -26,8 +26,8 @@ Status legend: TODO, IN PROGRESS, DONE, N/A
 - DONE: Add `observed_at` ordering for latest-wins reduction.
 - DONE: Update Root Manifest to spec v0.6 fields (`erc8004TrustEdgeGuard`, `erc8004QuantizationPolicy`, `erc8004TargetBindingPolicy`).
 - DONE: Implement JCS canonicalization for manifest hashing.
-- TODO: Add evidence gating in decision engine (require evidence for positive ET/DT by context).
-- TODO: Add constraints to DecisionBundle responses.
+- DONE: Add evidence gating in decision engine (require evidence for positive ET/DT by context).
+- DONE: Add constraints to DecisionBundle responses.
 - TODO: Update proof JSON format (`type`, `format`, optional compression).
 - TODO: Update verifier to enforce v0.6 decision + proof requirements.
 - TODO: Update `TrustNetContexts.sol` and optionally `TrustPathVerifier.sol` for v0.6.
