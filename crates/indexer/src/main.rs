@@ -158,6 +158,7 @@ async fn run_indexer(config_path: &str) -> Result<()> {
         &config.network.rpc_url,
         config.contracts.trust_graph,
         config.contracts.erc8004_reputation,
+        config.contracts.erc8004_identity,
     )
     .await
     .context("Failed to create RPC provider")?;
@@ -165,16 +166,13 @@ async fn run_indexer(config_path: &str) -> Result<()> {
     info!("RPC provider initialized");
 
     // Create sync engine (uses core quantizer with fixed buckets)
-    let erc8004_namespace = config
-        .contracts
-        .erc8004_identity
-        .unwrap_or(config.contracts.erc8004_reputation);
     let sync_engine = SyncEngine::new(
         provider,
         storage.clone(),
         config.sync.clone(),
         config.network.chain_id,
-        erc8004_namespace,
+        config.contracts.erc8004_reputation,
+        config.contracts.erc8004_identity,
     );
 
     // Spawn event listener task

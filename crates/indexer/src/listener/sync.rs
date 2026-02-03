@@ -17,7 +17,8 @@ pub struct SyncEngine {
     storage: Storage,
     config: SyncConfig,
     chain_id: u64,
-    erc8004_namespace: Address,
+    erc8004_reputation: Address,
+    erc8004_identity: Option<Address>,
 }
 
 impl SyncEngine {
@@ -27,14 +28,16 @@ impl SyncEngine {
         storage: Storage,
         config: SyncConfig,
         chain_id: u64,
-        erc8004_namespace: Address,
+        erc8004_reputation: Address,
+        erc8004_identity: Option<Address>,
     ) -> Self {
         Self {
             provider,
             storage,
             config,
             chain_id,
-            erc8004_namespace,
+            erc8004_reputation,
+            erc8004_identity,
         }
     }
 
@@ -117,9 +120,10 @@ impl SyncEngine {
         let mut ts_cache: HashMap<u64, u64> = HashMap::new();
 
         for event in events {
-            let block_number = match &event {
-                ChainEvent::TrustGraph(ev) => ev.block_number,
-                ChainEvent::Erc8004(ev) => ev.block_number,
+            let (block_number, tx_index, log_index) = match &event {
+                ChainEvent::TrustGraph(ev) => (ev.block_number, ev.tx_index, ev.log_index),
+                ChainEvent::Erc8004(ev) => (ev.block_number, ev.tx_index, ev.log_index),
+                ChainEvent::Erc8004Response(ev) => (ev.block_number, ev.tx_index, ev.log_index),
             };
 
             let updated_at_u64 = match ts_cache.get(&block_number).copied() {
@@ -131,40 +135,114 @@ impl SyncEngine {
                 }
             };
 
-            let maybe_edge = match event {
+            let observed_at_u64 =
+                crate::ordering::observed_at_for_chain(block_number, tx_index, log_index);
+
+            match event {
                 ChainEvent::TrustGraph(ev) => {
-                    Some(ev.to_edge_record(self.chain_id, updated_at_u64)?)
-                }
-                ChainEvent::Erc8004(ev) => {
-                    ev.to_edge_record(self.chain_id, updated_at_u64, self.erc8004_namespace)?
-                }
-            };
+                    let edge =
+                        match ev.to_edge_record(self.chain_id, updated_at_u64, observed_at_u64) {
+                            Ok(edge) => edge,
+                            Err(e) => {
+                                warn!("Failed to map EdgeRated event: {}", e);
+                                skipped += 1;
+                                continue;
+                            }
+                        };
 
-            let Some(edge) = maybe_edge else {
-                skipped += 1;
-                continue;
-            };
+                    if let Err(e) = self.storage.append_edge_raw(&edge).await {
+                        warn!("Failed to append edges_raw: {}", e);
+                    }
 
-            if let Err(e) = self.storage.append_edge_raw(&edge).await {
-                warn!("Failed to append edges_raw: {}", e);
-            }
-
-            match self.storage.upsert_edge_latest(&edge).await {
-                Ok(updated) => {
-                    if updated {
-                        processed += 1;
-                    } else {
-                        skipped += 1;
+                    match self.storage.upsert_edge_latest(&edge).await {
+                        Ok(updated) => {
+                            if updated {
+                                processed += 1;
+                            } else {
+                                skipped += 1;
+                            }
+                        }
+                        Err(e) => {
+                            warn!("Failed to upsert edge: {}", e);
+                        }
                     }
                 }
-                Err(e) => {
-                    warn!("Failed to upsert edge: {}", e);
+                ChainEvent::Erc8004(ev) => {
+                    let feedback = ev.to_feedback_record(
+                        self.chain_id,
+                        self.erc8004_reputation,
+                        self.erc8004_identity,
+                        observed_at_u64,
+                    );
+
+                    if let Err(e) = self.storage.append_feedback_raw(&feedback).await {
+                        warn!("Failed to append feedback_raw: {}", e);
+                    }
+
+                    let agent_wallet = match self
+                        .provider
+                        .resolve_agent_wallet(ev.agent_id, ev.block_number)
+                        .await
+                    {
+                        Ok(wallet) => wallet,
+                        Err(e) => {
+                            warn!("Failed to resolve agent wallet: {}", e);
+                            None
+                        }
+                    };
+
+                    let maybe_edge = match ev.to_edge_record(
+                        self.chain_id,
+                        updated_at_u64,
+                        observed_at_u64,
+                        self.erc8004_identity,
+                        agent_wallet,
+                    ) {
+                        Ok(edge) => edge,
+                        Err(e) => {
+                            warn!("Failed to map NewFeedback event: {}", e);
+                            None
+                        }
+                    };
+
+                    let Some(edge) = maybe_edge else {
+                        skipped += 1;
+                        continue;
+                    };
+
+                    if let Err(e) = self.storage.append_edge_raw(&edge).await {
+                        warn!("Failed to append edges_raw: {}", e);
+                    }
+
+                    match self.storage.upsert_edge_latest(&edge).await {
+                        Ok(updated) => {
+                            if updated {
+                                processed += 1;
+                            } else {
+                                skipped += 1;
+                            }
+                        }
+                        Err(e) => {
+                            warn!("Failed to upsert edge: {}", e);
+                        }
+                    }
+                }
+                ChainEvent::Erc8004Response(ev) => {
+                    let response = ev.to_feedback_response_record(
+                        self.chain_id,
+                        self.erc8004_reputation,
+                        observed_at_u64,
+                    );
+
+                    if let Err(e) = self.storage.append_feedback_response_raw(&response).await {
+                        warn!("Failed to append feedback_responses_raw: {}", e);
+                    }
                 }
             }
         }
 
         info!(
-            "Batch complete: {} edges updated, {} skipped (stale)",
+            "Batch complete: {} edges updated, {} skipped (stale or filtered)",
             processed, skipped
         );
 
@@ -204,24 +282,94 @@ impl SyncEngine {
             // Process events
             let updated_at_u64 = self.provider.get_block_timestamp(block_num).await?;
             for event in events {
-                let maybe_edge = match event {
+                let (block_number, tx_index, log_index) = match &event {
+                    ChainEvent::TrustGraph(ev) => (ev.block_number, ev.tx_index, ev.log_index),
+                    ChainEvent::Erc8004(ev) => (ev.block_number, ev.tx_index, ev.log_index),
+                    ChainEvent::Erc8004Response(ev) => (ev.block_number, ev.tx_index, ev.log_index),
+                };
+
+                let observed_at_u64 =
+                    crate::ordering::observed_at_for_chain(block_number, tx_index, log_index);
+
+                match event {
                     ChainEvent::TrustGraph(ev) => {
-                        Some(ev.to_edge_record(self.chain_id, updated_at_u64)?)
+                        let edge =
+                            match ev.to_edge_record(self.chain_id, updated_at_u64, observed_at_u64)
+                            {
+                                Ok(edge) => edge,
+                                Err(e) => {
+                                    warn!("Failed to map EdgeRated event: {}", e);
+                                    continue;
+                                }
+                            };
+
+                        if let Err(e) = self.storage.append_edge_raw(&edge).await {
+                            warn!("Failed to append edges_raw: {}", e);
+                        }
+                        if let Err(e) = self.storage.upsert_edge_latest(&edge).await {
+                            warn!("Failed to upsert edges_latest: {}", e);
+                        }
                     }
                     ChainEvent::Erc8004(ev) => {
-                        ev.to_edge_record(self.chain_id, updated_at_u64, self.erc8004_namespace)?
+                        let feedback = ev.to_feedback_record(
+                            self.chain_id,
+                            self.erc8004_reputation,
+                            self.erc8004_identity,
+                            observed_at_u64,
+                        );
+
+                        if let Err(e) = self.storage.append_feedback_raw(&feedback).await {
+                            warn!("Failed to append feedback_raw: {}", e);
+                        }
+
+                        let agent_wallet = match self
+                            .provider
+                            .resolve_agent_wallet(ev.agent_id, ev.block_number)
+                            .await
+                        {
+                            Ok(wallet) => wallet,
+                            Err(e) => {
+                                warn!("Failed to resolve agent wallet: {}", e);
+                                None
+                            }
+                        };
+
+                        let maybe_edge = match ev.to_edge_record(
+                            self.chain_id,
+                            updated_at_u64,
+                            observed_at_u64,
+                            self.erc8004_identity,
+                            agent_wallet,
+                        ) {
+                            Ok(edge) => edge,
+                            Err(e) => {
+                                warn!("Failed to map NewFeedback event: {}", e);
+                                None
+                            }
+                        };
+
+                        let Some(edge) = maybe_edge else {
+                            continue;
+                        };
+
+                        if let Err(e) = self.storage.append_edge_raw(&edge).await {
+                            warn!("Failed to append edges_raw: {}", e);
+                        }
+                        if let Err(e) = self.storage.upsert_edge_latest(&edge).await {
+                            warn!("Failed to upsert edges_latest: {}", e);
+                        }
                     }
-                };
+                    ChainEvent::Erc8004Response(ev) => {
+                        let response = ev.to_feedback_response_record(
+                            self.chain_id,
+                            self.erc8004_reputation,
+                            observed_at_u64,
+                        );
 
-                let Some(edge) = maybe_edge else {
-                    continue;
-                };
-
-                if let Err(e) = self.storage.append_edge_raw(&edge).await {
-                    warn!("Failed to append edges_raw: {}", e);
-                }
-                if let Err(e) = self.storage.upsert_edge_latest(&edge).await {
-                    warn!("Failed to upsert edges_latest: {}", e);
+                        if let Err(e) = self.storage.append_feedback_response_raw(&response).await {
+                            warn!("Failed to append feedback_responses_raw: {}", e);
+                        }
+                    }
                 }
             }
 

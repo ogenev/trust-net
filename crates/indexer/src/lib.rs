@@ -16,6 +16,8 @@ pub mod config;
 
 pub mod listener;
 
+pub mod ordering;
+
 pub mod smm_service;
 
 pub mod publisher;

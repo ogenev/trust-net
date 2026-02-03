@@ -158,11 +158,9 @@ impl Storage {
                 log_index = excluded.log_index,
                 tx_hash = excluded.tx_hash,
                 server_seq = NULL
-            WHERE edges_latest.block_number IS NULL
-               OR (excluded.block_number > edges_latest.block_number)
-               OR (excluded.block_number = edges_latest.block_number AND excluded.tx_index > edges_latest.tx_index)
-               OR (excluded.block_number = edges_latest.block_number AND excluded.tx_index = edges_latest.tx_index AND excluded.log_index > edges_latest.log_index)
-               OR (excluded.block_number = edges_latest.block_number AND excluded.tx_index = edges_latest.tx_index AND excluded.log_index = edges_latest.log_index AND (edges_latest.tx_hash IS NULL OR excluded.tx_hash > edges_latest.tx_hash))
+            WHERE edges_latest.observed_at_u64 = 0
+               OR (excluded.observed_at_u64 > edges_latest.observed_at_u64)
+               OR (excluded.observed_at_u64 = edges_latest.observed_at_u64 AND (edges_latest.tx_hash IS NULL OR excluded.tx_hash > edges_latest.tx_hash))
             "#,
         )
         .bind(rater_pid)
@@ -404,6 +402,7 @@ impl Storage {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ordering::observed_at_for_chain;
     use tempfile::NamedTempFile;
     use trustnet_core::types::{ContextId, Level};
 
@@ -433,7 +432,7 @@ mod tests {
             updated_at_u64: 1,
             evidence_hash: B256::ZERO,
             evidence_uri: None,
-            observed_at_u64: 1,
+            observed_at_u64: observed_at_for_chain(100, 1, 1),
             source: EdgeSource::TrustGraph,
             chain_id: Some(1),
             block_number: Some(100),
@@ -451,6 +450,7 @@ mod tests {
         let mut older = base.clone();
         older.level = Level::strong_positive();
         older.block_number = Some(99);
+        older.observed_at_u64 = observed_at_for_chain(99, 1, 1);
         older.tx_hash = Some(B256::repeat_byte(0xbb));
         storage.append_edge_raw(&older).await.unwrap();
         assert!(!storage.upsert_edge_latest(&older).await.unwrap());
@@ -460,6 +460,7 @@ mod tests {
         newer.level = Level::strong_negative();
         newer.block_number = Some(100);
         newer.tx_index = Some(2);
+        newer.observed_at_u64 = observed_at_for_chain(100, 2, 1);
         newer.tx_hash = Some(B256::repeat_byte(0xcc));
         storage.append_edge_raw(&newer).await.unwrap();
         assert!(storage.upsert_edge_latest(&newer).await.unwrap());
@@ -491,7 +492,7 @@ mod tests {
             updated_at_u64: 1,
             evidence_hash: B256::ZERO,
             evidence_uri: None,
-            observed_at_u64: 1,
+            observed_at_u64: observed_at_for_chain(100, 1, 1),
             source: EdgeSource::TrustGraph,
             chain_id: Some(1),
             block_number: Some(100),
@@ -544,7 +545,7 @@ mod tests {
             updated_at_u64: 1,
             evidence_hash: B256::ZERO,
             evidence_uri: None,
-            observed_at_u64: 1,
+            observed_at_u64: observed_at_for_chain(100, 1, 1),
             source: EdgeSource::TrustGraph,
             chain_id: Some(1),
             block_number: Some(100),
