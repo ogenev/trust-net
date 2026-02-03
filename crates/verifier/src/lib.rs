@@ -478,7 +478,7 @@ pub fn generate_vectors_v0_4() -> serde_json::Value {
     let proof = smm.prove(edge_key).expect("prove");
 
     serde_json::json!({
-        "specVersion": "trustnet-spec-0.4",
+        "specVersion": "trustnet-spec-0.6",
         "principalId": {
             "raterAddress": format!("0x{}", hex::encode(rater_addr.as_slice())),
             "raterPrincipalId": format!("0x{}", hex::encode(rater_pid.as_bytes())),

@@ -281,5 +281,5 @@
     "targetAddress": "0x0000000000000000000000000000000000000002",
     "targetPrincipalId": "0x0000000000000000000000000000000000000000000000000000000000000002"
   },
-  "specVersion": "trustnet-spec-0.4"
+  "specVersion": "trustnet-spec-0.6"
 }
