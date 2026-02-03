@@ -14,6 +14,7 @@ use tracing::info;
 
 pub mod edge;
 pub mod epoch;
+pub mod feedback;
 pub mod sync;
 pub mod types;
 

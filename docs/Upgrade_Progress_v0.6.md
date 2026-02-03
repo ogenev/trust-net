@@ -14,14 +14,15 @@ Status legend: TODO, IN PROGRESS, DONE, N/A
 ## Upgrade checklist (v0.6 deltas)
 
 - DONE: Add `messaging` context, update context registry hash, and refresh allowlists (core + api + solidity).
-- TODO: Introduce `SubjectId` and binding policy metadata (core types + hashing helpers).
+- DONE: Introduce `SubjectId` and binding policy metadata (core types + hashing helpers).
+- DONE: Extend `RatingEvent` model with `evidence_uri`, `observed_at`, `source`.
 - TODO: Update ERC-8004 ABI parsing to string `tag1/tag2/endpoint`, `value/valueDecimals` (indexer listener).
 - TODO: Implement TrustNet guard: `endpoint == "trustnet"` and `tag2 == "trustnet:v1"`.
 - TODO: Implement context parsing from string or hex for ERC-8004.
 - TODO: Resolve `agentId -> agentWallet` at block height (identity registry) and use wallet PrincipalId.
 - TODO: Ingest `ResponseAppended` into `feedback_responses_raw`.
-- TODO: Add tables: `feedback_raw`, `feedback_responses_raw` (+ optional `feedback_verified`).
-- TODO: Extend edges tables with `evidence_uri`, `observed_at`, optional `subject_id`.
+- DONE: Add tables: `feedback_raw`, `feedback_responses_raw` (+ optional `feedback_verified`).
+- DONE: Extend edges tables with `evidence_uri`, `observed_at`, optional `subject_id`.
 - TODO: Add `observed_at` ordering for latest-wins reduction.
 - TODO: Update Root Manifest to spec v0.6 fields (`erc8004TrustEdgeGuard`, `erc8004QuantizationPolicy`, `erc8004TargetBindingPolicy`).
 - TODO: Implement JCS canonicalization for manifest hashing.

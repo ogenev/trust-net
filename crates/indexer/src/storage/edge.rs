@@ -1,4 +1,4 @@
-//! Edge storage operations (TrustNet spec v0.4).
+//! Edge storage operations (TrustNet spec v0.6).
 
 use super::{EdgeRecord, EdgeSource, Storage};
 use alloy::primitives::B256;
@@ -15,6 +15,8 @@ impl Storage {
         let target_pid = edge.target.as_bytes().as_slice();
         let context_id = edge.context_id.as_bytes().as_slice();
         let evidence_hash = edge.evidence_hash.as_slice();
+        let evidence_uri = edge.evidence_uri.as_deref();
+        let subject_id = edge.subject_id.as_ref().map(|id| id.as_bytes().as_slice());
 
         let tx_hash_bytes = edge.tx_hash.as_ref().map(|h| h.as_slice());
 
@@ -28,12 +30,14 @@ impl Storage {
             r#"
             INSERT INTO edges_raw (
                 rater_pid, target_pid, context_id,
-                level_i8, updated_at_u64, evidence_hash,
+                level_i8, updated_at_u64, evidence_hash, evidence_uri,
                 source,
+                observed_at_u64,
+                subject_id,
                 chain_id, block_number, tx_index, log_index, tx_hash,
                 server_seq
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(chain_id, tx_hash, log_index) DO NOTHING
             "#,
         )
@@ -43,7 +47,10 @@ impl Storage {
         .bind(edge.level.value() as i32)
         .bind(edge.updated_at_u64 as i64)
         .bind(evidence_hash)
+        .bind(evidence_uri)
         .bind(edge.source.as_str())
+        .bind(edge.observed_at_u64 as i64)
+        .bind(subject_id)
         .bind(chain_id)
         .bind(block_number)
         .bind(tx_index)
@@ -121,23 +128,30 @@ impl Storage {
         let target_pid = edge.target.as_bytes().as_slice();
         let context_id = edge.context_id.as_bytes().as_slice();
         let evidence_hash = edge.evidence_hash.as_slice();
+        let evidence_uri = edge.evidence_uri.as_deref();
+        let subject_id = edge.subject_id.as_ref().map(|id| id.as_bytes().as_slice());
         let tx_hash_bytes = tx_hash.as_slice();
 
         let result = sqlx::query(
             r#"
             INSERT INTO edges_latest (
                 rater_pid, target_pid, context_id,
-                level_i8, updated_at_u64, evidence_hash, source,
+                level_i8, updated_at_u64, evidence_hash, evidence_uri, source,
+                observed_at_u64,
+                subject_id,
                 chain_id, block_number, tx_index, log_index, tx_hash,
                 server_seq
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
             ON CONFLICT(rater_pid, target_pid, context_id)
             DO UPDATE SET
                 level_i8 = excluded.level_i8,
                 updated_at_u64 = excluded.updated_at_u64,
                 evidence_hash = excluded.evidence_hash,
+                evidence_uri = excluded.evidence_uri,
                 source = excluded.source,
+                observed_at_u64 = excluded.observed_at_u64,
+                subject_id = excluded.subject_id,
                 chain_id = excluded.chain_id,
                 block_number = excluded.block_number,
                 tx_index = excluded.tx_index,
@@ -157,7 +171,10 @@ impl Storage {
         .bind(edge.level.value() as i32)
         .bind(edge.updated_at_u64 as i64)
         .bind(evidence_hash)
+        .bind(evidence_uri)
         .bind(edge.source.as_str())
+        .bind(edge.observed_at_u64 as i64)
+        .bind(subject_id)
         .bind(chain_id as i64)
         .bind(block_number as i64)
         .bind(tx_index as i64)
@@ -179,22 +196,29 @@ impl Storage {
         let target_pid = edge.target.as_bytes().as_slice();
         let context_id = edge.context_id.as_bytes().as_slice();
         let evidence_hash = edge.evidence_hash.as_slice();
+        let evidence_uri = edge.evidence_uri.as_deref();
+        let subject_id = edge.subject_id.as_ref().map(|id| id.as_bytes().as_slice());
 
         let result = sqlx::query(
             r#"
             INSERT INTO edges_latest (
                 rater_pid, target_pid, context_id,
-                level_i8, updated_at_u64, evidence_hash, source,
+                level_i8, updated_at_u64, evidence_hash, evidence_uri, source,
+                observed_at_u64,
+                subject_id,
                 chain_id, block_number, tx_index, log_index, tx_hash,
                 server_seq
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, ?)
             ON CONFLICT(rater_pid, target_pid, context_id)
             DO UPDATE SET
                 level_i8 = excluded.level_i8,
                 updated_at_u64 = excluded.updated_at_u64,
                 evidence_hash = excluded.evidence_hash,
+                evidence_uri = excluded.evidence_uri,
                 source = excluded.source,
+                observed_at_u64 = excluded.observed_at_u64,
+                subject_id = excluded.subject_id,
                 chain_id = NULL,
                 block_number = NULL,
                 tx_index = NULL,
@@ -211,7 +235,10 @@ impl Storage {
         .bind(edge.level.value() as i32)
         .bind(edge.updated_at_u64 as i64)
         .bind(evidence_hash)
+        .bind(evidence_uri)
         .bind(edge.source.as_str())
+        .bind(edge.observed_at_u64 as i64)
+        .bind(subject_id)
         .bind(server_seq as i64)
         .execute(&self.pool)
         .await
@@ -231,8 +258,10 @@ impl Storage {
             r#"
             SELECT
                 rater_pid, target_pid, context_id,
-                level_i8, updated_at_u64, evidence_hash,
+                level_i8, updated_at_u64, evidence_hash, evidence_uri,
                 source,
+                observed_at_u64,
+                subject_id,
                 chain_id, block_number, tx_index, log_index, tx_hash,
                 server_seq
             FROM edges_latest
@@ -254,8 +283,10 @@ impl Storage {
             r#"
             SELECT
                 rater_pid, target_pid, context_id,
-                level_i8, updated_at_u64, evidence_hash,
+                level_i8, updated_at_u64, evidence_hash, evidence_uri,
                 source,
+                observed_at_u64,
+                subject_id,
                 chain_id, block_number, tx_index, log_index, tx_hash,
                 server_seq
             FROM edges_latest
@@ -311,7 +342,10 @@ impl Storage {
         let level_i8: i32 = row.get("level_i8");
         let updated_at_u64: i64 = row.get("updated_at_u64");
         let evidence_hash_bytes: Vec<u8> = row.get("evidence_hash");
+        let evidence_uri: Option<String> = row.try_get("evidence_uri").unwrap_or(None);
         let source_str: String = row.get("source");
+        let observed_at_u64: i64 = row.try_get("observed_at_u64").unwrap_or(0i64);
+        let subject_id_bytes: Option<Vec<u8>> = row.try_get("subject_id").unwrap_or(None);
 
         let chain_id: Option<i64> = row.try_get("chain_id").ok();
         let block_number: Option<i64> = row.try_get("block_number").ok();
@@ -335,6 +369,13 @@ impl Storage {
             B256::ZERO
         };
 
+        let subject_id = match subject_id_bytes {
+            Some(bytes) if bytes.len() == 32 => Some(trustnet_core::types::SubjectId::from(
+                <[u8; 32]>::try_from(bytes.as_slice())?,
+            )),
+            _ => None,
+        };
+
         let tx_hash = tx_hash_bytes
             .as_ref()
             .and_then(|bytes| (bytes.len() == 32).then(|| B256::from_slice(bytes)));
@@ -346,6 +387,9 @@ impl Storage {
             level,
             updated_at_u64: updated_at_u64 as u64,
             evidence_hash,
+            evidence_uri,
+            observed_at_u64: observed_at_u64 as u64,
+            subject_id,
             source,
             chain_id: chain_id.map(|v| v as u64),
             block_number: block_number.map(|v| v as u64),
@@ -383,10 +427,13 @@ mod tests {
         let base = EdgeRecord {
             rater,
             target,
+            subject_id: None,
             context_id,
             level: Level::positive(),
             updated_at_u64: 1,
             evidence_hash: B256::ZERO,
+            evidence_uri: None,
+            observed_at_u64: 1,
             source: EdgeSource::TrustGraph,
             chain_id: Some(1),
             block_number: Some(100),
@@ -438,10 +485,13 @@ mod tests {
         let mut a = EdgeRecord {
             rater,
             target,
+            subject_id: None,
             context_id,
             level: Level::positive(),
             updated_at_u64: 1,
             evidence_hash: B256::ZERO,
+            evidence_uri: None,
+            observed_at_u64: 1,
             source: EdgeSource::TrustGraph,
             chain_id: Some(1),
             block_number: Some(100),
@@ -488,10 +538,13 @@ mod tests {
         let edge = EdgeRecord {
             rater: PrincipalId::from([0x11u8; 32]),
             target: PrincipalId::from([0x22u8; 32]),
+            subject_id: None,
             context_id: ContextId::from([0x33u8; 32]),
             level: Level::positive(),
             updated_at_u64: 1,
             evidence_hash: B256::ZERO,
+            evidence_uri: None,
+            observed_at_u64: 1,
             source: EdgeSource::TrustGraph,
             chain_id: Some(1),
             block_number: Some(100),

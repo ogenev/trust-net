@@ -1,8 +1,8 @@
 //! Database types for the indexer storage layer.
 
-use alloy::primitives::B256;
+use alloy::primitives::{Address, B256, U256};
 use serde::{Deserialize, Serialize};
-use trustnet_core::types::{ContextId, Level, PrincipalId};
+use trustnet_core::types::{ContextId, Level, PrincipalId, SubjectId};
 
 /// An edge record as stored in the database.
 ///
@@ -16,6 +16,9 @@ pub struct EdgeRecord {
     /// The target (endorser/agent) principal id (bytes32)
     pub target: PrincipalId,
 
+    /// Optional stable subject identity (bytes32).
+    pub subject_id: Option<SubjectId>,
+
     /// Context ID (capability namespace)
     pub context_id: ContextId,
 
@@ -27,6 +30,12 @@ pub struct EdgeRecord {
 
     /// Evidence hash committed in the leaf value (bytes32, zero if none).
     pub evidence_hash: B256,
+
+    /// Evidence URI (not committed; optional).
+    pub evidence_uri: Option<String>,
+
+    /// Observed ordering key (monotonic-ish).
+    pub observed_at_u64: u64,
 
     /// Source of the edge: "trust_graph" or "erc8004"
     pub source: EdgeSource,
@@ -48,6 +57,80 @@ pub struct EdgeRecord {
 
     /// Server sequence ordering key (server mode).
     pub server_seq: Option<u64>,
+}
+
+/// ERC-8004 feedback record (raw ingestion).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FeedbackRecord {
+    /// Chain id.
+    pub chain_id: u64,
+    /// ERC-8004 Reputation contract address.
+    pub erc8004_reputation: Address,
+    /// ERC-8004 Identity contract address (optional).
+    pub erc8004_identity: Option<Address>,
+    /// Agent id (uint256).
+    pub agent_id: U256,
+    /// Client address.
+    pub client_address: Address,
+    /// Feedback index (uint256).
+    pub feedback_index: U256,
+    /// Raw value (uint256).
+    pub value: U256,
+    /// Value decimals.
+    pub value_decimals: u8,
+    /// Tag1 string.
+    pub tag1: String,
+    /// Tag2 string.
+    pub tag2: String,
+    /// Endpoint string.
+    pub endpoint: String,
+    /// Feedback URI (optional).
+    pub feedback_uri: Option<String>,
+    /// Feedback hash (bytes32).
+    pub feedback_hash: B256,
+    /// Derived subject id (optional).
+    pub subject_id: Option<SubjectId>,
+    /// Observed ordering key.
+    pub observed_at_u64: u64,
+    /// Block number.
+    pub block_number: Option<u64>,
+    /// Transaction index.
+    pub tx_index: Option<u64>,
+    /// Log index.
+    pub log_index: Option<u64>,
+    /// Transaction hash.
+    pub tx_hash: Option<B256>,
+}
+
+/// ERC-8004 response record (public verification stamp).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FeedbackResponseRecord {
+    /// Chain id.
+    pub chain_id: u64,
+    /// ERC-8004 Reputation contract address.
+    pub erc8004_reputation: Address,
+    /// Agent id (uint256).
+    pub agent_id: U256,
+    /// Client address.
+    pub client_address: Address,
+    /// Feedback index (uint256).
+    pub feedback_index: U256,
+    /// Responder address.
+    pub responder: Address,
+    /// Response URI (optional).
+    pub response_uri: Option<String>,
+    /// Response hash (bytes32).
+    pub response_hash: B256,
+    /// Observed ordering key.
+    pub observed_at_u64: u64,
+    /// Block number.
+    pub block_number: Option<u64>,
+    /// Transaction index.
+    pub tx_index: Option<u64>,
+    /// Log index.
+    pub log_index: Option<u64>,
+    /// Transaction hash.
+    pub tx_hash: Option<B256>,
 }
 
 /// Source of an edge event.

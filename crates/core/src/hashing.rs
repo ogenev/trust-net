@@ -3,7 +3,7 @@
 //! Provides keccak256 hashing and edge key computation functions
 //! that match the Solidity implementation exactly.
 
-use crate::types::{AgentKey, Bytes32, ContextId, PrincipalId};
+use crate::types::{AgentKey, Bytes32, ContextId, PrincipalId, SubjectId};
 use alloy_primitives::{keccak256 as alloy_keccak256, Address, B256};
 
 /// Compute keccak256 hash of input data.
@@ -115,6 +115,15 @@ pub fn compute_agent_key(chain_id: u64, registry: &Address, agent_id: &[u8; 32])
     data.extend_from_slice(agent_id);
 
     AgentKey::from(keccak256(&data))
+}
+
+/// Compute the subject id for an ERC-8004 agent.
+///
+/// This matches the spec's recommended binding:
+/// `keccak256(abi.encodePacked(uint256(chainId), address(identityRegistry), uint256(agentId)))`.
+pub fn compute_subject_id(chain_id: u64, registry: &Address, agent_id: &[u8; 32]) -> SubjectId {
+    let agent_key = compute_agent_key(chain_id, registry, agent_id);
+    SubjectId::from(*agent_key.inner())
 }
 
 /// Compute the leaf hash for an SMM entry.
@@ -238,6 +247,18 @@ mod tests {
         // Different chain ID should produce different key
         let different_key = compute_agent_key(2, &registry, &agent_id);
         assert_ne!(key.as_bytes(), different_key.as_bytes());
+    }
+
+    #[test]
+    fn test_compute_subject_id_matches_agent_key() {
+        let chain_id = 10u64;
+        let registry = Address::from(hex!("9999999999999999999999999999999999999999"));
+        let agent_id = hex!("0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20");
+
+        let subject_id = compute_subject_id(chain_id, &registry, &agent_id);
+        let agent_key = compute_agent_key(chain_id, &registry, &agent_id);
+
+        assert_eq!(subject_id.as_bytes(), agent_key.as_bytes());
     }
 
     #[test]
