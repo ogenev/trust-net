@@ -1,6 +1,7 @@
 //! Database query helpers for the TrustNet API (Spec v0.4).
 
 use sqlx::SqlitePool;
+use trustnet_core::Address;
 
 /// Latest epoch record (v0.4 fields are optional for legacy epochs).
 #[derive(Debug, sqlx::FromRow)]
@@ -114,4 +115,44 @@ pub async fn get_candidate_endorsers(
     .await?;
 
     Ok(rows)
+}
+
+/// Check if an evidence hash corresponds to feedback with a verified stamp.
+pub async fn has_verified_feedback_for_hash(
+    pool: &SqlitePool,
+    evidence_hash: &[u8],
+    trusted_responders: &[Address],
+) -> anyhow::Result<bool> {
+    let mut query = String::from(
+        r#"
+        SELECT 1
+        FROM feedback_raw f
+        JOIN feedback_verified v
+          ON v.chain_id = f.chain_id
+         AND v.agent_id = f.agent_id
+         AND v.client_address = f.client_address
+         AND v.feedback_index = f.feedback_index
+        WHERE f.feedback_hash = ?
+        "#,
+    );
+
+    if !trusted_responders.is_empty() {
+        query.push_str(" AND v.responder IN (");
+        query.push_str(
+            &std::iter::repeat_n("?", trusted_responders.len())
+                .collect::<Vec<_>>()
+                .join(","),
+        );
+        query.push(')');
+    }
+
+    query.push_str(" LIMIT 1");
+
+    let mut stmt = sqlx::query_scalar::<_, i64>(&query).bind(evidence_hash);
+    for responder in trusted_responders {
+        stmt = stmt.bind(responder.as_slice());
+    }
+
+    let row = stmt.fetch_optional(pool).await?;
+    Ok(row.is_some())
 }

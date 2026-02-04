@@ -1,6 +1,6 @@
 //! Feedback storage operations (ERC-8004 signals).
 
-use super::{FeedbackRecord, FeedbackResponseRecord, Storage};
+use super::{FeedbackRecord, FeedbackResponseRecord, FeedbackVerifiedRecord, Storage};
 use anyhow::{Context, Result};
 
 fn u256_to_bytes(value: &alloy::primitives::U256) -> [u8; 32] {
@@ -185,6 +185,70 @@ impl Storage {
 
         Ok(id)
     }
+
+    /// Append a verified feedback stamp.
+    ///
+    /// Returns the inserted row id (or existing id if idempotent).
+    pub async fn append_feedback_verified(&self, record: &FeedbackVerifiedRecord) -> Result<i64> {
+        let agent_id_bytes = u256_to_bytes(&record.agent_id);
+        let feedback_index_bytes = u256_to_bytes(&record.feedback_index);
+
+        let result = sqlx::query(
+            r#"
+            INSERT INTO feedback_verified (
+                chain_id,
+                erc8004_reputation,
+                agent_id,
+                client_address,
+                feedback_index,
+                responder,
+                response_hash,
+                observed_at_u64
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT DO NOTHING
+            "#,
+        )
+        .bind(record.chain_id as i64)
+        .bind(record.erc8004_reputation.as_slice())
+        .bind(agent_id_bytes.as_slice())
+        .bind(record.client_address.as_slice())
+        .bind(feedback_index_bytes.as_slice())
+        .bind(record.responder.as_slice())
+        .bind(record.response_hash.as_slice())
+        .bind(record.observed_at_u64 as i64)
+        .execute(&self.pool)
+        .await
+        .context("Failed to append feedback_verified")?;
+
+        if result.rows_affected() > 0 {
+            return Ok(result.last_insert_rowid());
+        }
+
+        let id: i64 = sqlx::query_scalar(
+            r#"
+            SELECT id
+            FROM feedback_verified
+            WHERE chain_id = ?
+              AND agent_id = ?
+              AND client_address = ?
+              AND feedback_index = ?
+              AND responder = ?
+              AND response_hash = ?
+            "#,
+        )
+        .bind(record.chain_id as i64)
+        .bind(agent_id_bytes.as_slice())
+        .bind(record.client_address.as_slice())
+        .bind(feedback_index_bytes.as_slice())
+        .bind(record.responder.as_slice())
+        .bind(record.response_hash.as_slice())
+        .fetch_one(&self.pool)
+        .await
+        .context("Failed to fetch existing feedback_verified id")?;
+
+        Ok(id)
+    }
 }
 
 #[cfg(test)]
@@ -265,6 +329,32 @@ mod tests {
 
         assert_eq!(id1, id2);
         let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM feedback_responses_raw")
+            .fetch_one(storage.pool())
+            .await
+            .unwrap();
+        assert_eq!(count, 1);
+    }
+
+    #[tokio::test]
+    async fn test_append_feedback_verified_idempotent() {
+        let (storage, _tmp) = setup_storage().await;
+
+        let record = FeedbackVerifiedRecord {
+            chain_id: 1,
+            erc8004_reputation: Address::repeat_byte(0x11),
+            agent_id: U256::from(42u64),
+            client_address: Address::repeat_byte(0x22),
+            feedback_index: U256::from(7u64),
+            responder: Address::repeat_byte(0x33),
+            response_hash: B256::repeat_byte(0x44),
+            observed_at_u64: 99,
+        };
+
+        let id1 = storage.append_feedback_verified(&record).await.unwrap();
+        let id2 = storage.append_feedback_verified(&record).await.unwrap();
+
+        assert_eq!(id1, id2);
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM feedback_verified")
             .fetch_one(storage.pool())
             .await
             .unwrap();

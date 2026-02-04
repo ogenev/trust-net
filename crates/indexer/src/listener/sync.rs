@@ -9,7 +9,8 @@ use tracing::{info, warn};
 use super::provider::ChainEvent;
 use super::RpcProvider;
 use crate::config::SyncConfig;
-use crate::storage::Storage;
+use crate::storage::{FeedbackVerifiedRecord, Storage};
+use crate::verification::ResponseVerifier;
 
 /// Sync engine manages historical catch-up and live block synchronization.
 pub struct SyncEngine {
@@ -19,6 +20,7 @@ pub struct SyncEngine {
     chain_id: u64,
     erc8004_reputation: Address,
     erc8004_identity: Option<Address>,
+    response_verifier: Option<ResponseVerifier>,
 }
 
 impl SyncEngine {
@@ -30,6 +32,7 @@ impl SyncEngine {
         chain_id: u64,
         erc8004_reputation: Address,
         erc8004_identity: Option<Address>,
+        response_verifier: Option<ResponseVerifier>,
     ) -> Self {
         Self {
             provider,
@@ -38,6 +41,7 @@ impl SyncEngine {
             chain_id,
             erc8004_reputation,
             erc8004_identity,
+            response_verifier,
         }
     }
 
@@ -237,6 +241,42 @@ impl SyncEngine {
                     if let Err(e) = self.storage.append_feedback_response_raw(&response).await {
                         warn!("Failed to append feedback_responses_raw: {}", e);
                     }
+
+                    if let Some(verifier) = &self.response_verifier {
+                        if let Some(uri) = response.response_uri.as_deref() {
+                            match verifier
+                                .verify_response_uri(uri, &response.response_hash)
+                                .await
+                            {
+                                Ok(true) => {
+                                    let verified = FeedbackVerifiedRecord {
+                                        chain_id: response.chain_id,
+                                        erc8004_reputation: response.erc8004_reputation,
+                                        agent_id: response.agent_id,
+                                        client_address: response.client_address,
+                                        feedback_index: response.feedback_index,
+                                        responder: response.responder,
+                                        response_hash: response.response_hash,
+                                        observed_at_u64: response.observed_at_u64,
+                                    };
+
+                                    if let Err(e) =
+                                        self.storage.append_feedback_verified(&verified).await
+                                    {
+                                        warn!("Failed to append feedback_verified: {}", e);
+                                    }
+                                }
+                                Ok(false) => {
+                                    warn!(
+                                        "Response verification failed (hash/type/status mismatch)"
+                                    );
+                                }
+                                Err(e) => {
+                                    warn!("Response verification error: {}", e);
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -368,6 +408,42 @@ impl SyncEngine {
 
                         if let Err(e) = self.storage.append_feedback_response_raw(&response).await {
                             warn!("Failed to append feedback_responses_raw: {}", e);
+                        }
+
+                        if let Some(verifier) = &self.response_verifier {
+                            if let Some(uri) = response.response_uri.as_deref() {
+                                match verifier
+                                    .verify_response_uri(uri, &response.response_hash)
+                                    .await
+                                {
+                                    Ok(true) => {
+                                        let verified = FeedbackVerifiedRecord {
+                                            chain_id: response.chain_id,
+                                            erc8004_reputation: response.erc8004_reputation,
+                                            agent_id: response.agent_id,
+                                            client_address: response.client_address,
+                                            feedback_index: response.feedback_index,
+                                            responder: response.responder,
+                                            response_hash: response.response_hash,
+                                            observed_at_u64: response.observed_at_u64,
+                                        };
+
+                                        if let Err(e) =
+                                            self.storage.append_feedback_verified(&verified).await
+                                        {
+                                            warn!("Failed to append feedback_verified: {}", e);
+                                        }
+                                    }
+                                    Ok(false) => {
+                                        warn!(
+                                            "Response verification failed (hash/type/status mismatch)"
+                                        );
+                                    }
+                                    Err(e) => {
+                                        warn!("Response verification error: {}", e);
+                                    }
+                                }
+                            }
                         }
                     }
                 }

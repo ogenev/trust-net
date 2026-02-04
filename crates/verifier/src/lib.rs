@@ -43,6 +43,12 @@ pub struct LeafValueJson {
     pub updated_at: u64,
     #[serde(rename = "evidenceHash")]
     pub evidence_hash: String,
+    #[serde(
+        rename = "evidenceVerified",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub evidence_verified: Option<bool>,
 }
 
 impl LeafValueJson {
@@ -290,6 +296,11 @@ fn verify_edge_key_binding(proof: &SmmProofV1Json) -> anyhow::Result<()> {
     Ok(())
 }
 
+fn evidence_is_verified(edge: &LeafValueJson, leaf: &LeafValueV1) -> bool {
+    edge.evidence_verified
+        .unwrap_or_else(|| leaf.evidence_hash != B256::ZERO)
+}
+
 fn verify_manifest_hash(root: &RootResponseV1) -> anyhow::Result<()> {
     let Some(manifest) = root.manifest.as_ref() else {
         return Ok(());
@@ -387,14 +398,14 @@ pub fn verify_decision_bundle(
         require_positive_et_evidence: bundle.constraints.require_evidence_for_positive_et,
         require_positive_dt_evidence: bundle.constraints.require_evidence_for_positive_dt,
     };
-    let dt_has_evidence = dt.evidence_hash != B256::ZERO;
+    let dt_has_evidence = evidence_is_verified(&bundle.why.edge_dt, &dt);
     let candidates = endorser
         .map(|endorser| {
             vec![trustnet_engine::CandidateEvidence {
                 endorser,
                 level_de: de.level,
                 level_et: et.level,
-                et_has_evidence: et.evidence_hash != B256::ZERO,
+                et_has_evidence: evidence_is_verified(&bundle.why.edge_et, &et),
             }]
         })
         .unwrap_or_default();

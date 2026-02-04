@@ -12,7 +12,9 @@ use sha2::{Digest, Sha256};
 use sqlx::{sqlite::SqliteConnectOptions, SqlitePool};
 use std::{collections::HashMap, net::SocketAddr, str::FromStr, sync::Arc};
 use tower_http::cors::CorsLayer;
-use trustnet_core::{hashing::compute_edge_key, ContextId, LeafValueV1, Level, PrincipalId, B256};
+use trustnet_core::{
+    hashing::compute_edge_key, Address, ContextId, LeafValueV1, Level, PrincipalId, B256,
+};
 use trustnet_engine::{
     decide_with_evidence, CandidateEvidence, Decision, EvidencePolicy, Thresholds,
 };
@@ -49,6 +51,7 @@ struct AppState {
     db: SqlitePool,
     smm_cache: Arc<smm_cache::SmmCache>,
     decision_policy: DecisionPolicy,
+    trusted_responders: Vec<Address>,
     write_enabled: bool,
 }
 
@@ -94,6 +97,25 @@ fn parse_env_bool(name: &str) -> anyhow::Result<Option<bool>> {
         }
     };
     Ok(Some(value))
+}
+
+fn load_trusted_responders_from_env() -> anyhow::Result<Vec<Address>> {
+    let Ok(raw) = std::env::var("TRUSTNET_VERIFIED_RESPONDERS") else {
+        return Ok(Vec::new());
+    };
+
+    let mut responders = Vec::new();
+    for part in raw.split(',') {
+        let trimmed = part.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let addr = Address::from_str(trimmed)
+            .with_context(|| format!("Invalid TRUSTNET_VERIFIED_RESPONDERS entry: {}", trimmed))?;
+        responders.push(addr);
+    }
+
+    Ok(responders)
 }
 
 fn load_decision_policy_from_env() -> anyhow::Result<DecisionPolicy> {
@@ -191,11 +213,13 @@ async fn main() -> anyhow::Result<()> {
     let smm_cache = Arc::new(smm_cache::SmmCache::new(&cache_dir));
 
     let decision_policy = load_decision_policy_from_env()?;
+    let trusted_responders = load_trusted_responders_from_env()?;
 
     let state = AppState {
         db,
         smm_cache,
         decision_policy,
+        trusted_responders,
         write_enabled,
     };
 
@@ -378,6 +402,23 @@ fn edge_is_expired(updated_at_u64: u64, context_id: &ContextId, as_of_u64: u64) 
         return true;
     }
     updated_at_u64.saturating_add(ttl_seconds) < as_of_u64
+}
+
+async fn has_verified_evidence(
+    state: &AppState,
+    evidence_hash: &B256,
+) -> Result<bool, (StatusCode, Json<ErrorResponse>)> {
+    if *evidence_hash == B256::ZERO {
+        return Ok(false);
+    }
+
+    db::has_verified_feedback_for_hash(
+        &state.db,
+        evidence_hash.as_slice(),
+        &state.trusted_responders,
+    )
+    .await
+    .map_err(internal_error)
 }
 
 fn hex_bytes(bytes: &[u8]) -> String {
@@ -631,6 +672,8 @@ struct LeafValueJson {
     updated_at: u64,
     #[serde(rename = "evidenceHash")]
     evidence_hash: String,
+    #[serde(rename = "evidenceVerified", skip_serializing_if = "Option::is_none")]
+    evidence_verified: Option<bool>,
 }
 
 #[derive(Serialize)]
@@ -673,11 +716,12 @@ struct SmmProofV1Json {
     format: &'static str,
 }
 
-fn leaf_value_json_from_v1(v: &LeafValueV1) -> LeafValueJson {
+fn leaf_value_json_from_v1(v: &LeafValueV1, evidence_verified: Option<bool>) -> LeafValueJson {
     LeafValueJson {
         level: v.level.value(),
         updated_at: v.updated_at_u64,
         evidence_hash: hex_b256(&v.evidence_hash),
+        evidence_verified,
     }
 }
 
@@ -690,7 +734,7 @@ fn smm_proof_v1_json(
     let leaf_value = if proof.is_membership {
         let decoded =
             LeafValueV1::decode(&proof.leaf_value).map_err(|e| bad_request(e.to_string()))?;
-        Some(leaf_value_json_from_v1(&decoded))
+        Some(leaf_value_json_from_v1(&decoded, None))
     } else {
         None
     };
@@ -747,6 +791,8 @@ struct CandidateMaterial {
     proof_et: trustnet_smm::SmmProof,
     leaf_de: LeafValueV1,
     leaf_et: LeafValueV1,
+    et_evidence_verified: Option<bool>,
+    et_has_evidence: bool,
 }
 
 async fn get_decision(
@@ -801,6 +847,8 @@ async fn get_decision(
     .await
     .map_err(internal_error)?;
 
+    let policy = state.decision_policy.for_context(&context_id);
+
     let mut candidates = Vec::new();
     for endorser_bytes in candidate_endorsers {
         let endorser = parse_principal_id(&endorser_bytes).map_err(internal_error)?;
@@ -817,23 +865,36 @@ async fn get_decision(
         let leaf_de = LeafValueV1::decode(&proof_de.leaf_value).map_err(internal_error)?;
         let leaf_et = LeafValueV1::decode(&proof_et.leaf_value).map_err(internal_error)?;
 
+        let et_evidence_verified = if policy.require_evidence_et
+            && leaf_et.level.value() > 0
+            && leaf_et.evidence_hash != B256::ZERO
+        {
+            Some(has_verified_evidence(&state, &leaf_et.evidence_hash).await?)
+        } else if policy.require_evidence_et {
+            Some(false)
+        } else {
+            None
+        };
+
+        let et_has_evidence = et_evidence_verified.unwrap_or(leaf_et.evidence_hash != B256::ZERO);
+
         candidates.push(CandidateMaterial {
             endorser,
             proof_de,
             proof_et,
             leaf_de,
             leaf_et,
+            et_evidence_verified,
+            et_has_evidence,
         });
     }
-
-    let policy = state.decision_policy.for_context(&context_id);
     let engine_candidates: Vec<CandidateEvidence> = candidates
         .iter()
         .map(|c| CandidateEvidence {
             endorser: c.endorser,
             level_de: c.leaf_de.level,
             level_et: c.leaf_et.level,
-            et_has_evidence: c.leaf_et.evidence_hash != B256::ZERO,
+            et_has_evidence: c.et_has_evidence,
         })
         .collect();
 
@@ -841,7 +902,17 @@ async fn get_decision(
         require_positive_et_evidence: policy.require_evidence_et,
         require_positive_dt_evidence: policy.require_evidence_dt,
     };
-    let dt_has_evidence = dt_leaf.evidence_hash != B256::ZERO;
+    let dt_evidence_verified = if policy.require_evidence_dt
+        && dt_leaf.level.value() > 0
+        && dt_leaf.evidence_hash != B256::ZERO
+    {
+        Some(has_verified_evidence(&state, &dt_leaf.evidence_hash).await?)
+    } else if policy.require_evidence_dt {
+        Some(false)
+    } else {
+        None
+    };
+    let dt_has_evidence = dt_evidence_verified.unwrap_or(dt_leaf.evidence_hash != B256::ZERO);
     let result = decide_with_evidence(
         policy.thresholds,
         evidence_policy,
@@ -850,7 +921,7 @@ async fn get_decision(
         &engine_candidates,
     );
 
-    let (chosen_proof_de, chosen_proof_et, leaf_de, leaf_et) =
+    let (chosen_proof_de, chosen_proof_et, leaf_de, leaf_et, et_evidence_verified) =
         if let Some(endorser) = result.endorser {
             let chosen = candidates
                 .into_iter()
@@ -871,6 +942,7 @@ async fn get_decision(
                 )?),
                 chosen.leaf_de,
                 chosen.leaf_et,
+                chosen.et_evidence_verified,
             )
         } else {
             (
@@ -878,6 +950,11 @@ async fn get_decision(
                 None,
                 LeafValueV1::default_neutral(),
                 LeafValueV1::default_neutral(),
+                if policy.require_evidence_et {
+                    Some(false)
+                } else {
+                    None
+                },
             )
         };
 
@@ -903,9 +980,9 @@ async fn get_decision(
         },
         endorser: result.endorser.map(|p| hex_bytes(p.as_bytes())),
         why: WhyJson {
-            edge_de: leaf_value_json_from_v1(&leaf_de),
-            edge_et: leaf_value_json_from_v1(&leaf_et),
-            edge_dt: leaf_value_json_from_v1(&dt_leaf),
+            edge_de: leaf_value_json_from_v1(&leaf_de, None),
+            edge_et: leaf_value_json_from_v1(&leaf_et, et_evidence_verified),
+            edge_dt: leaf_value_json_from_v1(&dt_leaf, dt_evidence_verified),
         },
         constraints: ConstraintsJson {
             ttl_seconds: policy.ttl_seconds,
@@ -1358,6 +1435,58 @@ mod tests {
                 server_seq INTEGER,
                 PRIMARY KEY (rater_pid, target_pid, context_id)
             );
+
+            CREATE TABLE feedback_raw (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                chain_id INTEGER NOT NULL,
+                erc8004_reputation BLOB NOT NULL,
+                erc8004_identity BLOB,
+                agent_id BLOB NOT NULL,
+                client_address BLOB NOT NULL,
+                feedback_index BLOB NOT NULL,
+                value_u256 BLOB NOT NULL,
+                value_decimals INTEGER NOT NULL,
+                tag1 TEXT NOT NULL,
+                tag2 TEXT NOT NULL,
+                endpoint TEXT NOT NULL,
+                feedback_uri TEXT,
+                feedback_hash BLOB NOT NULL,
+                subject_id BLOB,
+                observed_at_u64 INTEGER NOT NULL,
+                block_number INTEGER,
+                tx_index INTEGER,
+                log_index INTEGER,
+                tx_hash BLOB
+            );
+
+            CREATE TABLE feedback_responses_raw (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                chain_id INTEGER NOT NULL,
+                erc8004_reputation BLOB NOT NULL,
+                agent_id BLOB NOT NULL,
+                client_address BLOB NOT NULL,
+                feedback_index BLOB NOT NULL,
+                responder BLOB NOT NULL,
+                response_uri TEXT,
+                response_hash BLOB NOT NULL,
+                observed_at_u64 INTEGER NOT NULL,
+                block_number INTEGER,
+                tx_index INTEGER,
+                log_index INTEGER,
+                tx_hash BLOB
+            );
+
+            CREATE TABLE feedback_verified (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                chain_id INTEGER NOT NULL,
+                erc8004_reputation BLOB NOT NULL,
+                agent_id BLOB NOT NULL,
+                client_address BLOB NOT NULL,
+                feedback_index BLOB NOT NULL,
+                responder BLOB NOT NULL,
+                response_hash BLOB NOT NULL,
+                observed_at_u64 INTEGER NOT NULL
+            );
             "#,
         )
         .execute(&db)
@@ -1373,7 +1502,8 @@ mod tests {
         let updated_at_u64 = 1000u64;
 
         // Insert edges (D->E=+2, E->T=+1).
-        let evidence_hash = [0u8; 32];
+        let evidence_hash_de = [0u8; 32];
+        let evidence_hash_et = [0x11u8; 32];
         sqlx::query(
             r#"
             INSERT INTO edges_latest (rater_pid, target_pid, context_id, level_i8, updated_at_u64, evidence_hash, source)
@@ -1385,7 +1515,7 @@ mod tests {
         .bind(context_id.as_bytes().as_slice())
         .bind(2i32)
         .bind(updated_at_u64 as i64)
-        .bind(evidence_hash.as_slice())
+        .bind(evidence_hash_de.as_slice())
         .execute(&db)
         .await
         .unwrap();
@@ -1401,7 +1531,7 @@ mod tests {
         .bind(context_id.as_bytes().as_slice())
         .bind(1i32)
         .bind(updated_at_u64 as i64)
-        .bind(evidence_hash.as_slice())
+        .bind(evidence_hash_et.as_slice())
         .execute(&db)
         .await
         .unwrap();
@@ -1451,6 +1581,7 @@ mod tests {
                 },
                 by_context: HashMap::new(),
             },
+            trusted_responders: Vec::new(),
             write_enabled: true,
         };
 
@@ -1668,6 +1799,11 @@ mod tests {
             .unwrap()
             .parse::<B256>()
             .unwrap();
+        let dt_evidence_verified = json["why"]["edgeDT"]["evidenceVerified"].as_bool();
+        let et_evidence_verified = json["why"]["edgeET"]["evidenceVerified"].as_bool();
+
+        let dt_has_evidence = dt_evidence_verified.unwrap_or(dt_evidence != B256::ZERO);
+        let et_has_evidence = et_evidence_verified.unwrap_or(et_evidence != B256::ZERO);
 
         let mut candidates = Vec::new();
         if json["endorser"].is_string() {
@@ -1675,7 +1811,7 @@ mod tests {
                 endorser,
                 level_de: Level::new(l_de).unwrap(),
                 level_et: Level::new(l_et).unwrap(),
-                et_has_evidence: et_evidence != B256::ZERO,
+                et_has_evidence,
             });
         }
 
@@ -1687,7 +1823,7 @@ mod tests {
             thresholds,
             evidence_policy,
             Level::new(l_dt).unwrap(),
-            dt_evidence != B256::ZERO,
+            dt_has_evidence,
             &candidates,
         );
 
@@ -1727,9 +1863,143 @@ mod tests {
         assert_eq!(json["score"].as_i64().unwrap() as i8, 0);
         assert_eq!(json["why"]["edgeDE"]["level"].as_i64().unwrap(), 0);
         assert_eq!(json["why"]["edgeET"]["level"].as_i64().unwrap(), 0);
+        assert_eq!(
+            json["why"]["edgeET"]["evidenceVerified"].as_bool(),
+            Some(false)
+        );
 
         assert_eq!(json["constraints"]["requireEvidenceForPositiveET"], true);
         assert_eq!(json["constraints"]["requireEvidenceForPositiveDT"], false);
+    }
+
+    #[tokio::test]
+    async fn test_decision_bundle_accepts_verified_evidence_stamp() {
+        let (mut state, _tmp, decider, endorser, target, context_id) = setup_state().await;
+        state.decision_policy.default.require_evidence_et = true;
+
+        let evidence_hash: Vec<u8> = sqlx::query_scalar(
+            r#"
+            SELECT evidence_hash
+            FROM edges_latest
+            WHERE rater_pid = ? AND target_pid = ? AND context_id = ?
+            "#,
+        )
+        .bind(endorser.as_bytes().as_slice())
+        .bind(target.as_bytes().as_slice())
+        .bind(context_id.as_bytes().as_slice())
+        .fetch_one(&state.db)
+        .await
+        .unwrap();
+
+        let agent_id = [0x01u8; 32];
+        let client_address = [0x02u8; 20];
+        let feedback_index = [0x03u8; 32];
+        let reputation = [0x04u8; 20];
+
+        sqlx::query(
+            r#"
+            INSERT INTO feedback_raw (
+                chain_id,
+                erc8004_reputation,
+                erc8004_identity,
+                agent_id,
+                client_address,
+                feedback_index,
+                value_u256,
+                value_decimals,
+                tag1,
+                tag2,
+                endpoint,
+                feedback_uri,
+                feedback_hash,
+                subject_id,
+                observed_at_u64,
+                block_number,
+                tx_index,
+                log_index,
+                tx_hash
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind(1i64)
+        .bind(reputation.as_slice())
+        .bind(None::<&[u8]>)
+        .bind(agent_id.as_slice())
+        .bind(client_address.as_slice())
+        .bind(feedback_index.as_slice())
+        .bind([0u8; 32].as_slice())
+        .bind(0i64)
+        .bind("trustnet:ctx:payments:v1")
+        .bind("trustnet:v1")
+        .bind("trustnet")
+        .bind(None::<&str>)
+        .bind(evidence_hash.as_slice())
+        .bind(None::<&[u8]>)
+        .bind(42i64)
+        .bind(None::<i64>)
+        .bind(None::<i64>)
+        .bind(None::<i64>)
+        .bind(None::<&[u8]>)
+        .execute(&state.db)
+        .await
+        .unwrap();
+
+        let responder = [0x05u8; 20];
+        let response_hash = [0x06u8; 32];
+        sqlx::query(
+            r#"
+            INSERT INTO feedback_verified (
+                chain_id,
+                erc8004_reputation,
+                agent_id,
+                client_address,
+                feedback_index,
+                responder,
+                response_hash,
+                observed_at_u64
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind(1i64)
+        .bind(reputation.as_slice())
+        .bind(agent_id.as_slice())
+        .bind(client_address.as_slice())
+        .bind(feedback_index.as_slice())
+        .bind(responder.as_slice())
+        .bind(response_hash.as_slice())
+        .bind(43i64)
+        .execute(&state.db)
+        .await
+        .unwrap();
+
+        let app = Router::new()
+            .route("/v1/decision", get(get_decision))
+            .with_state(state);
+
+        let uri = format!(
+            "/v1/decision?decider={}&target={}&contextId={}",
+            hex_bytes(decider.as_bytes()),
+            hex_bytes(target.as_bytes()),
+            hex_b256(context_id.inner())
+        );
+
+        let response = app
+            .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+        assert_eq!(json["decision"], "ask");
+        assert_eq!(json["endorser"], hex_bytes(endorser.as_bytes()));
+        assert_eq!(
+            json["why"]["edgeET"]["evidenceVerified"].as_bool(),
+            Some(true)
+        );
     }
 
     #[tokio::test]
