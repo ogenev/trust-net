@@ -286,10 +286,12 @@ impl SyncEngine {
             processed, skipped
         );
 
+        let last_block_hash = self.provider.get_block_hash(batch_end).await?;
+
         // Update sync state
         let mut state = self.storage.get_sync_state().await?;
         state.last_block_number = batch_end;
-        state.last_block_hash = alloy::primitives::B256::ZERO; // TODO: Get actual block hash
+        state.last_block_hash = last_block_hash;
         state.updated_at = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)?
             .as_secs() as i64;
@@ -450,9 +452,10 @@ impl SyncEngine {
             }
 
             // Update sync state after each block
+            let last_block_hash = self.provider.get_block_hash(block_num).await?;
             let mut state = self.storage.get_sync_state().await?;
             state.last_block_number = block_num;
-            state.last_block_hash = alloy::primitives::B256::ZERO; // TODO: Get actual block hash
+            state.last_block_hash = last_block_hash;
             state.updated_at = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)?
                 .as_secs() as i64;

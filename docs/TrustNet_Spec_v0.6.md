@@ -870,7 +870,8 @@ Uncompressed:
   "leafValue": {
     "level": 2,
     "updatedAt": 12345678,
-    "evidenceHash": "0x<32 bytes>"
+    "evidenceHash": "0x<32 bytes>",
+    "evidenceVerified": true
   },
   "siblings": ["0x<32 bytes>", "... 256 total ..."],
   "format": "uncompressed"
@@ -890,7 +891,8 @@ Compressed:
   "leafValue": {
     "level": 2,
     "updatedAt": 12345678,
-    "evidenceHash": "0x<32 bytes>"
+    "evidenceHash": "0x<32 bytes>",
+    "evidenceVerified": true
   },
   "bitmap": "0x<32 bytes bitset for 256 levels>",
   "siblings": ["0x<32 bytes>", "... only non-default ..."],
@@ -905,6 +907,9 @@ Rules:
 - If `isMembership=false`, `leafValue` SHOULD be omitted and the verifier MUST treat the leaf as the default value (neutral) with `leafHash = bytes32(0)`.
 - If `leafValue.updatedAt` is not used, it MUST be `0`.
 - `leafValue.level` MUST be in `[-2..+2]`.
+- `leafValue.evidenceVerified` is optional. If present, it indicates whether the evidence hash was verified
+  via trusted stamps (see §8.4 / Appendix E). If absent, verification is unknown and policy may treat
+  evidence as unverified.
 
 #### 11.5.2 `DecisionBundleV1` (2-hop decision response)
 
@@ -923,7 +928,7 @@ Rules:
   "endorser": "0x<32 bytes principalId>",
   "why": {
     "edgeDE": { "level": 2, "updatedAt": 123, "evidenceHash": "0x..." },
-    "edgeET": { "level": 2, "updatedAt": 124, "evidenceHash": "0x..." },
+    "edgeET": { "level": 2, "updatedAt": 124, "evidenceHash": "0x...", "evidenceVerified": true },
     "edgeDT": { "level": 0, "updatedAt": 0, "evidenceHash": "0x000..." }
   },
   "constraints": { "ttlSeconds": 300 },
@@ -939,6 +944,9 @@ Verifier behavior:
 - The gateway MUST recompute `score` from the decoded `why` edges and reject the bundle if it doesn’t match.
 - The gateway MUST verify that all proofs bind to the same `graphRoot` and `epoch`.
 - If constraints are present, the gateway MUST enforce them or treat decision as ASK/DENY.
+- If no eligible endorser exists, `endorser` MUST be omitted. In that case, `DE`/`ET` proofs MAY be omitted,
+  and `why.edgeDE` / `why.edgeET` MUST be neutral (level 0, updatedAt 0, evidenceHash = 0x00…00).
+- `why.edge*.evidenceVerified` MAY be included to indicate verification status for evidence-gated policies.
 
 ---
 
@@ -975,7 +983,12 @@ A gateway policy MAY declare that a context **requires evidence** for positive t
 If `requiresEvidence == true` for the context, the verifier MUST apply:
 
 - If `lET > 0` and `edgeET.evidenceHash == 0x00…00`, treat `lET := 0`
-- If `lDT > 0` and `edgeDT.evidenceHash == 0x00…00`, the gateway SHOULD treat `lDT := 0` (configurable; some deployments allow deciders to self-override without evidence)
+- If `lET > 0` and `edgeET.evidenceHash != 0x00…00` but the evidence is **not verified** by trusted
+  verification stamps (see §8.4 / Appendix E), treat `lET := 0`
+- If `lDT > 0` and `edgeDT.evidenceHash == 0x00…00`, the gateway SHOULD treat `lDT := 0`
+  (configurable; some deployments allow deciders to self-override without evidence)
+- If `lDT > 0` and `edgeDT.evidenceHash != 0x00…00` but the evidence is **not verified** by trusted
+  verification stamps, the gateway SHOULD treat `lDT := 0` (configurable)
 
 The hard veto rule still applies regardless of evidence.
 
@@ -1208,6 +1221,9 @@ Gateways SHOULD:
 - validate the inputs (hex length, allowed contexts)
 - choose endorser deterministically (§12.4)
 - return a `DecisionBundleV1` (§11.5.2)
+  - if the deployment performs evidence verification, the response MAY include `evidenceVerified`
+    in `why.edge*` and/or `leafValue` objects to signal verification status
+    (gateways should treat missing `evidenceVerified` as unverified in evidence-gated contexts)
 
 The server MUST NOT require that the gateway “trust the score”:
 - the gateway recomputes `score` from the proof material and MUST reject mismatches.

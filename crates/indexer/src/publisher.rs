@@ -778,7 +778,7 @@ impl EventDrivenPublisher {
     async fn try_get_block_hash(&self, block_number: u64) -> Option<B256> {
         use alloy::rpc::types::{BlockNumberOrTag, BlockTransactionsKind};
 
-        match self
+        let from_rpc = match self
             .provider
             .get_block_by_number(
                 BlockNumberOrTag::Number(block_number),
@@ -792,6 +792,20 @@ impl EventDrivenPublisher {
                 warn!("Failed to fetch block hash for {}: {}", block_number, e);
                 None
             }
+        };
+
+        if from_rpc.is_some() {
+            return from_rpc;
+        }
+
+        match self.storage.get_sync_state().await {
+            Ok(state) if state.last_block_number == block_number => {
+                if state.last_block_hash != B256::ZERO {
+                    return Some(state.last_block_hash);
+                }
+                None
+            }
+            _ => None,
         }
     }
 }

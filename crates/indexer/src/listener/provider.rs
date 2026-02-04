@@ -1,6 +1,6 @@
 //! RPC provider wrapper for Ethereum communication.
 
-use alloy::primitives::{Address, U256};
+use alloy::primitives::{Address, B256, U256};
 use alloy::providers::{Provider, ProviderBuilder, RootProvider};
 use alloy::rpc::types::{BlockId, BlockNumberOrTag, Filter, Log};
 use alloy::sol;
@@ -151,6 +151,23 @@ impl RpcProvider {
             .ok_or_else(|| anyhow::anyhow!("Block not found: {}", block_number))?;
 
         Ok(block.header.timestamp)
+    }
+
+    /// Get block hash for a block number.
+    pub async fn get_block_hash(&self, block_number: u64) -> Result<B256> {
+        use alloy::rpc::types::{BlockNumberOrTag, BlockTransactionsKind};
+
+        let block = self
+            .provider
+            .get_block_by_number(
+                BlockNumberOrTag::Number(block_number),
+                BlockTransactionsKind::Hashes,
+            )
+            .await
+            .context("Failed to fetch block")?
+            .ok_or_else(|| anyhow::anyhow!("Block not found: {}", block_number))?;
+
+        Ok(block.header.hash)
     }
 
     /// Resolve an ERC-8004 agentId to its agentWallet at a specific block.
