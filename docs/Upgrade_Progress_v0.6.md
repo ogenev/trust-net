@@ -1,6 +1,6 @@
 # TrustNet v0.6 Upgrade Progress
 
-Last updated: 2026-02-03
+Last updated: 2026-02-04
 
 Status legend: TODO, IN PROGRESS, DONE, N/A
 
@@ -21,14 +21,15 @@ Status legend: TODO, IN PROGRESS, DONE, N/A
 - DONE: Implement context parsing from string or hex for ERC-8004.
 - DONE: Resolve `agentId -> agentWallet` at block height (identity registry) and use wallet PrincipalId.
 - DONE: Ingest `ResponseAppended` into `feedback_responses_raw`.
-- DONE: Add tables: `feedback_raw`, `feedback_responses_raw` (+ optional `feedback_verified`).
+- DONE: Verify `ResponseAppended` payloads and store verified stamps in `feedback_verified`.
+- DONE: Add tables: `feedback_raw`, `feedback_responses_raw`, `feedback_verified`.
 - DONE: Extend edges tables with `evidence_uri`, `observed_at`, optional `subject_id`.
 - DONE: Add `observed_at` ordering for latest-wins reduction.
 - DONE: Update Root Manifest to spec v0.6 fields (`erc8004TrustEdgeGuard`, `erc8004QuantizationPolicy`, `erc8004TargetBindingPolicy`).
 - DONE: Implement JCS canonicalization for manifest hashing.
-- DONE: Add evidence gating in decision engine (require evidence for positive ET/DT by context).
+- DONE: Add evidence gating in decision engine (require **verified** evidence for positive ET/DT by context).
 - DONE: Add constraints to DecisionBundle responses.
-- DONE: Update proof JSON format (`type`, `format`, optional compression).
+- DONE: Update proof JSON format (`type`, `format`) with uncompressed proofs.
 - DONE: Update verifier to enforce v0.6 decision + proof requirements.
 - DONE: Update `TrustNetContexts.sol` and optionally `TrustPathVerifier.sol` for v0.6.
 - DONE: Add OpenClaw plugin reference + ActionReceipt emission.

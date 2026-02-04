@@ -1,6 +1,6 @@
 # TrustNet Smart Contracts
 
-Smart contracts for the TrustNet reputation layer on ERC-8004.
+Smart contracts for the TrustNet reputation layer (Spec v0.6, draft).
 
 ## Overview
 
@@ -10,7 +10,7 @@ TrustNet provides verifiable, explainable trust-to-act decisions for AI agents u
 - **2-hop proofs** with Sparse Merkle Maps
 - **Explainable** decisions showing which edges contributed
 
-See `docs/TrustNet_Spec_v0.4.md` for the current specification.
+See `docs/TrustNet_Spec_v0.6.md` for the current specification.
 
 ---
 
@@ -18,7 +18,7 @@ See `docs/TrustNet_Spec_v0.4.md` for the current specification.
 
 ### TrustGraph.sol
 
-**Events-only contract** for recording trust edges.
+**Events-only contract** for recording trust edges (Channel A).
 
 ```solidity
 // Rate an agent or curator
@@ -193,19 +193,26 @@ Off-chain indexers can ingest both:
 When processing ERC-8004 feedback:
 ```solidity
 // Only ingest if tagged for TrustNet
-if (tag2 == keccak256("trustnet:v1")) {
+if (endpoint == "trustnet" && tag2 == "trustnet:v1") {
+    // Parse tag1 as either:
+    // - canonical context string (hash to contextId), or
+    // - 0x-bytes32 hex (direct contextId)
     // Map score (0-100) to level (-2 to +2)
-    // Use tag1 as contextId
     // Use client as rater, agentWallet as target
 }
 ```
 
-Quantization mapping (from whitepaper §3.2):
+Quantization mapping (spec v0.6 default buckets):
 - `80-100` → `+2`
 - `60-79`  → `+1`
 - `40-59`  → `0`
 - `20-39`  → `-1`
 - `0-19`   → `-2`
+
+**Notes (v0.6):**
+- `tag1`, `tag2`, and `endpoint` are **strings**. Do not hash them for comparison.
+- If an ERC‑8004 identity registry is configured, resolve `agentId → agentWallet` at block height.
+- `ResponseAppended` events should be ingested as verification stamps; the on-chain contracts here do not enforce this.
 
 ---
 
@@ -266,14 +273,14 @@ await trustGraph.deployed();
 
 MIT - see [LICENSE](../LICENSE) for details.
 
-## Related Contracts (TODO)
+## Related Contracts
 
 - **RootRegistry** - Stores Merkle roots for proof verification
 - **TrustPathVerifier** - Verifies 2-hop proofs and computes scores
-- **SparseMerkleMap** - Merkle proof verification library
+- **TrustNetContexts** - Canonical context identifiers for capability namespaces
 
 ## References
 
 - [ERC-8004 Specification](https://eips.ethereum.org/EIPS/eip-8004)
-- Spec v0.4: `docs/TrustNet_Spec_v0.4.md`
+- Spec v0.6: `docs/TrustNet_Spec_v0.6.md`
 - [Sparse Merkle Trees](https://docs.iden3.io/publications/pdfs/Merkle-Tree.pdf)

@@ -16,7 +16,7 @@ pragma solidity ^0.8.26;
  * - Simple epoch advancement (monotonically increasing)
  * - Root manifest anchoring (manifestHash + manifestURI)
  *
- * Spec: https://github.com/trustnet/whitepaper Section 6.2
+ * Spec: docs/TrustNet_Spec_v0.6.md §10.5
  */
 contract RootRegistry {
     /// @notice Version identifier for this contract
@@ -154,7 +154,7 @@ contract RootRegistry {
      * @dev Only callable by authorized publisher
      * @dev Epochs must increase monotonically
      * @dev Root cannot be zero
-     * @dev manifestHash cannot be zero (v0.4 requires manifest anchoring)
+     * @dev manifestHash cannot be zero (v0.6 requires manifest anchoring)
      * @dev Emits RootPublished event
      *
      * Example:

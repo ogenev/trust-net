@@ -4,9 +4,11 @@
 
 **Spec:** `docs/TrustNet_Spec_v0.6.md`
 
+**Status (2026-02-04):** Phases 1–7 are implemented in this repo; this plan is retained for historical context. See `docs/Upgrade_Progress_v0.6.md` for current status.
+
 ---
 
-## 0) Baseline snapshot (what already exists)
+## 0) Baseline snapshot (pre-upgrade, historical)
 
 ### Rust workspace
 - `crates/core`: PrincipalId, ContextId, leaf value encoding (41 bytes), hashing.
@@ -21,41 +23,41 @@
 
 ---
 
-## 1) v0.6 deltas vs current repo (high level)
+## 1) v0.6 deltas implemented in this repo (high level)
 
 1) **ERC-8004 ingestion semantics**
-   - v0.6 requires tag/endpoint *strings*, `tag2 == "trustnet:v1"`, and `endpoint == "trustnet"`.
-   - `tag1` can be a context string or `0x` hex string; current parser treats `tag1` as bytes32.
-   - v0.6 uses `value` + `valueDecimals` instead of `score` u8; quantization policy must be in manifest.
+   - v0.6 uses tag/endpoint *strings* with guard `tag2 == "trustnet:v1"` and `endpoint == "trustnet"`.
+   - `tag1` accepts a context string or `0x` hex bytes32.
+   - v0.6 uses `value` + `valueDecimals` (quantization policy in the manifest).
    - `agentId → agentWallet` binding (identity registry lookup) is required for actionable targets.
-   - ResponseAppended events must be ingested into `feedback_responses_raw`.
+   - `ResponseAppended` ingested into `feedback_responses_raw`; verified stamps stored in `feedback_verified`.
 
 2) **Identity**
-   - v0.6 introduces `SubjectId` vs `ActorPrincipalId` (PrincipalId). Current code only has PrincipalId.
-   - Binding policy must be explicit (agentWalletAtBlock).
+   - v0.6 introduces `SubjectId` vs `ActorPrincipalId` (PrincipalId).
+   - Binding policy metadata is explicit (agentWalletAtBlock).
 
 3) **Contexts**
    - v0.6 canonical set includes `messaging` and excludes `defi-exec`.
-   - Context registry hash should reflect the canonical list used by this implementation.
+   - Context registry hash reflects the canonical list used by this implementation.
 
 4) **Root Manifest**
-   - v0.6 requires `specVersion=trustnet-spec-0.6`, `contextRegistryHash`, `ttlPolicy`, `leafValueFormat`.
+   - v0.6 uses `specVersion=trustnet-spec-0.6`, `contextRegistryHash`, `ttlPolicy`, `leafValueFormat`.
    - v0.6 adds ERC-8004 guard + quantization + target binding policy fields.
-   - Canonical hashing should use RFC 8785 (JCS) JSON.
+   - Canonical hashing uses RFC 8785 (JCS) JSON.
 
 5) **Decision/Policy**
-   - v0.6 adds evidence gating (require evidence for positive ET/DT based on policy).
-   - Decision responses should include `constraints` and `type` fields.
+   - v0.6 adds evidence gating (require **verified** evidence for positive ET/DT based on policy).
+   - Decision responses include `constraints` and `type` fields.
 
 6) **Proof format**
-   - v0.6 standardizes JSON proof shape with `type`, `format`, optional compression (bitmap).
+   - v0.6 standardizes JSON proof shape with `type`, `format` (uncompressed by default; bitmap compression optional).
 
 7) **OpenClaw integration**
    - v0.6 expects an OpenClaw plugin (or reference implementation) and ActionReceipts.
 
 ---
 
-## 2) Upgrade plan (ordered phases)
+## 2) Upgrade plan (ordered phases, retained for reference)
 
 ### Phase 1 — Spec & constants alignment (low risk)
 
@@ -88,7 +90,7 @@
    - Keep `evidence_hash` committed; `evidence_uri` stored but not committed.
 
 3. Migrations (new tables + columns)
-   - New tables: `feedback_raw`, `feedback_responses_raw`, optional `feedback_verified`.
+   - New tables: `feedback_raw`, `feedback_responses_raw`, `feedback_verified` (verification stamps).
    - Extend `edges_raw` / `edges_latest` with `evidence_uri`, `observed_at`, optional `subject_id`.
    - Update unique indexes for chain events (already partly in place).
    - Files:
