@@ -1,4 +1,4 @@
-# TrustNet Architecture (Spec v0.4 target)
+# TrustNet Architecture (Spec v0.6 target)
 
 ## Overview
 
@@ -17,7 +17,7 @@ This repo is upgrading to match:
                │ SQLite (shared; dev)
                │
 ┌──────────────▼───────────────┐
-│  trustnet-api                │  ← HTTP API server (v0.4 target: roots + decision bundles)
+│  trustnet-api                │  ← HTTP API server (v0.6 roots + decision bundles)
 │  (reads DB; server mode may write) │
 └──────────────────────────────┘
 
@@ -32,12 +32,16 @@ This repo is upgrading to match:
 **Responsibilities:**
 - Poll Ethereum RPC for new blocks
 - Ingest `EdgeRated` events from TrustGraph contract (TrustNet-native)
-- Ingest ERC‑8004 feedback events (guarded by `tag2 == keccak256("trustnet:v1")`) and map deterministically to TrustNet `RatingEvent`
+- Ingest ERC‑8004 feedback events (guarded by `endpoint == "trustnet"` and `tag2 == "trustnet:v1"`) and map deterministically to TrustNet edges
+- Parse `tag1` as context string or bytes32 hex, and quantize `(value, valueDecimals)` into TrustNet levels
+- Resolve `agentId → agentWallet` using the identity registry (if configured)
+- Ingest `ResponseAppended` into `feedback_responses_raw`
+- Optionally verify `responseURI` payloads (`trustnet.verification.v1`) and persist verified stamps in `feedback_verified`
 - Append all accepted signals to `edges_raw` (append-only)
-- Reduce into `edges_latest` with deterministic latest-wins ordering
-- (Chain mode) publish roots to RootRegistry on-chain (and optionally sign roots/manifests)
+- Reduce into `edges_latest` with deterministic latest-wins ordering (`observedAt`)
+- (Chain mode) publish roots to RootRegistry on-chain (and sign roots/manifests)
 
-**Storage:** Writes to SQLite (`edges_raw`, `edges_latest`, `epochs`, `sync_state`)
+**Storage:** Writes to SQLite (`edges_raw`, `edges_latest`, `feedback_raw`, `feedback_responses_raw`, `feedback_verified`, `epochs`, `sync_state`)
 
 **CLI Commands:**
 - `run` - Start indexer service
@@ -51,6 +55,7 @@ This repo is upgrading to match:
 - `alloy` - Ethereum RPC
 - `sqlx` - Database (SQLite)
 - `tokio` - Async runtime
+- `reqwest` - Response verification fetches (when enabled)
 
 ---
 
@@ -59,16 +64,14 @@ This repo is upgrading to match:
 **Purpose:** serve authenticated roots/manifests and verifiable decision bundles.
 
 **Responsibilities:**
-- Serve `GET /v1/root` (epoch + `graphRoot` + `manifestHash` + publisher signature in server mode)
-- Serve `GET /v1/decision` returning a `DecisionBundleV1`:
-  - deterministic endorser selection
-  - proofs for `D→E`, `E→T`, and `D→T` (membership or non-membership)
-  - “why” edges used and thresholds
-- (Server mode) accept `POST /v1/ratings` to append signed `RatingEvent` to `edges_raw`
+- Serve `GET /v1/root` (epoch + `graphRoot` + `manifestHash` + publisher signature)
+- Serve `GET /v1/decision` returning a `DecisionBundleV1` with deterministic endorser selection, DE/ET/DT proofs, and “why” edges + constraints + optional `evidenceVerified` hints
+- Apply evidence gating when configured, using verified stamps in `feedback_verified` if present
+- (Server mode) accept `POST /v1/ratings` to append signed `trustnet.rating.v1` to `edges_raw`
 
 **Storage:** Reads from SQLite (server mode additionally writes)
 
-**API Endpoints (v0.4 target):**
+**API Endpoints (v0.6):**
 - `GET /v1/root`
 - `GET /v1/contexts`
 - `GET /v1/decision?decider=<principalId>&target=<principalId>&contextId=<bytes32>`
@@ -90,7 +93,7 @@ This repo is upgrading to match:
 ```
 Ethereum (Sepolia)
     │
-    │ Events: EdgeRated (+ optional ERC‑8004 feedback mapping)
+    │ Events: EdgeRated + ERC‑8004 NewFeedback + ResponseAppended
     │
     ▼
 ┌───────────────────┐
@@ -98,20 +101,25 @@ Ethereum (Sepolia)
 │                   │
 │ 1. Append to      │
 │    edges_raw      │
-│ 2. Reduce to      │
+│    feedback_raw   │
+│    feedback_responses_raw │
+│ 2. Verify response│
+│    payloads (opt) │
+│    → feedback_verified │
+│ 3. Reduce to      │
 │    edges_latest   │
-│ 3. Build root +   │
+│ 4. Build root +   │
 │    manifest       │
-│ 4. Publish root   │
+│ 5. Publish root   │
 │    (RootRegistry) │
 └─────────┬─────────┘
           │
           ▼
     SQLite Database
-    (edges_raw, edges_latest, epochs, sync_state)
+    (edges_raw, edges_latest, feedback_raw, feedback_responses_raw, feedback_verified, epochs, sync_state)
 ```
 
-### Server mode (private log → roots → decision bundles)
+### Server mode (private log → decision bundles)
 
 ```
 Client/Gateway
@@ -124,8 +132,9 @@ Client/Gateway
 │ 1. Validate sig   │
 │ 2. Append raw     │
 │ 3. Reduce latest  │
-│ 4. Build root +   │
-│    sign manifest  │
+│ 4. (External)     │
+│    root builder   │
+│    publishes epoch│
 └─────────┬─────────┘
           │
           ▼
@@ -223,11 +232,14 @@ cargo run -- --database-url sqlite://../../trustnet.db --port 3000
 
 ## Shared Database Schema
 
-Both indexer and server access the same database. Spec v0.4 introduces an append-only raw table plus a reduced latest table:
+Chain and server modes use separate databases (enforced by `deployment_mode`). The v0.6 schema includes append-only raw tables plus reduced latest tables and verification stamps:
 
 ```sql
 CREATE TABLE edges_raw (...);
 CREATE TABLE edges_latest (...);
+CREATE TABLE feedback_raw (...);
+CREATE TABLE feedback_responses_raw (...);
+CREATE TABLE feedback_verified (...);
 
 CREATE TABLE epochs (... graph_root, manifest_json, manifest_hash, publisher_sig, ...);
 
@@ -236,8 +248,8 @@ CREATE TABLE sync_state (...);
 ```
 
 **Access patterns:**
-- Indexer: Read + Write
-- Server: Read (and Write in server mode)
+- Indexer (chain mode): Read + Write
+- API (server mode): Read + Write (private log ingestion)
 
 ---
 

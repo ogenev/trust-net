@@ -12,12 +12,13 @@ TrustNet is split into separate services for better scalability:
 │                              │
 │  ┌─────────────────┐         │
 │  │  Event Listener │ ← Ethereum RPC
-│  │   (tokio task)  │   EdgeRated + NewFeedback
+│  │   (tokio task)  │   EdgeRated + NewFeedback + ResponseAppended
 │  └────────┬────────┘         │
 │           │                  │
 │      ┌────▼──────┐           │
 │      │  Storage  │ ← SQLite  │
-│      │  (edges)  │   latest-wins
+│      │  (edges +│   latest-wins
+│      │  feedback)│
 │      └────┬──────┘           │
 │           │                  │
 │      ┌────▼──────────┐       │
@@ -37,8 +38,10 @@ TrustNet is split into separate services for better scalability:
 │   trustnet-api (separate)    │
 │   Serves HTTP API            │
 │   • GET /v1/root             │
-│   • GET /v1/score            │
-│   • GET /v1/context          │
+│   • GET /v1/contexts         │
+│   • GET /v1/decision         │
+│   • GET /v1/proof            │
+│   • POST /v1/ratings         │
 └───────────────────────────────┘
 ```
 
@@ -50,6 +53,7 @@ TrustNet is split into separate services for better scalability:
 - **Alloy Ethereum client** - modern, type-safe Ethereum RPC integration
 - **Automatic root publishing** - configurable hourly publishing + manual trigger
 - **CLI interface** - run, status, manual publishing, database initialization
+- **Verification stamps** - optional ResponseAppended validation + `feedback_verified`
 
 **Note:** For API queries, use the separate `trustnet-api` service which reads from the same database.
 
@@ -135,8 +139,10 @@ This indexer works alongside the TrustNet API service:
 
 - **trustnet-api** - HTTP API server (reads from same DB)
   - `GET /v1/root` - Get current graph root and epoch
-  - `GET /v1/score/:decider/:target?contextId=0x...` - Get trust score with proof
-  - `GET /v1/context` - List canonical context IDs
+  - `GET /v1/decision?decider=<principalId>&target=<principalId>&contextId=<bytes32>` - Decision bundle with proofs
+  - `GET /v1/contexts` - List canonical context IDs
+  - `GET /v1/proof?key=<edgeKey>` - SMM proof by key
+  - `POST /v1/ratings` - Append signed rating event (server mode)
 
 ## Development
 
@@ -158,24 +164,13 @@ RUST_LOG=trustnet_indexer=debug,tower_http=debug cargo run -- run
 cargo check -p trustnet-indexer
 ```
 
-## Implementation Status
+## Implementation Status (v0.6)
 
-### ✅ Phase 1: Project setup and dependencies
-- Cargo.toml with all dependencies (tokio, alloy, sqlx, anyhow, etc.)
-- Main.rs with tokio runtime
-- CLI interface with clap (run, publish-root, status, init-db)
-- Logging setup with tracing
-- Modular architecture (indexer separated from API)
-
-### 🚧 Phase 2: Database schema and storage layer (TODO)
-### 🚧 Phase 3: Configuration management (TODO)
-### 🚧 Phase 4: Event listener with Alloy (TODO)
-### 🚧 Phase 5: Event processor with latest-wins logic (TODO)
-### 🚧 Phase 6: SMM builder integration (TODO)
-### 🚧 Phase 7: Root publisher to RootRegistry (TODO)
-### 🚧 Phase 8: Implement trustnet-api service (separate) (TODO)
-### 🚧 Phase 9: Main loop orchestration (TODO)
-### 🚧 Phase 10: Testing and documentation (TODO)
+- ✅ Chain ingestion for `EdgeRated`, ERC‑8004 `NewFeedback`, and `ResponseAppended`
+- ✅ Latest-wins reduction with observed ordering
+- ✅ Sparse Merkle Map root building + publishing to RootRegistry
+- ✅ Root Manifest v0.6 fields with JCS hashing
+- ✅ Optional verification of `trustnet.verification.v1` response payloads
 
 ## License
 

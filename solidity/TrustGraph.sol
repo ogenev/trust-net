@@ -13,7 +13,7 @@ pragma solidity ^0.8.26;
  * This contract stores NO state - it only emits events for minimal gas cost.
  * Latest-wins semantics are enforced by indexers using (block, txIndex, logIndex).
  *
- * Spec: https://github.com/trustnet/whitepaper Section 6.1
+ * Spec: docs/TrustNet_Spec_v0.6.md §8.2
  */
 contract TrustGraph {
     /// @notice Version identifier for this contract
