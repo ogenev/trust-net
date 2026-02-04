@@ -133,6 +133,27 @@ pub struct FeedbackResponseRecord {
     pub tx_hash: Option<B256>,
 }
 
+/// Verified feedback stamp (ResponseAppended with valid TrustNet verification payload).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FeedbackVerifiedRecord {
+    /// Chain id.
+    pub chain_id: u64,
+    /// ERC-8004 Reputation contract address.
+    pub erc8004_reputation: Address,
+    /// Agent id (uint256).
+    pub agent_id: U256,
+    /// Client address.
+    pub client_address: Address,
+    /// Feedback index (uint256).
+    pub feedback_index: U256,
+    /// Responder address.
+    pub responder: Address,
+    /// Response hash (bytes32).
+    pub response_hash: B256,
+    /// Observed ordering key.
+    pub observed_at_u64: u64,
+}
+
 /// Source of an edge event.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

@@ -154,6 +154,7 @@ async fn run_indexer(config_path: &str) -> Result<()> {
 
     // Create RPC provider
     use trustnet_indexer::listener::{RpcProvider, SyncEngine};
+    use trustnet_indexer::verification::ResponseVerifier;
     let provider = RpcProvider::new(
         &config.network.rpc_url,
         config.contracts.trust_graph,
@@ -165,6 +166,9 @@ async fn run_indexer(config_path: &str) -> Result<()> {
 
     info!("RPC provider initialized");
 
+    let response_verifier =
+        ResponseVerifier::from_env().context("Failed to configure response verifier")?;
+
     // Create sync engine (uses core quantizer with fixed buckets)
     let sync_engine = SyncEngine::new(
         provider,
@@ -173,6 +177,7 @@ async fn run_indexer(config_path: &str) -> Result<()> {
         config.network.chain_id,
         config.contracts.erc8004_reputation,
         config.contracts.erc8004_identity,
+        response_verifier,
     );
 
     // Spawn event listener task

@@ -79,6 +79,7 @@ fn action_receipt_roundtrip_verifies() -> anyhow::Result<()> {
             level: dt_leaf.level.value(),
             updated_at: dt_leaf.updated_at_u64,
             evidence_hash: hex_b256(&dt_leaf.evidence_hash),
+            evidence_verified: None,
         }),
         siblings: dt_proof.siblings.iter().map(hex_b256).collect(),
         format: "uncompressed".to_string(),
@@ -101,16 +102,19 @@ fn action_receipt_roundtrip_verifies() -> anyhow::Result<()> {
                 level: 0,
                 updated_at: 0,
                 evidence_hash: hex_b256(&B256::ZERO),
+                evidence_verified: None,
             },
             edge_et: trustnet_verifier::LeafValueJson {
                 level: 0,
                 updated_at: 0,
                 evidence_hash: hex_b256(&B256::ZERO),
+                evidence_verified: None,
             },
             edge_dt: trustnet_verifier::LeafValueJson {
                 level: dt_leaf.level.value(),
                 updated_at: dt_leaf.updated_at_u64,
                 evidence_hash: hex_b256(&dt_leaf.evidence_hash),
+                evidence_verified: None,
             },
         },
         constraints: trustnet_verifier::ConstraintsJson {

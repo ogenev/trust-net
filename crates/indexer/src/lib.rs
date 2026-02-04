@@ -24,5 +24,7 @@ pub mod publisher;
 
 pub mod root_manifest;
 
+pub mod verification;
+
 // Re-export common types
 pub use trustnet_core::{types::*, *};
