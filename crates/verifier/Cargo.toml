@@ -9,6 +9,10 @@ description = "Offline verifier and gateway utilities for TrustNet (Spec v0.6)"
 name = "trustnet-verify"
 path = "src/main.rs"
 
+[[bin]]
+name = "trustnet-rate"
+path = "src/bin/trustnet-rate.rs"
+
 [dependencies]
 trustnet-core = { path = "../core" }
 trustnet-smm = { path = "../smm" }
