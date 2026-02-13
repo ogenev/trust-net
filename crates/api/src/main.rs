@@ -228,6 +228,8 @@ async fn main() -> anyhow::Result<()> {
         let _ = ensure_smm_for_epoch(&state, &epoch).await;
     }
 
+    let db_for_shutdown = state.db.clone();
+
     let app = Router::new()
         .route("/health", get(health))
         .route("/v1/root", get(get_root))
@@ -241,8 +243,44 @@ async fn main() -> anyhow::Result<()> {
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
     println!("TrustNet API server listening on {}", addr);
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    axum::serve(listener, app).await?;
+    axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal())
+        .await?;
+    db_for_shutdown.close().await;
+    println!("TrustNet API server shutdown complete");
     Ok(())
+}
+
+async fn shutdown_signal() {
+    let ctrl_c = async {
+        if let Err(err) = tokio::signal::ctrl_c().await {
+            eprintln!("Failed to install Ctrl+C handler: {}", err);
+        }
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        use tokio::signal::unix::{signal, SignalKind};
+
+        match signal(SignalKind::terminate()) {
+            Ok(mut stream) => {
+                stream.recv().await;
+            }
+            Err(err) => {
+                eprintln!("Failed to install SIGTERM handler: {}", err);
+            }
+        }
+    };
+
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        _ = ctrl_c => {},
+        _ = terminate => {},
+    }
+
+    println!("Shutdown signal received");
 }
 
 async fn health(State(_state): State<AppState>) -> &'static str {
