@@ -4611,6 +4611,7 @@ dependencies = [
  "tower-http 0.5.2",
  "trustnet-core",
  "trustnet-engine",
+ "trustnet-indexer",
  "trustnet-smm",
  "trustnet-verifier",
 ]

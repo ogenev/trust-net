@@ -21,6 +21,22 @@ TrustNet’s core properties:
 - **Server mode:** roots are signed by a configured root publisher key; gateways verify manifest hashes and signatures.
 - **Chain mode:** roots are anchored on-chain (RootRegistry) and can also be signed; proofs verify against the anchored root.
 
+## Operator CLI
+
+Use the unified `trustnet` operator CLI (`crates/cli`):
+
+- `trustnet root` - build/insert server-mode root from DB
+- `trustnet rate` - sign `trustnet.rating.v1` payloads
+- `trustnet verify` - verify decision bundle against root
+- `trustnet receipt` - build signed action receipt
+- `trustnet verify-receipt` - verify signed receipt
+
+Run with Cargo:
+
+```bash
+cargo run -p trustnet-cli -- --help
+```
+
 ## HTTP API (v0.6)
 
 - `GET /v1/root` → `{ epoch, graphRoot, manifest( or manifestUri ), manifestHash, publisherSig }`
@@ -42,3 +58,12 @@ TrustNet’s core properties:
 3) **Reduce latest-wins** into `edges_latest` per `(rater, target, contextId)`  
 4) **Build root**: commit latest edges into a Sparse Merkle Map (`graphRoot`) plus Root Manifest + JCS `manifestHash`  
 5) **Serve decisions**: choose endorser deterministically and return a verifiable decision bundle with constraints
+
+## Smoke test
+
+- Guide: `docs/Server_Smoke_Test.md`
+- Automated in-process smoke test:
+
+```bash
+cargo test -p trustnet-api --test server_smoke
+```

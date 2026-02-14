@@ -7,6 +7,14 @@ This guide validates a real 2-hop decision path in server mode:
 3. fetch decision bundle for `(D, T)` (`GET /v1/decision`)
 4. verify cryptographically (`trustnet verify`)
 
+## Automated smoke test
+
+Run the in-process integration test (same flow as this doc):
+
+```bash
+cargo test -p trustnet-api --test server_smoke
+```
+
 ## 1. Initialize a clean server-mode DB
 
 Use a fresh DB file to avoid chain/server deployment mode conflicts.

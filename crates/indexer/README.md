@@ -121,6 +121,15 @@ cargo run -- status --config indexer.toml
 cargo run -- publish-root --config indexer.toml
 ```
 
+This command is for **chain-mode** on-chain root publication.
+For **server-mode** signed roots, use the unified CLI:
+
+```bash
+cargo run -p trustnet-cli -- root --database-url sqlite://trustnet.db --publisher-key 0x...
+```
+
+End-to-end server-mode flow is documented in `docs/Server_Smoke_Test.md`.
+
 ## Configuration
 
 See `indexer.toml.example` for full configuration options.

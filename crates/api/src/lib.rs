@@ -9,4 +9,6 @@
 #![warn(missing_docs)]
 
 pub mod db;
+/// API server runtime and in-process app builder.
+pub mod server;
 pub mod smm_cache;
