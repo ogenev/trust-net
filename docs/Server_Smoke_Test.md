@@ -91,6 +91,8 @@ Expected response shape:
 ## 5. Build and insert a root epoch
 
 ```bash
+DB_URL=sqlite://trustnet-smoke.db
+
 cargo run -p trustnet-indexer --bin trustnet-root -- \
   --database-url "$DB_URL" \
   --publisher-key "$PK_D"
