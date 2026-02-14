@@ -3,9 +3,9 @@
 This guide validates a real 2-hop decision path in server mode:
 
 1. ingest `D -> E` and `E -> T` signed ratings (`POST /v1/ratings`)
-2. build and insert a root epoch (`trustnet-root`)
+2. build and insert a root epoch (`trustnet root`)
 3. fetch decision bundle for `(D, T)` (`GET /v1/decision`)
-4. verify cryptographically (`trustnet-verify verify`)
+4. verify cryptographically (`trustnet verify`)
 
 ## 1. Initialize a clean server-mode DB
 
@@ -14,7 +14,7 @@ Use a fresh DB file to avoid chain/server deployment mode conflicts.
 ```bash
 DB_URL=sqlite://trustnet-smoke.db
 
-cargo run -p trustnet-indexer --bin trustnet-indexer -- init-db --database-url "$DB_URL"
+cargo run -p trustnet-indexer -- init-db --database-url "$DB_URL"
 ```
 
 ## 2. Start API (Terminal A)
@@ -44,7 +44,7 @@ PK_E=0x2222222222222222222222222222222222222222222222222222222222222222
 TARGET=0x3333333333333333333333333333333333333333
 CONTEXT=trustnet:ctx:payments:v1
 
-PAYLOAD_ET=$(cargo run -q -p trustnet-verifier --bin trustnet-rate -- \
+PAYLOAD_ET=$(cargo run -q -p trustnet-cli -- rate \
   --private-key "$PK_E" \
   --target "$TARGET" \
   --context "$CONTEXT" \
@@ -54,7 +54,7 @@ PAYLOAD_ET=$(cargo run -q -p trustnet-verifier --bin trustnet-rate -- \
 ENDORSER=$(echo "$PAYLOAD_ET" | sed -E 's/.*"rater":"([^"]+)".*/\1/')
 CTX=$(echo "$PAYLOAD_ET" | sed -E 's/.*"contextId":"([^"]+)".*/\1/')
 
-PAYLOAD_DE=$(cargo run -q -p trustnet-verifier --bin trustnet-rate -- \
+PAYLOAD_DE=$(cargo run -q -p trustnet-cli -- rate \
   --private-key "$PK_D" \
   --target "$ENDORSER" \
   --context "$CONTEXT" \
@@ -93,7 +93,7 @@ Expected response shape:
 ```bash
 DB_URL=sqlite://trustnet-smoke.db
 
-cargo run -p trustnet-indexer --bin trustnet-root -- \
+cargo run -p trustnet-cli -- root \
   --database-url "$DB_URL" \
   --publisher-key "$PK_D"
 ```
@@ -122,8 +122,8 @@ In a successful 2-hop run, `/tmp/decision.json` should include:
 ## 7. Verify decision against root
 
 ```bash
-cargo run -q -p trustnet-verifier --bin trustnet-verify -- \
-  verify --root /tmp/root.json --bundle /tmp/decision.json
+cargo run -q -p trustnet-cli -- verify \
+  --root /tmp/root.json --bundle /tmp/decision.json
 ```
 
 Expected output:
@@ -135,13 +135,13 @@ OK
 ## Troubleshooting
 
 - Error: `no such table: deployment_mode`
-  - Run `cargo run -p trustnet-indexer --bin trustnet-indexer -- init-db --database-url "$DB_URL"` for the same `DATABASE_URL` used by the API.
+  - Run `cargo run -p trustnet-indexer -- init-db --database-url "$DB_URL"` for the same `DATABASE_URL` used by the API.
 
 - Error: `deployment_mode mismatch: expected 'server', got 'chain'`
   - Use a fresh DB file for server-mode smoke tests.
 
 - `GET /v1/decision` returns `No epochs published`
-  - Run `trustnet-root` after posting ratings.
+  - Run `cargo run -p trustnet-cli -- root --database-url "$DB_URL" --publisher-key "$PK_D"` after posting ratings.
 
 - `endorser` is `null` or decision is not 2-hop
   - Confirm you posted both edges: positive `D -> E` and positive `E -> T`.

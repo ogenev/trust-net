@@ -9,10 +9,6 @@ description = "ERC-8004 and EdgeRated event ingestion to edges store for TrustNe
 name = "trustnet-indexer"
 path = "src/main.rs"
 
-[[bin]]
-name = "trustnet-root"
-path = "src/bin/trustnet-root.rs"
-
 [dependencies]
 # Internal dependencies
 trustnet-core = { path = "../core" }

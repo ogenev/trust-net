@@ -221,7 +221,7 @@ export function emitActionReceipt(params: EmitReceiptParams): unknown {
     args.push("--signer-key", params.signerKeyHex);
   }
 
-  execFileSync("trustnet-verify", args, { stdio: "inherit" });
+  execFileSync("trustnet", args, { stdio: "inherit" });
 
   const receiptJson = fs.readFileSync(receiptPath, "utf8");
   return JSON.parse(receiptJson);

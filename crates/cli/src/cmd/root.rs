@@ -1,17 +1,14 @@
-//! Build and publish a server-mode root to the local database.
-
 use alloy::signers::Signer;
 use anyhow::{Context, Result};
-use clap::Parser;
+use clap::Args;
 use trustnet_core::hashing::{compute_edge_key, compute_root_signature_hash, keccak256};
 use trustnet_core::LeafValueV1;
 use trustnet_indexer::root_manifest::{build_server_root_manifest_v1, canonicalize_manifest};
 use trustnet_indexer::storage::{DeploymentMode, EdgeRecord, EpochRecord, Storage};
 use trustnet_smm::SmmBuilder;
 
-#[derive(Debug, Parser)]
-#[command(name = "trustnet-root", about = "Build server-mode root from DB")]
-struct Args {
+#[derive(Debug, Args)]
+pub struct RootArgs {
     /// Database URL (e.g. sqlite://trustnet.db)
     #[arg(long, default_value = "sqlite://trustnet.db")]
     database_url: String,
@@ -74,10 +71,7 @@ fn parse_b256(input: &str) -> Result<alloy::primitives::B256> {
     Ok(alloy::primitives::B256::from_slice(&bytes))
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
-    let args = Args::parse();
-
+pub async fn run(args: RootArgs) -> Result<()> {
     let storage = Storage::new(&args.database_url, None, None)
         .await
         .context("Failed to connect to database")?;

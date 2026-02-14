@@ -4616,6 +4616,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "trustnet-cli"
+version = "0.1.0"
+dependencies = [
+ "alloy",
+ "alloy-primitives",
+ "anyhow",
+ "base64",
+ "chrono",
+ "clap",
+ "hex",
+ "k256",
+ "serde",
+ "serde_jcs",
+ "serde_json",
+ "sqlx",
+ "tokio",
+ "trustnet-core",
+ "trustnet-indexer",
+ "trustnet-smm",
+ "trustnet-verifier",
+]
+
+[[package]]
 name = "trustnet-core"
 version = "0.1.0"
 dependencies = [

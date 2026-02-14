@@ -1,18 +1,15 @@
-//! Minimal helper to sign a trustnet.rating.v1 for server-mode ingestion.
-
 use alloy_primitives::{eip191_hash_message, B256};
 use anyhow::{Context, Result};
 use base64::Engine;
-use clap::Parser;
+use clap::Args;
 use k256::ecdsa::SigningKey;
 use serde::Serialize;
 use std::str::FromStr;
 use trustnet_core::hashing::keccak256;
 use trustnet_core::types::{Level, PrincipalId};
 
-#[derive(Debug, Parser)]
-#[command(name = "trustnet-rate", about = "Sign a trustnet.rating.v1 payload")]
-struct Args {
+#[derive(Debug, Args)]
+pub struct RateArgs {
     /// Private key (32-byte hex, with or without 0x)
     #[arg(long)]
     private_key: String,
@@ -128,9 +125,7 @@ fn ensure_rfc3339(value: &str) -> Result<()> {
     Ok(())
 }
 
-fn main() -> Result<()> {
-    let args = Args::parse();
-
+pub fn run(args: RateArgs) -> Result<()> {
     if let Some(source) = args.source.as_deref() {
         anyhow::ensure!(
             source == "private_log",
@@ -139,11 +134,9 @@ fn main() -> Result<()> {
     }
 
     let level = Level::new(args.level).context("level out of range (-2..+2)")?;
-
     PrincipalId::from_str(&args.target).context("invalid target")?;
 
     let context_id = context_id_from_input(&args.context)?;
-
     let created_at = match args.created_at.as_deref() {
         Some(value) => {
             ensure_rfc3339(value)?;
@@ -162,7 +155,6 @@ fn main() -> Result<()> {
 
     let key_bytes = parse_private_key(&args.private_key)?;
     let signing_key = SigningKey::from_slice(&key_bytes).context("invalid private key")?;
-
     let rater_addr = trustnet_core::Address::from_private_key(&signing_key);
     let rater = format!("0x{}", hex::encode(rater_addr.as_slice()));
 

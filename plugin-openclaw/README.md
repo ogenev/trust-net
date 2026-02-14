@@ -6,7 +6,7 @@ It demonstrates:
 - Mapping tools to TrustNet contexts
 - Fetching TrustNet decision bundles
 - Enforcing ALLOW / ASK / DENY
-- Emitting ActionReceipts using the `trustnet-verify` CLI
+- Emitting ActionReceipts using the `trustnet` CLI
 
 Files:
 - `plugin_stub.ts`: reference implementation (TypeScript) with stubbed OpenClaw hooks
@@ -24,13 +24,13 @@ Files:
 
 ## ActionReceipt emission
 
-The stub uses the `trustnet-verify receipt` CLI (in `crates/verifier`) to generate receipts.
+The stub uses the `trustnet receipt` CLI (in `crates/cli`) to generate receipts.
 This keeps hashing and signing behavior consistent with the Rust verifier.
 
 Example CLI invocation:
 
 ```bash
-trustnet-verify receipt \
+trustnet receipt \
   --root /tmp/root.json \
   --bundle /tmp/decision.json \
   --tool payments.send \
