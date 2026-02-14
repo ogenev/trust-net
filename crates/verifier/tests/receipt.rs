@@ -54,6 +54,17 @@ fn action_receipt_roundtrip_verifies() -> anyhow::Result<()> {
     let graph_root = smm.root();
     let dt_proof = smm.prove(dt_key)?;
 
+    // Emit the proof in bitmap-compressed form.
+    let default_hashes = SmmBuilder::new().build().default_hashes().to_owned();
+    let mut bitmap = [0u8; 32];
+    let mut packed_siblings = Vec::new();
+    for (i, sibling) in dt_proof.siblings.iter().enumerate() {
+        if *sibling != default_hashes[255 - i] {
+            bitmap[i / 8] |= 1 << (7 - (i % 8));
+            packed_siblings.push(hex_b256(sibling));
+        }
+    }
+
     // Root signature (server-mode authenticity).
     let epoch = 1u64;
     let manifest_hash = keccak256(b"test-manifest");
@@ -81,8 +92,9 @@ fn action_receipt_roundtrip_verifies() -> anyhow::Result<()> {
             evidence_hash: hex_b256(&dt_leaf.evidence_hash),
             evidence_verified: None,
         }),
-        siblings: dt_proof.siblings.iter().map(hex_b256).collect(),
-        format: "uncompressed".to_string(),
+        bitmap: Some(format!("0x{}", hex::encode(bitmap))),
+        siblings: packed_siblings,
+        format: "bitmap".to_string(),
     };
 
     let decision_json = trustnet_verifier::DecisionBundleV1Json {

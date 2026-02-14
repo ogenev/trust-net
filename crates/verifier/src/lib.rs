@@ -21,6 +21,27 @@ fn parse_b256(s: &str) -> anyhow::Result<B256> {
     Ok(s.parse::<B256>()?)
 }
 
+fn parse_bitmap_256(s: &str) -> anyhow::Result<[u8; 32]> {
+    let bytes = parse_hex_bytes(s)?;
+    anyhow::ensure!(
+        bytes.len() == 32,
+        "invalid bitmap length: expected 32 bytes, got {}",
+        bytes.len()
+    );
+    let mut bitmap = [0u8; 32];
+    bitmap.copy_from_slice(&bytes);
+    Ok(bitmap)
+}
+
+fn bitmap_bit_is_set(bitmap: &[u8; 32], idx: usize) -> bool {
+    (bitmap[idx / 8] & (1 << (7 - (idx % 8)))) != 0
+}
+
+fn smm_default_hashes() -> [B256; 257] {
+    let empty = trustnet_smm::SmmBuilder::new().build();
+    *empty.default_hashes()
+}
+
 /// `/v1/root` response (subset used by verifier).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RootResponseV1 {
@@ -61,7 +82,7 @@ impl LeafValueJson {
     }
 }
 
-/// Canonical JSON proof format (uncompressed).
+/// Canonical JSON proof format.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SmmProofV1Json {
     #[serde(rename = "type")]
@@ -76,6 +97,8 @@ pub struct SmmProofV1Json {
     pub is_membership: bool,
     #[serde(rename = "leafValue")]
     pub leaf_value: Option<LeafValueJson>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bitmap: Option<String>,
     pub siblings: Vec<String>,
     pub format: String,
 }
@@ -219,22 +242,48 @@ fn verify_smm_proof_against_root(
         "unsupported proof type: {}",
         proof.ty
     );
-    anyhow::ensure!(
-        proof.format == "uncompressed",
-        "unsupported proof format: {}",
-        proof.format
-    );
     let edge_key = parse_b256(&proof.edge_key)?;
-    anyhow::ensure!(
-        proof.siblings.len() == 256,
-        "proof siblings must have 256 entries"
-    );
+    let siblings: Vec<B256> = match proof.format.as_str() {
+        "uncompressed" => {
+            anyhow::ensure!(
+                proof.siblings.len() == 256,
+                "proof siblings must have 256 entries"
+            );
+            proof
+                .siblings
+                .iter()
+                .map(|s| parse_b256(s))
+                .collect::<anyhow::Result<_>>()?
+        }
+        "bitmap" => {
+            let bitmap_hex = proof
+                .bitmap
+                .as_deref()
+                .context("bitmap proof missing bitmap field")?;
+            let bitmap = parse_bitmap_256(bitmap_hex)?;
+            let default_hashes = smm_default_hashes();
+            let mut packed_iter = proof.siblings.iter();
+            let mut expanded = Vec::with_capacity(256);
 
-    let siblings: Vec<B256> = proof
-        .siblings
-        .iter()
-        .map(|s| parse_b256(s))
-        .collect::<anyhow::Result<_>>()?;
+            for i in 0..256 {
+                if bitmap_bit_is_set(&bitmap, i) {
+                    let packed = packed_iter.next().with_context(|| {
+                        format!("bitmap set bit {} but packed sibling missing", i)
+                    })?;
+                    expanded.push(parse_b256(packed)?);
+                } else {
+                    expanded.push(default_hashes[255 - i]);
+                }
+            }
+
+            anyhow::ensure!(
+                packed_iter.next().is_none(),
+                "bitmap proof has extra packed siblings"
+            );
+            expanded
+        }
+        other => anyhow::bail!("unsupported proof format: {}", other),
+    };
 
     let leaf_value = if proof.is_membership {
         let lv = proof

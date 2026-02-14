@@ -467,6 +467,30 @@ fn hex_b256(v: &B256) -> String {
     format!("0x{}", hex::encode(v.as_slice()))
 }
 
+fn bitmap_compress_siblings(
+    siblings: &[B256],
+    default_hashes: &[B256; 257],
+) -> anyhow::Result<(String, Vec<String>)> {
+    anyhow::ensure!(
+        siblings.len() == 256,
+        "proof siblings must have 256 entries (got {})",
+        siblings.len()
+    );
+
+    let mut bitmap = [0u8; 32];
+    let mut packed = Vec::new();
+
+    for (i, sibling) in siblings.iter().enumerate() {
+        let default_sibling = default_hashes[255 - i];
+        if *sibling != default_sibling {
+            bitmap[i / 8] |= 1 << (7 - (i % 8));
+            packed.push(hex_b256(sibling));
+        }
+    }
+
+    Ok((hex_bytes(&bitmap), packed))
+}
+
 fn parse_b256(bytes: &[u8]) -> anyhow::Result<B256> {
     anyhow::ensure!(bytes.len() == 32, "expected 32 bytes, got {}", bytes.len());
     Ok(B256::from_slice(bytes))
@@ -750,6 +774,8 @@ struct SmmProofV1Json {
     is_membership: bool,
     #[serde(rename = "leafValue", skip_serializing_if = "Option::is_none")]
     leaf_value: Option<LeafValueJson>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    bitmap: Option<String>,
     siblings: Vec<String>,
     format: &'static str,
 }
@@ -768,6 +794,7 @@ fn smm_proof_v1_json(
     rater: Option<&PrincipalId>,
     target: Option<&PrincipalId>,
     context_id: Option<&ContextId>,
+    default_hashes: &[B256; 257],
 ) -> Result<SmmProofV1Json, (StatusCode, Json<ErrorResponse>)> {
     let leaf_value = if proof.is_membership {
         let decoded =
@@ -776,6 +803,8 @@ fn smm_proof_v1_json(
     } else {
         None
     };
+    let (bitmap, siblings) = bitmap_compress_siblings(&proof.siblings, default_hashes)
+        .map_err(|e| internal_error(e.to_string()))?;
 
     Ok(SmmProofV1Json {
         ty: "trustnet.smmProof.v1",
@@ -785,8 +814,9 @@ fn smm_proof_v1_json(
         target: target.map(|p| hex_bytes(p.as_bytes())),
         is_membership: proof.is_membership,
         leaf_value,
-        siblings: proof.siblings.iter().map(hex_b256).collect(),
-        format: "uncompressed",
+        bitmap: Some(bitmap),
+        siblings,
+        format: "bitmap",
     })
 }
 
@@ -971,12 +1001,14 @@ async fn get_decision(
                     Some(&decider),
                     Some(&endorser),
                     Some(&context_id),
+                    smm.default_hashes(),
                 )?),
                 Some(smm_proof_v1_json(
                     &chosen.proof_et,
                     Some(&endorser),
                     Some(&target),
                     Some(&context_id),
+                    smm.default_hashes(),
                 )?),
                 chosen.leaf_de,
                 chosen.leaf_et,
@@ -996,7 +1028,13 @@ async fn get_decision(
             )
         };
 
-    let dt = smm_proof_v1_json(&dt_proof, Some(&decider), Some(&target), Some(&context_id))?;
+    let dt = smm_proof_v1_json(
+        &dt_proof,
+        Some(&decider),
+        Some(&target),
+        Some(&context_id),
+        smm.default_hashes(),
+    )?;
 
     let decision_str = match result.decision {
         Decision::Allow | Decision::Ask | Decision::Deny => result.decision.as_str().to_string(),
@@ -1057,7 +1095,13 @@ async fn get_proof(
     let smm = ensure_smm_for_epoch(&state, &epoch).await?;
 
     let proof = smm.prove(key).map_err(internal_error)?;
-    Ok(Json(smm_proof_v1_json(&proof, None, None, None)?))
+    Ok(Json(smm_proof_v1_json(
+        &proof,
+        None,
+        None,
+        None,
+        smm.default_hashes(),
+    )?))
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -1780,12 +1824,57 @@ mod tests {
             } else {
                 Vec::new()
             };
-            let siblings: Vec<B256> = p["siblings"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .map(|s| s.as_str().unwrap().parse::<B256>().unwrap())
-                .collect();
+            let format = p["format"].as_str().unwrap();
+            let siblings = match format {
+                "uncompressed" => p["siblings"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|s| s.as_str().unwrap().parse::<B256>().unwrap())
+                    .collect(),
+                "bitmap" => {
+                    let bitmap_hex = p["bitmap"].as_str().expect("bitmap proof missing bitmap");
+                    let bitmap_raw =
+                        hex::decode(bitmap_hex.trim_start_matches("0x")).expect("invalid bitmap");
+                    assert_eq!(bitmap_raw.len(), 32);
+                    let mut bitmap = [0u8; 32];
+                    bitmap.copy_from_slice(&bitmap_raw);
+
+                    let packed: Vec<B256> = p["siblings"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .map(|s| s.as_str().unwrap().parse::<B256>().unwrap())
+                        .collect();
+
+                    let empty_smm = trustnet_smm::SmmBuilder::new().build();
+                    let default_hashes = empty_smm.default_hashes();
+                    let mut packed_idx = 0usize;
+                    let mut expanded = Vec::with_capacity(256);
+
+                    for i in 0..256 {
+                        let bit_set = (bitmap[i / 8] & (1 << (7 - (i % 8)))) != 0;
+                        if bit_set {
+                            expanded.push(
+                                *packed
+                                    .get(packed_idx)
+                                    .expect("bitmap set bit without packed sibling"),
+                            );
+                            packed_idx += 1;
+                        } else {
+                            expanded.push(default_hashes[255 - i]);
+                        }
+                    }
+
+                    assert_eq!(
+                        packed_idx,
+                        packed.len(),
+                        "unused packed siblings left after bitmap expansion"
+                    );
+                    expanded
+                }
+                other => panic!("unsupported proof format in test: {}", other),
+            };
             trustnet_smm::SmmProof {
                 key,
                 leaf_value,
@@ -1803,7 +1892,8 @@ mod tests {
         assert!(proof_et.verify(graph_root));
 
         assert_eq!(json["proofs"]["DT"]["type"], "trustnet.smmProof.v1");
-        assert_eq!(json["proofs"]["DT"]["format"], "uncompressed");
+        assert_eq!(json["proofs"]["DT"]["format"], "bitmap");
+        assert!(json["proofs"]["DT"]["bitmap"].is_string());
 
         let ttl_seconds = json["constraints"]["ttlSeconds"].as_u64().unwrap();
         let require_et = json["constraints"]["requireEvidenceForPositiveET"]
