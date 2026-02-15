@@ -129,6 +129,7 @@ cargo run -p trustnet-cli -- root --database-url sqlite://trustnet.db --publishe
 ```
 
 End-to-end server-mode flow is documented in `docs/Server_Smoke_Test.md`.
+End-to-end chain-mode (anvil) flow is documented in `docs/Chain_Smoke_Test.md`.
 
 ## Configuration
 

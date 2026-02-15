@@ -62,9 +62,16 @@ cargo run -p trustnet-cli -- --help
 
 ## Smoke test
 
-- Guide: `docs/Server_Smoke_Test.md`
-- Automated in-process smoke test:
+- Server-mode guide: `docs/Server_Smoke_Test.md`
+- Chain-mode guide (anvil E2E): `docs/Chain_Smoke_Test.md`
+- Automated in-process server-mode smoke test:
 
 ```bash
 cargo test -p trustnet-api --test server_smoke
+```
+
+- Automated chain-mode anvil smoke script:
+
+```bash
+./scripts/chain_smoke_anvil.sh
 ```
