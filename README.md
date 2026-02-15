@@ -27,7 +27,7 @@ Use the unified `trustnet` operator CLI (`crates/cli`):
 
 - `trustnet root` - build/insert server-mode root from DB
 - `trustnet rate` - sign `trustnet.rating.v1` payloads
-- `trustnet verify` - verify decision bundle against root
+- `trustnet verify` - verify decision bundle against root (optionally cross-check on-chain root via `--rpc-url --root-registry --epoch`)
 - `trustnet receipt` - build signed action receipt
 - `trustnet verify-receipt` - verify signed receipt
 

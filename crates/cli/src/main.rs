@@ -34,7 +34,7 @@ async fn main() -> Result<()> {
     match cli.command {
         Command::Root(args) => cmd::root::run(args).await?,
         Command::Rate(args) => cmd::rate::run(args)?,
-        Command::Verify(args) => cmd::verify::run_verify(args)?,
+        Command::Verify(args) => cmd::verify::run_verify(args).await?,
         Command::Receipt(args) => cmd::verify::run_receipt(args)?,
         Command::VerifyReceipt(args) => cmd::verify::run_verify_receipt(args)?,
         Command::Vectors => cmd::verify::run_vectors()?,

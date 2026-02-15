@@ -272,13 +272,16 @@ while true; do
 done
 
 echo "Verifying bundle cryptographically"
+ROOT_EPOCH="$(jq -r '.epoch' "${ROOT_JSON}")"
 cargo run -q -p trustnet-cli -- verify \
   --root "${ROOT_JSON}" \
   --bundle "${DECISION_JSON}" \
-  --publisher "${PUBLISHER_ADDR}" >/dev/null
+  --publisher "${PUBLISHER_ADDR}" \
+  --rpc-url "${RPC_URL}" \
+  --root-registry "${ROOT_REGISTRY}" \
+  --epoch "${ROOT_EPOCH}" >/dev/null
 
 echo "Cross-checking root against on-chain RootRegistry"
-ROOT_EPOCH="$(jq -r '.epoch' "${ROOT_JSON}")"
 ROOT_GRAPH="$(jq -r '.graphRoot | ascii_downcase' "${ROOT_JSON}")"
 ROOT_MANIFEST_HASH="$(jq -r '.manifestHash | ascii_downcase' "${ROOT_JSON}")"
 ONCHAIN_EPOCH="$(cast call --rpc-url "${RPC_URL}" "${ROOT_REGISTRY}" "currentEpoch()(uint256)" | tr -d '[:space:]')"

@@ -1,6 +1,19 @@
+use alloy::primitives::{Address as AlloyAddress, B256, U256};
+use alloy::providers::ProviderBuilder;
+use alloy::sol;
 use anyhow::Context;
 use clap::Args;
 use std::path::PathBuf;
+
+sol! {
+    #[allow(missing_docs)]
+    #[sol(rpc)]
+    contract RootRegistry {
+        function currentEpoch() external view returns (uint256);
+        function getRootAt(uint256 epoch) external view returns (bytes32);
+        function getManifestHashAt(uint256 epoch) external view returns (bytes32);
+    }
+}
 
 #[derive(Debug, Args)]
 pub struct VerifyArgs {
@@ -13,6 +26,15 @@ pub struct VerifyArgs {
     /// Expected publisher EVM address (0x...)
     #[arg(long)]
     publisher: Option<String>,
+    /// RPC URL for on-chain RootRegistry cross-check.
+    #[arg(long, requires = "root_registry")]
+    rpc_url: Option<String>,
+    /// RootRegistry contract address for on-chain cross-check.
+    #[arg(long, requires = "rpc_url")]
+    root_registry: Option<String>,
+    /// Epoch to check on-chain (defaults to root.epoch).
+    #[arg(long, requires_all = ["rpc_url", "root_registry"])]
+    epoch: Option<u64>,
 }
 
 #[derive(Debug, Args)]
@@ -88,7 +110,115 @@ fn keccak256_jcs_value(value: &serde_json::Value) -> anyhow::Result<String> {
     Ok(format!("0x{}", hex::encode(hash.as_slice())))
 }
 
-pub fn run_verify(args: VerifyArgs) -> anyhow::Result<()> {
+fn resolve_chain_anchor_epoch(
+    root_epoch: u64,
+    bundle_epoch: u64,
+    epoch_override: Option<u64>,
+) -> anyhow::Result<u64> {
+    anyhow::ensure!(
+        root_epoch == bundle_epoch,
+        "root/bundle epoch mismatch before chain anchor check (root={}, bundle={})",
+        root_epoch,
+        bundle_epoch
+    );
+
+    if let Some(epoch) = epoch_override {
+        anyhow::ensure!(
+            epoch == root_epoch,
+            "--epoch ({}) must match root/bundle epoch ({})",
+            epoch,
+            root_epoch
+        );
+        Ok(epoch)
+    } else {
+        Ok(root_epoch)
+    }
+}
+
+async fn verify_root_anchor_onchain(
+    root: &trustnet_verifier::RootResponseV1,
+    bundle: &trustnet_verifier::DecisionBundleV1Json,
+    rpc_url: &str,
+    root_registry: &str,
+    epoch_override: Option<u64>,
+) -> anyhow::Result<()> {
+    let epoch = resolve_chain_anchor_epoch(root.epoch, bundle.epoch, epoch_override)?;
+    let graph_root = root.graph_root.parse::<B256>()?;
+    let manifest_hash = root
+        .manifest_hash
+        .as_deref()
+        .context("root.manifestHash missing (required for on-chain root check)")?
+        .parse::<B256>()?;
+    let registry_addr = root_registry
+        .parse::<AlloyAddress>()
+        .with_context(|| format!("invalid --root-registry address: {}", root_registry))?;
+
+    let provider = ProviderBuilder::new().on_http(
+        rpc_url
+            .parse()
+            .with_context(|| format!("invalid --rpc-url: {}", rpc_url))?,
+    );
+    let registry = RootRegistry::new(registry_addr, provider);
+
+    let current_epoch_u256 = registry
+        .currentEpoch()
+        .call()
+        .await
+        .context("failed to query RootRegistry.currentEpoch()")?
+        ._0;
+    let current_epoch: u64 = current_epoch_u256.try_into().map_err(|_| {
+        anyhow::anyhow!(
+            "RootRegistry.currentEpoch too large: {}",
+            current_epoch_u256
+        )
+    })?;
+
+    anyhow::ensure!(
+        current_epoch >= epoch,
+        "RootRegistry currentEpoch ({}) is behind requested epoch ({})",
+        current_epoch,
+        epoch
+    );
+
+    let onchain_root = registry
+        .getRootAt(U256::from(epoch))
+        .call()
+        .await
+        .context("failed to query RootRegistry.getRootAt()")?
+        ._0;
+    anyhow::ensure!(
+        onchain_root != B256::ZERO,
+        "RootRegistry has no root for epoch {}",
+        epoch
+    );
+
+    let onchain_manifest_hash = registry
+        .getManifestHashAt(U256::from(epoch))
+        .call()
+        .await
+        .context("failed to query RootRegistry.getManifestHashAt()")?
+        ._0;
+    anyhow::ensure!(
+        onchain_manifest_hash != B256::ZERO,
+        "RootRegistry has no manifest hash for epoch {}",
+        epoch
+    );
+
+    anyhow::ensure!(
+        onchain_root == graph_root,
+        "graphRoot mismatch against RootRegistry at epoch {}",
+        epoch
+    );
+    anyhow::ensure!(
+        onchain_manifest_hash == manifest_hash,
+        "manifestHash mismatch against RootRegistry at epoch {}",
+        epoch
+    );
+
+    Ok(())
+}
+
+pub async fn run_verify(args: VerifyArgs) -> anyhow::Result<()> {
     let root: trustnet_verifier::RootResponseV1 = read_json(&args.root)?;
     let bundle: trustnet_verifier::DecisionBundleV1Json = read_json(&args.bundle)?;
 
@@ -96,6 +226,10 @@ pub fn run_verify(args: VerifyArgs) -> anyhow::Result<()> {
         Some(s) => Some(s.parse::<trustnet_core::Address>()?),
         None => None,
     };
+
+    if let (Some(rpc_url), Some(root_registry)) = (&args.rpc_url, &args.root_registry) {
+        verify_root_anchor_onchain(&root, &bundle, rpc_url, root_registry, args.epoch).await?;
+    }
 
     trustnet_verifier::verify_decision_bundle(&root, &bundle, publisher_addr)?;
     println!("OK");
@@ -185,4 +319,33 @@ pub fn run_vectors() -> anyhow::Result<()> {
     let vectors = trustnet_verifier::generate_vectors_v0_6();
     println!("{}", serde_json::to_string_pretty(&vectors)?);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_chain_anchor_epoch;
+
+    #[test]
+    fn resolve_chain_anchor_epoch_defaults_to_root_epoch() {
+        let epoch = resolve_chain_anchor_epoch(7, 7, None).expect("resolve epoch");
+        assert_eq!(epoch, 7);
+    }
+
+    #[test]
+    fn resolve_chain_anchor_epoch_accepts_matching_override() {
+        let epoch = resolve_chain_anchor_epoch(3, 3, Some(3)).expect("resolve epoch");
+        assert_eq!(epoch, 3);
+    }
+
+    #[test]
+    fn resolve_chain_anchor_epoch_rejects_mismatch_override() {
+        let err = resolve_chain_anchor_epoch(4, 4, Some(5)).expect_err("expected mismatch");
+        assert!(err.to_string().contains("--epoch"));
+    }
+
+    #[test]
+    fn resolve_chain_anchor_epoch_rejects_root_bundle_mismatch() {
+        let err = resolve_chain_anchor_epoch(2, 3, None).expect_err("expected mismatch");
+        assert!(err.to_string().contains("root/bundle epoch mismatch"));
+    }
 }
