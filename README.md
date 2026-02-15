@@ -50,6 +50,7 @@ cargo run -p trustnet-cli -- --help
 - `TrustGraph`: emits `EdgeRated(rater, target, level, contextId)` (events-only).
 - `RootRegistry`: anchors `{epoch, graphRoot, manifestHash (and optional manifestUri)}`.
 - `TrustPathVerifier`: optional on-chain verifier (off-chain verification is sufficient for MVP).
+- `TrustNetPaymentsGuardModule`: optional on-chain enforcement module for native ETH payments (ALLOW-only with replay, deadline, cap, and root freshness checks).
 
 ## Indexing + root building (v0.6)
 

@@ -54,6 +54,31 @@ event EdgeRated(
 
 ---
 
+### TrustNetPaymentsGuardModule.sol
+
+**MVP on-chain enforcement module** for native ETH payments using TrustNet proofs.
+
+The module checks a TrustNet decision before executing a payment:
+- Verifies proofs against a root published in `RootRegistry`
+- Requires `ALLOW` decision (ASK and DENY revert)
+- Enforces payment safety controls:
+  - epoch exists
+  - root freshness (`maxRootAgeSeconds`)
+  - per-operation deadline
+  - max payment cap (`maxPaymentAmountWei`)
+  - replay protection (`operationId`)
+
+**Current scope (intentional):**
+- Native ETH transfers only
+- Single module owner/operator submits proof bundle and executes payment
+- Uses `TrustPathVerifier` for decision verification
+
+Reference files:
+- `solidity/TrustNetPaymentsGuardModule.sol`
+- `solidity/test/TrustNetPaymentsGuardModule.t.sol`
+
+---
+
 ### TrustNetContexts.sol
 
 **Library of canonical context identifiers** for capability namespaces.
@@ -277,6 +302,7 @@ MIT - see [LICENSE](../LICENSE) for details.
 
 - **RootRegistry** - Stores Merkle roots for proof verification
 - **TrustPathVerifier** - Verifies 2-hop proofs and computes scores
+- **TrustNetPaymentsGuardModule** - Enforces ALLOW-only native ETH payments using TrustNet proofs
 - **TrustNetContexts** - Canonical context identifiers for capability namespaces
 
 ## References
