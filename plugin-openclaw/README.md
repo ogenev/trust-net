@@ -9,7 +9,7 @@ It demonstrates:
 - Emitting ActionReceipts using the `trustnet` CLI
 
 Current MVP direction for this integration is **OpenClaw + `code-exec` first** with
-**mandatory RootRegistry anchoring checks** (`MVP A0+`).
+**mandatory RootRegistry anchoring checks** (initial MVP release profile).
 Payments contexts and on-chain payment guards are deferred to a later rollout.
 
 Files:

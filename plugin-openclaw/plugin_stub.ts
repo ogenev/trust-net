@@ -170,7 +170,7 @@ export async function beforeToolCall(
     fetchDecision(config.apiBaseUrl, config.decider, ctx.targetPrincipalId, mapping.contextId)
   ]);
 
-  // MVP A0+ requires cryptographic verification plus on-chain root anchoring checks
+  // Initial MVP release profile requires cryptographic verification plus on-chain root anchoring checks
   // before an enforcement decision is returned to the gateway runtime.
   verifyDecisionBundleAnchored(root, bundle, config);
 

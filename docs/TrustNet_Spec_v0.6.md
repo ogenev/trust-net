@@ -23,7 +23,7 @@
 12. Decision Rules (Trust-to-Act)  
 13. Gateway Integration (Generic)  
 14. Integration with OpenClaw  
-15. On-chain Contracts (RootRegistry Required in MVP A0+)
+15. On-chain Contracts (RootRegistry Required in Initial MVP Release)
 16. Off-chain Services (Server Mode)  
 17. MVP Build Plan (Ship + Verify)  
 18. Verification Plan (Correctness, Security, Performance)  
@@ -160,7 +160,7 @@ A full TrustNet deployment may include:
 3) **Indexer** (ingests chain logs and/or private logs)  
 4) **Root builder** (builds `graphRoot` epochs + manifests)  
 5) **Proof/Decision API** (serves proofs and explainable decisions)  
-6) **On-chain root anchor** (RootRegistry; required for MVP A0+ release profile)
+6) **On-chain root anchor** (RootRegistry; required for the initial MVP release profile)
 7) Optional **on-chain verifier** (TrustPathVerifier / library)
 
 ### 4.3 Deployment modes
@@ -174,7 +174,7 @@ A full TrustNet deployment may include:
 - A TrustNet service hosts the indexer, root builder, and proof API.
 - Gateways verify proofs locally against the published root.
 - Dev-only profile: roots MAY be authenticated by a configured root publisher signature.
-- MVP A0+ release profile: roots MUST be anchored on-chain in RootRegistry, and gateways MUST cross-check `(epoch, graphRoot, manifestHash)` against that anchor before enforcing high-risk actions.
+- Initial MVP release profile: roots MUST be anchored on-chain in RootRegistry, and gateways MUST cross-check `(epoch, graphRoot, manifestHash)` against that anchor before enforcing high-risk actions.
 
 #### Chain mode (portable/public)
 - Ratings are emitted on-chain (e.g., `EdgeRated`) and/or via ERC‑8004 `NewFeedback`.
@@ -763,7 +763,7 @@ A gateway MUST only accept a root if it is authenticated:
 - **Chain mode:** root is fetched from on-chain RootRegistry (or another trusted on-chain anchor).
 - **Server mode:** root MUST be signed by a configured `RootPublisherKey` and include `manifestHash`.
 
-For the MVP A0+ release profile, gateways MUST additionally verify that the served root matches RootRegistry state
+For the initial MVP release profile, gateways MUST additionally verify that the served root matches RootRegistry state
 for the same epoch. Publisher signatures remain useful as defense-in-depth.
 
 
@@ -1161,9 +1161,9 @@ This becomes excellent evidence for later ratings.
 
 ---
 
-## 15. On-chain Contracts (RootRegistry Required in MVP A0+)
+## 15. On-chain Contracts (RootRegistry Required in Initial MVP Release)
 
-For the MVP A0+ release profile, RootRegistry anchoring is required.
+For the initial MVP release profile, RootRegistry anchoring is required.
 Other contracts remain optional and can be phased in later.
 
 ### 15.1 TrustGraph (events-only)
@@ -1221,7 +1221,7 @@ Gateways SHOULD:
 - refuse roots where `epoch` decreases
 - verify `publisherSig` before accepting the root (server mode)
 
-For MVP A0+ release profile, gateways MUST also cross-check `epoch/graphRoot/manifestHash` against
+For the initial MVP release profile, gateways MUST also cross-check `epoch/graphRoot/manifestHash` against
 RootRegistry before enforcing high-risk actions.
 
 ### 16.3 Decision endpoint requirements (normative)
@@ -1383,7 +1383,7 @@ Deliverables:
 Success criteria:
 - A decider can require that positive `E→T` trust used for ALLOW is backed by verifiable evidence commitments, while raw unverified feedback does not grant high-risk permissions.
 
-### Milestone 4 — RootRegistry anchoring + testnet rehearsal (required for MVP A0+)
+### Milestone 4 — RootRegistry anchoring + testnet rehearsal (required for initial MVP release)
 
 Deliverables:
 - Deploy RootRegistry on a testnet.
@@ -1537,7 +1537,7 @@ Success criteria:
     "entries": {
       "trustnet": {
         "enabled": true,
-        "mode": "chain", // local|server|chain (MVP A0+ uses RootRegistry anchoring)
+        "mode": "chain", // local|server|chain (initial MVP release uses RootRegistry anchoring)
         "apiBaseUrl": "http://127.0.0.1:8088",
         "rpcUrl": "https://sepolia.infura.io/v3/YOUR_KEY",
         "rootRegistry": "0xROOTREGISTRY...",
