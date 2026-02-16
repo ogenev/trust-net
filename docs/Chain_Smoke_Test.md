@@ -9,6 +9,8 @@ This smoke test validates the chain-mode MVP flow end-to-end:
 5. Verify decision bundle cryptographically (`trustnet verify`)
 6. Cross-check `graphRoot` + `manifestHash` against on-chain `RootRegistry`
 
+By default, the script exercises the `trustnet:ctx:code-exec:v1` context to match the initial OpenClaw-focused MVP profile.
+
 ## Prerequisites
 
 - Rust toolchain (Cargo)

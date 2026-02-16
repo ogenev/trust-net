@@ -7,8 +7,12 @@
 
 This repo targets **TrustNet Spec v0.6 (draft)** and the ERC‑8004‑first MVP profile:
 - Spec: `docs/TrustNet_Spec_v0.6.md`
-- Upgrade plan: `docs/Upgrade_Plan_v0.6.md`
-- Progress tracker: `docs/Upgrade_Progress_v0.6.md`
+
+Current MVP implementation focus:
+- **OpenClaw gateway integration first** (runtime enforcement surface).
+- **`trustnet:ctx:code-exec:v1` first** for high-risk command execution.
+- **Mandatory RootRegistry anchoring** for release profile (`MVP A0+`).
+- Payments enforcement modules remain available in-repo but are **deferred** from the initial MVP rollout.
 
 TrustNet’s core properties:
 - **Context-scoped trust** (payments ≠ code exec).
@@ -21,13 +25,16 @@ TrustNet’s core properties:
 - **Server mode:** roots are signed by a configured root publisher key; gateways verify manifest hashes and signatures.
 - **Chain mode:** roots are anchored on-chain (RootRegistry) and can also be signed; proofs verify against the anchored root.
 
+Release profile note:
+- **Initial MVP (`A0+`) uses hybrid mode**: server components for ingestion/decision plus **mandatory chain anchor verification** against `RootRegistry` for high-risk enforcement.
+
 ## Operator CLI
 
 Use the unified `trustnet` operator CLI (`crates/cli`):
 
 - `trustnet root` - build/insert server-mode root from DB
 - `trustnet rate` - sign `trustnet.rating.v1` payloads
-- `trustnet verify` - verify decision bundle against root (optionally cross-check on-chain root via `--rpc-url --root-registry --epoch`)
+- `trustnet verify` - verify decision bundle against root and (for MVP A0+) cross-check on-chain root via `--rpc-url --root-registry --epoch`
 - `trustnet receipt` - build signed action receipt
 - `trustnet verify-receipt` - verify signed receipt
 
@@ -45,12 +52,12 @@ cargo run -p trustnet-cli -- --help
 - `GET /v1/proof?key=<edgeKey>` → debug membership/non-membership proof
 - `POST /v1/ratings` → append signed `trustnet.rating.v1` (server mode)
 
-## Contracts (chain mode, optional for MVP)
+## Contracts (MVP A0+: RootRegistry required)
 
 - `TrustGraph`: emits `EdgeRated(rater, target, level, contextId)` (events-only).
-- `RootRegistry`: anchors `{epoch, graphRoot, manifestHash (and optional manifestUri)}`.
+- `RootRegistry`: anchors `{epoch, graphRoot, manifestHash (and optional manifestUri)}`. **Required in MVP A0+**.
 - `TrustPathVerifier`: optional on-chain verifier (off-chain verification is sufficient for MVP).
-- `TrustNetPaymentsGuardModule`: optional on-chain enforcement module for native ETH payments (ALLOW-only with replay, deadline, cap, and root freshness checks).
+- `TrustNetPaymentsGuardModule`: optional on-chain enforcement module for native ETH payments (ALLOW-only with replay, deadline, cap, and root freshness checks). Included for later-phase payment gating, not initial OpenClaw MVP scope.
 
 ## Indexing + root building (v0.6)
 
@@ -62,8 +69,8 @@ cargo run -p trustnet-cli -- --help
 
 ## Smoke test
 
-- Server-mode guide: `docs/Server_Smoke_Test.md`
-- Chain-mode guide (anvil E2E): `docs/Chain_Smoke_Test.md`
+- Chain-mode guide (anvil E2E, MVP A0+ baseline): `docs/Chain_Smoke_Test.md`
+- Server-mode guide (local/dev-only): `docs/Server_Smoke_Test.md`
 - Automated in-process server-mode smoke test:
 
 ```bash

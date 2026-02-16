@@ -16,7 +16,7 @@ contract MockErc8004IdentityRegistry {
 
 /// @notice Minimal ERC-8004 reputation harness for emitting events used by indexer ingestion.
 contract MockErc8004Reputation {
-    string internal constant CONTEXT_TAG = "trustnet:ctx:payments:v1";
+    string internal constant CONTEXT_TAG = "trustnet:ctx:code-exec:v1";
     string internal constant TRUSTNET_TAG = "trustnet:v1";
     string internal constant TRUSTNET_ENDPOINT = "trustnet";
 

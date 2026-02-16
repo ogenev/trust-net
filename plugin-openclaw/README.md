@@ -8,6 +8,10 @@ It demonstrates:
 - Enforcing ALLOW / ASK / DENY
 - Emitting ActionReceipts using the `trustnet` CLI
 
+Current MVP direction for this integration is **OpenClaw + `code-exec` first** with
+**mandatory RootRegistry anchoring checks** (`MVP A0+`).
+Payments contexts and on-chain payment guards are deferred to a later rollout.
+
 Files:
 - `plugin_stub.ts`: reference implementation (TypeScript) with stubbed OpenClaw hooks
 - `tool_map.example.json`: deterministic tool → context mapping
@@ -17,10 +21,23 @@ Files:
 
 1. `before_tool_call`:
    - Map `tool.name` to a context via `tool_map.example.json`.
-   - Call `/v1/decision` and enforce the decision.
+   - Call `/v1/decision`.
+   - Verify root + decision bundle using `trustnet verify --rpc-url --root-registry`.
+   - Enforce the decision.
 2. `after_tool_call` / `tool_result_persist`:
    - Call `emitActionReceipt` to create a signed receipt.
    - Store or upload the receipt (evidence).
+
+Example anchored verify invocation:
+
+```bash
+trustnet verify \
+  --root /tmp/root.json \
+  --bundle /tmp/decision.json \
+  --publisher 0xPUBLISHER... \
+  --rpc-url https://sepolia.infura.io/v3/YOUR_KEY \
+  --root-registry 0xROOTREGISTRY...
+```
 
 ## ActionReceipt emission
 
@@ -33,7 +50,7 @@ Example CLI invocation:
 trustnet receipt \
   --root /tmp/root.json \
   --bundle /tmp/decision.json \
-  --tool payments.send \
+  --tool exec \
   --args /tmp/args.json \
   --result /tmp/result.json \
   --policy-manifest-hash 0x... \

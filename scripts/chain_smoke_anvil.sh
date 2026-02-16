@@ -253,7 +253,7 @@ API_PID="$!"
 
 wait_for_http "http://127.0.0.1:${API_PORT}/v1/contexts"
 
-CONTEXT_ID="$(cast keccak "trustnet:ctx:payments:v1")"
+CONTEXT_ID="$(cast keccak "trustnet:ctx:code-exec:v1")"
 curl -fsS "http://127.0.0.1:${API_PORT}/v1/root" >"${ROOT_JSON}"
 
 decision_attempts=0

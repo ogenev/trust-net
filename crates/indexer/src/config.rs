@@ -290,6 +290,24 @@ impl Config {
             anyhow::bail!("Chain ID must be non-zero");
         }
 
+        // Validate on-chain contract addresses
+        if self.contracts.trust_graph.is_zero() {
+            anyhow::bail!("Contracts trust_graph must be a non-zero address");
+        }
+        if self.contracts.root_registry.is_zero() {
+            anyhow::bail!("Contracts root_registry must be a non-zero address");
+        }
+        if self.contracts.erc8004_reputation.is_zero() {
+            anyhow::bail!("Contracts erc8004_reputation must be a non-zero address");
+        }
+        if let Some(identity) = self.contracts.erc8004_identity {
+            if identity.is_zero() {
+                anyhow::bail!(
+                    "Contracts erc8004_identity must be a non-zero address when provided"
+                );
+            }
+        }
+
         // Validate database URL
         if self.database.url.is_empty() {
             anyhow::bail!("Database URL cannot be empty");
@@ -610,6 +628,61 @@ private_key = "invalid"
         let result = Config::from_toml_str(toml);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("private_key"));
+    }
+
+    #[test]
+    fn test_validation_zero_root_registry_address() {
+        let toml = r#"
+[network]
+rpc_url = "http://localhost:8545"
+chain_id = 1
+
+[contracts]
+trust_graph = "0x1111111111111111111111111111111111111111"
+root_registry = "0x0000000000000000000000000000000000000000"
+erc8004_reputation = "0x3333333333333333333333333333333333333333"
+
+[database]
+url = "sqlite://test.db"
+
+[sync]
+start_block = 0
+
+[publisher]
+private_key = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+        "#;
+
+        let result = Config::from_toml_str(toml);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("root_registry"));
+    }
+
+    #[test]
+    fn test_validation_zero_optional_identity_address() {
+        let toml = r#"
+[network]
+rpc_url = "http://localhost:8545"
+chain_id = 1
+
+[contracts]
+trust_graph = "0x1111111111111111111111111111111111111111"
+root_registry = "0x2222222222222222222222222222222222222222"
+erc8004_reputation = "0x3333333333333333333333333333333333333333"
+erc8004_identity = "0x0000000000000000000000000000000000000000"
+
+[database]
+url = "sqlite://test.db"
+
+[sync]
+start_block = 0
+
+[publisher]
+private_key = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+        "#;
+
+        let result = Config::from_toml_str(toml);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("erc8004_identity"));
     }
 
     #[test]

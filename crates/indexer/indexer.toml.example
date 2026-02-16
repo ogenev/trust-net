@@ -15,16 +15,17 @@ confirmations = 6
 
 [contracts]
 # TrustGraph contract address (EdgeRated events)
-trust_graph = "0x0000000000000000000000000000000000000000"
+trust_graph = "0x1111111111111111111111111111111111111111"
 
 # RootRegistry contract address (for publishing roots)
-root_registry = "0x0000000000000000000000000000000000000000"
+root_registry = "0x2222222222222222222222222222222222222222"
 
 # ERC-8004 Reputation contract address (NewFeedback events)
-erc8004_reputation = "0x0000000000000000000000000000000000000000"
+erc8004_reputation = "0x3333333333333333333333333333333333333333"
 
 # ERC-8004 Identity contract address (optional, for agentWallet lookup)
-erc8004_identity = "0x0000000000000000000000000000000000000000"
+# Omit this key if identity resolution is not required in your deployment.
+erc8004_identity = "0x4444444444444444444444444444444444444444"
 
 [database]
 # SQLite database file path

@@ -2,7 +2,7 @@
 
 **Document version:** 0.6 (Draft)  
 **Date:** 2026-02-03  
-**Status:** Implementation-spec draft (MVP: ERC‑8004-first hybrid; Post-MVP: non‑ERC‑8004 agents)  
+**Status:** Implementation-spec draft (Initial MVP: OpenClaw + code-exec on ERC‑8004 hybrid; Later: payments + non‑ERC‑8004 agents)
 **Derived from:** TrustNet for OpenClaw Agents v0.3 (2026-01-30) and TrustNet on ERC‑8004 v1.0 (2025-10-26)  
 
 ---
@@ -23,7 +23,7 @@
 12. Decision Rules (Trust-to-Act)  
 13. Gateway Integration (Generic)  
 14. Integration with OpenClaw  
-15. On-chain Contracts (Optional for MVP)  
+15. On-chain Contracts (RootRegistry Required in MVP A0+)
 16. Off-chain Services (Server Mode)  
 17. MVP Build Plan (Ship + Verify)  
 18. Verification Plan (Correctness, Security, Performance)  
@@ -79,6 +79,7 @@ TrustNet MVP intentionally excludes:
 - Global “universal reputation” or leaderboards.
 - ZK privacy proofs (future-ready, not MVP).
 - Fully trustless on-chain indexing (the indexer/root builder is off-chain, but reproducible).
+- Initial-MVP payment execution enforcement and payment policy rollout (deferred to a later phase after OpenClaw `code-exec` launch).
 - Native support for **targets that are not ERC‑8004 registered** (post-MVP; see §6.4 and Milestone 5 in §17).
 - A non‑ERC‑8004 “wallet feedback + response” on-chain standard (post-MVP; see §8.7).
 - Non-EVM identities and cross-chain identity binding (post-MVP).
@@ -95,9 +96,10 @@ TrustNet MVP intentionally excludes:
 
 ### 2.4 MVP focus and rollout plan
 
-This spec is intentionally **ERC‑8004-first**:
+This spec is intentionally **ERC‑8004-first** with an OpenClaw-first MVP sequence:
 
-- **Phase A (MVP):** targets are **ERC‑8004 registered agents** resolved to an actionable `agentWallet`. Hybrid verification uses ERC‑8004 `NewFeedback` + `ResponseAppended`, and trust-to-act uses compact `D→E→T` edges committed in the Sparse Merkle Map.
+- **Phase A0 (initial MVP):** OpenClaw gateway integration + `trustnet:ctx:code-exec:v1` enforcement. Targets are **ERC‑8004 registered agents** resolved to an actionable `agentWallet`. Hybrid verification uses ERC‑8004 `NewFeedback` + `ResponseAppended`, and trust-to-act uses compact `D→E→T` edges committed in the Sparse Merkle Map.
+- **Phase A1 (later phase):** payments contexts and optional on-chain payment enforcement modules.
 - **Phase B (post-MVP):** add support for targets that are **not** ERC‑8004 registered (wallet-only agents and other identity systems) by introducing alternative feedback/stamp channels and binding strategies (see §6.4 and §8.7).
 
 This keeps the MVP compatible with existing ERC‑8004 agents while leaving a clean path to support non‑ERC‑8004 agents later.
@@ -158,7 +160,7 @@ A full TrustNet deployment may include:
 3) **Indexer** (ingests chain logs and/or private logs)  
 4) **Root builder** (builds `graphRoot` epochs + manifests)  
 5) **Proof/Decision API** (serves proofs and explainable decisions)  
-6) Optional **on-chain root anchor** (RootRegistry)  
+6) **On-chain root anchor** (RootRegistry; required for MVP A0+ release profile)
 7) Optional **on-chain verifier** (TrustPathVerifier / library)
 
 ### 4.3 Deployment modes
@@ -171,9 +173,8 @@ A full TrustNet deployment may include:
 #### Server mode (org/shared)
 - A TrustNet service hosts the indexer, root builder, and proof API.
 - Gateways verify proofs locally against the published root.
-- Roots MUST be either:
-  - anchored on-chain **or**
-  - signed by a configured root publisher key.
+- Dev-only profile: roots MAY be authenticated by a configured root publisher signature.
+- MVP A0+ release profile: roots MUST be anchored on-chain in RootRegistry, and gateways MUST cross-check `(epoch, graphRoot, manifestHash)` against that anchor before enforcing high-risk actions.
 
 #### Chain mode (portable/public)
 - Ratings are emitted on-chain (e.g., `EdgeRated`) and/or via ERC‑8004 `NewFeedback`.
@@ -215,10 +216,10 @@ A **context** is a capability namespace. Trust is never mixed across contexts.
 
 Examples:
 
-- `trustnet:ctx:payments:v1`
 - `trustnet:ctx:code-exec:v1`
 - `trustnet:ctx:writes:v1`
 - `trustnet:ctx:messaging:v1`
+- `trustnet:ctx:payments:v1` (later-phase / optional)
 
 Contexts are represented on-chain and in proofs as `bytes32 contextId` (see §7).
 
@@ -345,8 +346,8 @@ Canonical context strings MUST have the form:
 `trustnet:ctx:<capability>:v<integer>`
 
 Examples:
-- `trustnet:ctx:payments:v1`
 - `trustnet:ctx:code-exec:v1`
+- `trustnet:ctx:payments:v1` (later-phase / optional in initial MVP)
 
 ### 7.2 Deriving contextId
 
@@ -547,7 +548,7 @@ Receipts can later be summarized into ratings by humans or auditors.
 
 #### 8.6.2 Evidence bundles for derived edges (hybrid)
 
-In hybrid deployments, `evidenceHash` on an `E→T` edge SHOULD commit to an **Evidence Bundle** that explains how that edge was derived (payments/jobs/validated work).
+In hybrid deployments, `evidenceHash` on an `E→T` edge SHOULD commit to an **Evidence Bundle** that explains how that edge was derived (exec runs/jobs/payments/validated work).
 
 Recommended content for an Evidence Bundle:
 - pointers to verified feedback entries: `(chainId, erc8004Reputation, agentId, clientAddress, feedbackIndex)`
@@ -761,6 +762,9 @@ A gateway MUST only accept a root if it is authenticated:
 
 - **Chain mode:** root is fetched from on-chain RootRegistry (or another trusted on-chain anchor).
 - **Server mode:** root MUST be signed by a configured `RootPublisherKey` and include `manifestHash`.
+
+For the MVP A0+ release profile, gateways MUST additionally verify that the served root matches RootRegistry state
+for the same epoch. Publisher signatures remain useful as defense-in-depth.
 
 
 ### 10.6 Root builder algorithm (normative behavior)
@@ -1042,9 +1046,10 @@ Mapping:
 Decisions SHOULD include **constraints** so “ALLOW” can be bounded:
 
 Examples:
-- payments: `{ maxAmountUsd: 50, ttlSeconds: 300 }`
 - code-exec: `{ allowedCommands: [...], ttlSeconds: 60 }`
 - writes: `{ allowedPaths: ["./src/**"], maxBytes: 50000 }`
+- messaging: `{ allowedDestinations: [...], ttlSeconds: 300 }`
+- payments (later-phase): `{ maxAmountUsd: 50, ttlSeconds: 300 }`
 
 Constraints are enforced by the gateway, not by TrustNet itself.
 
@@ -1087,7 +1092,7 @@ On each attempted action:
 
 If TrustNet API is unreachable, root is unauthenticated, or proof verification fails:
 
-- For high-risk contexts (payments, code-exec): default **DENY** (or ASK if you prefer human fallback).
+- For high-risk contexts (code-exec, and payments when enabled): default **DENY** (or ASK if you prefer human fallback).
 - For low-risk contexts: default **ASK**.
 
 This choice must be explicit in gateway config.
@@ -1097,6 +1102,7 @@ This choice must be explicit in gateway config.
 ## 14. Integration with OpenClaw
 
 OpenClaw is a strong enforcement surface because it provides hook points before and after tool calls, and includes host-level exec approvals.
+The initial MVP focus in this section is `code-exec`; payment contexts are a later-phase extension.
 
 ### 14.1 Plugin hooks
 
@@ -1117,7 +1123,6 @@ The plugin MUST maintain a deterministic mapping:
 Example mapping:
 
 - `exec` → `trustnet:ctx:code-exec:v1` (high risk)
-- `payments.send` → `trustnet:ctx:payments:v1` (high risk)
 - `fs.write` → `trustnet:ctx:writes:v1` (medium risk)
 - `messaging.send` → `trustnet:ctx:messaging:v1` (medium risk)
 
@@ -1156,13 +1161,14 @@ This becomes excellent evidence for later ratings.
 
 ---
 
-## 15. On-chain Contracts (Optional for MVP)
+## 15. On-chain Contracts (RootRegistry Required in MVP A0+)
 
-If you want portable, on-chain verifiable trust-to-act:
+For the MVP A0+ release profile, RootRegistry anchoring is required.
+Other contracts remain optional and can be phased in later.
 
 ### 15.1 TrustGraph (events-only)
 
-Minimal contract emitting `EdgeRated`.
+Optional minimal contract emitting `EdgeRated`.
 
 ### 15.2 RootRegistry (root anchoring)
 
@@ -1175,7 +1181,8 @@ A Solidity library (or contract) that:
 - checks same `contextId` across edges
 - applies scoring rule + thresholds
 
-MVP note: on-chain verifier is optional; you can validate the idea off-chain first.
+Initial-MVP note: OpenClaw `code-exec` rollout still verifies proofs off-chain at the gateway.
+On-chain verifier/payment guards are later-phase additions.
 
 ---
 
@@ -1213,6 +1220,9 @@ Gateways SHOULD:
 - cache by `epoch`
 - refuse roots where `epoch` decreases
 - verify `publisherSig` before accepting the root (server mode)
+
+For MVP A0+ release profile, gateways MUST also cross-check `epoch/graphRoot/manifestHash` against
+RootRegistry before enforcing high-risk actions.
 
 ### 16.3 Decision endpoint requirements (normative)
 
@@ -1267,9 +1277,9 @@ Recommended error codes:
 
 This is a practical sequence that proves the core idea quickly.
 
-### 17.0 MVP profile (Phase A: ERC‑8004-first hybrid)
+### 17.0 MVP profile (Phase A0: OpenClaw + code-exec on ERC‑8004 hybrid)
 
-The **Phase A MVP** defined by this spec assumes:
+The **Phase A0 initial MVP** defined by this spec assumes:
 
 - **Targets are ERC‑8004 registered**: a target agent is identified by an `agentId` in an ERC‑8004 Identity Registry and is bound to an actionable **`agentWallet`** (EVM address) at the indexed block height.
 - **Hybrid verification is ERC‑8004-native**:
@@ -1278,19 +1288,20 @@ The **Phase A MVP** defined by this spec assumes:
 - **Trust-to-act uses compact edges** committed into the Sparse Merkle Map:
   - `D→E` edges define which verifiers/endorsers the decider counts,
   - `E→T` edges are published (typically by verifiers) and SHOULD carry `evidenceHash` commitments to Evidence Bundles.
+- **Root authenticity is anchored on-chain**: enforcement-time verification MUST cross-check served roots against RootRegistry.
 
-**Not in Phase A MVP:** targets that are not ERC‑8004 registered and non‑ERC‑8004 public stamping channels (Phase B; see §6.4, §8.7, and Milestone 5 in §17).
+**Not in Phase A0 initial MVP:** payments policy rollout/on-chain payment guards, targets that are not ERC‑8004 registered, and non‑ERC‑8004 public stamping channels (Phase A1/B; see §6.4, §8.7, and Milestone 5 in §17).
 
 ### 17.1 MVP definition (smallest thing that validates the thesis)
 
-To “verify the idea,” the MVP MUST demonstrate:
+To “verify the idea,” the initial MVP MUST demonstrate:
 
-1) A gateway blocks/allows a real tool call based on TrustNet.  
+1) An OpenClaw gateway blocks/allows a real `exec` tool call based on TrustNet.
 2) The gateway can show an operator a compact **Why** (which endorsers and edges were used).  
-3) The decision can be verified **cryptographically** against a root (server mode or chain mode).  
+3) The decision can be verified **cryptographically** against a root that is cross-checked against RootRegistry.
 4) Tampering with either the proof or root causes verification failure (no silent bypass).
 
-Everything else (on-chain verifier, multi-publisher quorums) is optional until the above is solid. The **MVP profile in this spec assumes ERC‑8004 integration**; see §17.0.
+Everything else (on-chain verifier, payments enforcement modules, multi-publisher quorums) is optional until the above is solid. The **MVP profile in this spec assumes ERC‑8004 integration with mandatory anchoring**; see §17.0.
 
 ### 17.2 Suggested repo layout (pragmatic)
 
@@ -1308,7 +1319,7 @@ Each milestone is “done” only when:
 - the artifacts (roots/manifests/proofs/receipts) are persisted for later audit.
 
 
-### Milestone 0 — Local enforcement harness (optional, but speeds development)
+### Milestone 0 — OpenClaw enforcement harness (required for initial MVP)
 
 Deliverables:
 - TrustNet plugin for OpenClaw:
@@ -1322,7 +1333,7 @@ Deliverables:
 Success criteria:
 - You can run two agents, assign trust edges, and see tool calls blocked/allowed with clear Why.
 
-### Milestone 1 — Roots + proofs + verification (server mode)
+### Milestone 1 — Roots + proofs + verification (server baseline)
 
 Deliverables:
 - TrustNet server:
@@ -1367,12 +1378,12 @@ Deliverables:
   - materialize “verified feedback” per trusted verifier responders
 - Expose evidence in the Why UI:
   - show `evidenceHash` (and an `evidenceUri` link if available)
-- Enable evidence gating in the gateway policy for high-risk contexts (payments, code-exec).
+- Enable evidence gating in the gateway policy for high-risk contexts (code-exec first; payments later).
 
 Success criteria:
 - A decider can require that positive `E→T` trust used for ALLOW is backed by verifiable evidence commitments, while raw unverified feedback does not grant high-risk permissions.
 
-### Milestone 4 — Chain anchoring (optional, but strong demo)
+### Milestone 4 — RootRegistry anchoring + testnet rehearsal (required for MVP A0+)
 
 Deliverables:
 - Deploy RootRegistry on a testnet.
@@ -1383,7 +1394,7 @@ Optional (nice-to-have):
 - Deploy TrustGraph (events-only) and publish `EdgeRated` overrides on-chain.
 
 Success criteria:
-- A third party can recompute the root from chain logs + manifest, and the gateway’s decisions verify against an on-chain root anchor.
+- A third party can recompute the root from chain logs + manifest, and the gateway’s decisions verify against an on-chain root anchor in normal runtime flow.
 
 ### Milestone 5 — Post-MVP: non‑ERC‑8004 targets (wallet-only agents)
 
@@ -1434,9 +1445,10 @@ Success criteria:
 
 ### 18.4 MVP demo scenarios (recommended)
 
-- **Payments**: trusted agent allowed to pay ≤ $50; untrusted agent denied; unknown agent asked.
-- **Code exec**: only strongly trusted agent can run `exec`; others require approval.
+- **Code exec**: only strongly trusted agent can run `exec`; others require approval or deny.
+- **Writes**: trusted agent can modify allowlisted paths; others are blocked or escalated.
 - **Emergency veto**: publish `D→T=-2` and show the next root causes DENY everywhere.
+- **Later-phase payments**: trusted agent allowed to pay ≤ $50; untrusted agent denied.
 
 ---
 
@@ -1506,8 +1518,9 @@ Success criteria:
     "buckets": [80, 60, 40, 20]
   },
   "ttlPolicy": {
-    "trustnet:ctx:payments:v1": { "ttlSeconds": 2592000 },
-    "trustnet:ctx:code-exec:v1": { "ttlSeconds": 604800 }
+    "trustnet:ctx:code-exec:v1": { "ttlSeconds": 604800 },
+    "trustnet:ctx:writes:v1": { "ttlSeconds": 2592000 },
+    "trustnet:ctx:messaging:v1": { "ttlSeconds": 604800 }
   },
   "leafValueFormat": "levelUpdatedAtEvidenceV1",
   "defaultEdgeValue": { "level": 0 },
@@ -1524,17 +1537,19 @@ Success criteria:
     "entries": {
       "trustnet": {
         "enabled": true,
-        "mode": "server", // local|server|chain
+        "mode": "chain", // local|server|chain (MVP A0+ uses RootRegistry anchoring)
         "apiBaseUrl": "http://127.0.0.1:8088",
-        "rootPublisherPubKey": "base64:…",
+        "rpcUrl": "https://sepolia.infura.io/v3/YOUR_KEY",
+        "rootRegistry": "0xROOTREGISTRY...",
+        "publisherAddress": "0xPUBLISHER...",
         "policy": {
           "decider": "0xDECIDER…",
           "thresholds": {
-            "trustnet:ctx:payments:v1": { "allow": 1, "ask": 0 },
-            "trustnet:ctx:code-exec:v1": { "allow": 2, "ask": 1 }
+            "trustnet:ctx:code-exec:v1": { "allow": 2, "ask": 1 },
+            "trustnet:ctx:writes:v1": { "allow": 1, "ask": 0 },
+            "trustnet:ctx:messaging:v1": { "allow": 0, "ask": 0 }
           },
           "evidenceRequirements": {
-            "trustnet:ctx:payments:v1": { "requireEvidenceForPositiveET": true },
             "trustnet:ctx:code-exec:v1": { "requireEvidenceForPositiveET": true }
           },
           "fallback": {
@@ -1583,18 +1598,13 @@ Minimal fields:
 {
   "type": "trustnet.verification.v1",
   "status": "verified",
-  "context": "trustnet:ctx:payments:v1",
+  "context": "trustnet:ctx:code-exec:v1",
   "receipt": {
-    "type": "escrowJob",
-    "chainId": 11155111,
-    "contract": "0x…",
-    "jobId": "12345",
-    "txHash": "0x…"
-  },
-  "amount": {
-    "asset": "USDC",
-    "value": "1000000",
-    "decimals": 6
+    "type": "execRun",
+    "provider": "openclaw",
+    "runId": "run_12345",
+    "commandHash": "0x…",
+    "resultHash": "0x…"
   },
   "notes": "optional human note",
   "createdAt": "2026-02-03T00:00:00Z"
@@ -1611,6 +1621,7 @@ Normative rules:
 Receipt types (recommended union):
 - `escrowJob`: `{ chainId, contract, jobId, txHash? }`
 - `evmPayment`: `{ chainId, txHash, from?, to?, value?, asset?, decimals? }`
+- `execRun`: `{ provider, runId, commandHash, resultHash }`
 - `offchain`: `{ provider, receiptId, signedBy?, signatureRef? }`
 
 #### E.2 `trustnet.evidenceBundle.v1` (off-chain evidence committed by `evidenceHash`)
@@ -1627,7 +1638,7 @@ Example:
 {
   "type": "trustnet.evidenceBundle.v1",
   "verifier": "0x…",
-  "context": "trustnet:ctx:payments:v1",
+  "context": "trustnet:ctx:code-exec:v1",
   "window": { "from": "2026-01-01T00:00:00Z", "to": "2026-02-01T00:00:00Z" },
   "inputs": [
     {
@@ -1645,12 +1656,12 @@ Example:
     }
   ],
   "derivation": {
-    "policyId": "marketplace-payments-v1",
-    "params": { "minUsd": 1, "pairSaturation": true }
+    "policyId": "openclaw-code-exec-v1",
+    "params": { "minVerifiedRuns": 3, "allowlistMatchRequired": true }
   },
   "output": {
     "level": 2,
-    "stats": { "verifiedCount": 14, "sumUsdApprox": 1234 }
+    "stats": { "verifiedCount": 14, "successRate": 0.93 }
   }
 }
 ```

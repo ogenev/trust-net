@@ -91,7 +91,7 @@ cp indexer.toml.example indexer.toml
 
 Edit `indexer.toml` and set:
 - RPC URL (Sepolia endpoint)
-- Contract addresses (TrustGraph, RootRegistry, ERC-8004)
+- Contract addresses (TrustGraph, RootRegistry, ERC-8004) as non-zero deployed values
 - Publisher private key
 - Database path
 

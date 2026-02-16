@@ -7,6 +7,8 @@ This guide validates a real 2-hop decision path in server mode:
 3. fetch decision bundle for `(D, T)` (`GET /v1/decision`)
 4. verify cryptographically (`trustnet verify`)
 
+By default, this walkthrough uses `trustnet:ctx:code-exec:v1` to match the initial OpenClaw-focused MVP.
+
 ## Automated smoke test
 
 Run the in-process integration test (same flow as this doc):
@@ -50,7 +52,7 @@ Use separate keys for decider (`D`) and endorser (`E`), then create both edges:
 PK_D=0x1111111111111111111111111111111111111111111111111111111111111111
 PK_E=0x2222222222222222222222222222222222222222222222222222222222222222
 TARGET=0x3333333333333333333333333333333333333333
-CONTEXT=trustnet:ctx:payments:v1
+CONTEXT=trustnet:ctx:code-exec:v1
 
 PAYLOAD_ET=$(cargo run -q -p trustnet-cli -- rate \
   --private-key "$PK_E" \

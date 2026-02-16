@@ -52,6 +52,9 @@ export interface PluginConfig {
   apiBaseUrl: string;
   decider: string;
   toolMapPath: string;
+  rpcUrl: string;
+  rootRegistry: string;
+  publisherAddress: string;
   policyManifestHash?: string;
   receiptSignerKeyHex?: string;
 }
@@ -119,6 +122,39 @@ function normalizeDecision(decision: string): DecisionString {
   throw new Error(`Unknown decision: ${decision}`);
 }
 
+function verifyDecisionBundleAnchored(
+  root: RootResponseV1,
+  bundle: DecisionBundleV1,
+  config: PluginConfig
+): void {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "trustnet-verify-"));
+  const rootPath = path.join(tmpDir, "root.json");
+  const bundlePath = path.join(tmpDir, "decision.json");
+
+  try {
+    fs.writeFileSync(rootPath, JSON.stringify(root));
+    fs.writeFileSync(bundlePath, JSON.stringify(bundle));
+
+    const args: string[] = [
+      "verify",
+      "--root",
+      rootPath,
+      "--bundle",
+      bundlePath,
+      "--publisher",
+      config.publisherAddress,
+      "--rpc-url",
+      config.rpcUrl,
+      "--root-registry",
+      config.rootRegistry
+    ];
+
+    execFileSync("trustnet", args, { stdio: "inherit" });
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+}
+
 export async function beforeToolCall(
   ctx: ToolCallContext,
   config: PluginConfig
@@ -133,6 +169,10 @@ export async function beforeToolCall(
     fetchRoot(config.apiBaseUrl),
     fetchDecision(config.apiBaseUrl, config.decider, ctx.targetPrincipalId, mapping.contextId)
   ]);
+
+  // MVP A0+ requires cryptographic verification plus on-chain root anchoring checks
+  // before an enforcement decision is returned to the gateway runtime.
+  verifyDecisionBundleAnchored(root, bundle, config);
 
   return {
     decision: normalizeDecision(bundle.decision),

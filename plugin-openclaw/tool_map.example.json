@@ -9,13 +9,6 @@
       "constraints": { "ttlSeconds": 60 }
     },
     {
-      "pattern": "^payments\\.send$",
-      "context": "trustnet:ctx:payments:v1",
-      "contextId": "0x195c31d552212fd148934033b94b89c00b603e2b73e757a2b7684b4cc9602147",
-      "riskTier": "high",
-      "constraints": { "ttlSeconds": 300 }
-    },
-    {
       "pattern": "^fs\\.write$",
       "context": "trustnet:ctx:writes:v1",
       "contextId": "0xa4d767d43a1aa6ce314b2c1df834966b812e18b0b99fcce9faf1591c0a6f2674",
