@@ -11,6 +11,8 @@ This smoke test validates the chain-mode MVP flow end-to-end:
 
 By default, the script exercises the `trustnet:ctx:code-exec:v1` context to match the initial OpenClaw-focused MVP profile.
 
+For Base Sepolia public-traffic release rehearsal (multi-epoch + crash/recovery), use `docs/Base_Sepolia_Dress_Rehearsal.md` and `./scripts/base_sepolia_public_rehearsal.sh`.
+
 ## Prerequisites
 
 - Rust toolchain (Cargo)

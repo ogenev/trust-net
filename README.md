@@ -70,6 +70,7 @@ cargo run -p trustnet-cli -- --help
 ## Smoke test
 
 - Chain-mode guide (anvil E2E, initial MVP release baseline): `docs/Chain_Smoke_Test.md`
+- Base Sepolia dress rehearsal guide (release readiness): `docs/Base_Sepolia_Dress_Rehearsal.md`
 - Server-mode guide (local/dev-only): `docs/Server_Smoke_Test.md`
 - Automated in-process server-mode smoke test:
 
@@ -81,6 +82,12 @@ cargo test -p trustnet-api --test server_smoke
 
 ```bash
 ./scripts/chain_smoke_anvil.sh
+```
+
+- Automated Base Sepolia dress rehearsal script:
+
+```bash
+./scripts/base_sepolia_public_rehearsal.sh
 ```
 
 ## OpenClaw plugin (code-exec MVP)
