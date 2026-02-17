@@ -82,3 +82,14 @@ cargo test -p trustnet-api --test server_smoke
 ```bash
 ./scripts/chain_smoke_anvil.sh
 ```
+
+## OpenClaw plugin (code-exec MVP)
+
+`plugin-openclaw/` now contains a production plugin package (manifest + runtime hooks + integration tests) for OpenClaw enforcement in the initial MVP profile.
+
+Run plugin integration tests:
+
+```bash
+cd plugin-openclaw
+npm test
+```

@@ -1,0 +1,15 @@
+{
+  "name": "@trustnet/trustnet-openclaw",
+  "version": "0.1.0",
+  "private": true,
+  "description": "TrustNet OpenClaw enforcement plugin (anchored code-exec MVP profile)",
+  "type": "module",
+  "scripts": {
+    "test": "node --test"
+  },
+  "openclaw": {
+    "extensions": [
+      "./index.js"
+    ]
+  }
+}

@@ -1,0 +1,124 @@
+{
+  "id": "trustnet-openclaw",
+  "name": "TrustNet Enforcement",
+  "description": "TrustNet trust-to-act enforcement for OpenClaw tool execution with mandatory RootRegistry anchoring checks.",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "apiBaseUrl": {
+        "type": "string",
+        "description": "TrustNet API base URL (for /v1/root and /v1/decision)."
+      },
+      "decider": {
+        "type": "string",
+        "description": "Decider principal identifier."
+      },
+      "targetPrincipalId": {
+        "type": "string",
+        "description": "Optional fixed target principal. If omitted, ctx.agentId is used."
+      },
+      "toolMapPath": {
+        "type": "string",
+        "description": "Path to deterministic tool->context mapping JSON."
+      },
+      "rpcUrl": {
+        "type": "string",
+        "description": "RPC endpoint used for RootRegistry anchoring checks."
+      },
+      "rootRegistry": {
+        "type": "string",
+        "pattern": "^0x[a-fA-F0-9]{40}$",
+        "description": "RootRegistry contract address."
+      },
+      "publisherAddress": {
+        "type": "string",
+        "pattern": "^0x[a-fA-F0-9]{40}$",
+        "description": "Trusted root publisher address."
+      },
+      "policyManifestHash": {
+        "type": "string",
+        "pattern": "^0x[a-fA-F0-9]{64}$",
+        "description": "Optional policy manifest hash attached to receipts."
+      },
+      "receiptSignerKeyHex": {
+        "type": "string",
+        "description": "Optional signer key passed to trustnet receipt."
+      },
+      "trustnetBinary": {
+        "type": "string",
+        "description": "Path to trustnet CLI binary. Defaults to trustnet on PATH."
+      },
+      "receiptOutDir": {
+        "type": "string",
+        "description": "Optional directory for persisted ActionReceipt JSON files."
+      },
+      "requestTimeoutMs": {
+        "type": "number",
+        "minimum": 1
+      },
+      "verifyTimeoutMs": {
+        "type": "number",
+        "minimum": 1
+      },
+      "receiptTimeoutMs": {
+        "type": "number",
+        "minimum": 1
+      },
+      "askMode": {
+        "type": "string",
+        "enum": [
+          "block",
+          "allow"
+        ],
+        "description": "How ASK is handled in before_tool_call."
+      },
+      "unmappedDecision": {
+        "type": "string",
+        "enum": [
+          "deny",
+          "ask"
+        ],
+        "description": "Fallback for tools without mapping entries."
+      },
+      "failOpen": {
+        "type": "boolean",
+        "description": "If true, enforcement errors allow execution (not recommended)."
+      }
+    }
+  },
+  "uiHints": {
+    "apiBaseUrl": {
+      "label": "TrustNet API URL",
+      "help": "Base URL for decision and root endpoints."
+    },
+    "decider": {
+      "label": "Decider",
+      "help": "Principal used in TrustNet decision queries."
+    },
+    "toolMapPath": {
+      "label": "Tool Map Path",
+      "help": "Deterministic mapping JSON for OpenClaw tool names."
+    },
+    "rpcUrl": {
+      "label": "RPC URL",
+      "help": "Chain RPC used to verify RootRegistry anchoring."
+    },
+    "rootRegistry": {
+      "label": "RootRegistry Address",
+      "help": "Onchain root anchor contract address."
+    },
+    "publisherAddress": {
+      "label": "Publisher Address",
+      "help": "Expected publisher EOA for root signatures."
+    },
+    "receiptOutDir": {
+      "label": "Receipt Output Directory",
+      "help": "If set, emitted ActionReceipts are persisted here."
+    },
+    "failOpen": {
+      "label": "Fail Open",
+      "help": "Allow tool execution on TrustNet errors. Keep false for release."
+    }
+  }
+}

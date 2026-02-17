@@ -1,34 +1,85 @@
-# TrustNet OpenClaw Plugin (Reference Stub)
+# TrustNet OpenClaw Plugin (MVP Production Package)
 
-This folder contains a minimal, **non-production** reference stub for integrating TrustNet v0.6 with OpenClaw.
-It demonstrates:
+This package is the OpenClaw enforcement surface for TrustNet MVP:
+- OpenClaw-first runtime integration
+- `trustnet:ctx:code-exec:v1` as first high-risk context
+- mandatory RootRegistry anchoring checks before allow
 
-- Mapping tools to TrustNet contexts
-- Fetching TrustNet decision bundles
-- Enforcing ALLOW / ASK / DENY
-- Emitting ActionReceipts using the `trustnet` CLI
+This plugin now uses OpenClaw's real plugin lifecycle hooks:
+- `before_tool_call`: map tool -> context, fetch decision/root, verify anchoring, enforce ALLOW/ASK/DENY
+- `after_tool_call`: emit ActionReceipt via `trustnet receipt`
+- `tool_result_persist`: attach TrustNet receipt metadata to persisted tool result messages
 
-Current MVP direction for this integration is **OpenClaw + `code-exec` first** with
-**mandatory RootRegistry anchoring checks** (initial MVP release profile).
-Payments contexts and on-chain payment guards are deferred to a later rollout.
+## Files
 
-Files:
-- `plugin_stub.ts`: reference implementation (TypeScript) with stubbed OpenClaw hooks
-- `tool_map.example.json`: deterministic tool → context mapping
-- `config.example.json5`: example TrustNet plugin config (from spec Appendix C, extended)
+- `index.js`: production plugin runtime entrypoint
+- `openclaw.plugin.json`: plugin manifest + config schema
+- `tool_map.example.json`: deterministic tool -> context mapping
+- `config.example.json5`: OpenClaw plugin config example
+- `test/integration.test.js`: runtime integration tests (mock server + mock trustnet CLI)
 
-## High-level flow
+## Requirements
 
-1. `before_tool_call`:
-   - Map `tool.name` to a context via `tool_map.example.json`.
-   - Call `/v1/decision`.
-   - Verify root + decision bundle using `trustnet verify --rpc-url --root-registry`.
-   - Enforce the decision.
-2. `after_tool_call` / `tool_result_persist`:
-   - Call `emitActionReceipt` to create a signed receipt.
-   - Store or upload the receipt (evidence).
+- OpenClaw with plugin support (`openclaw.plugin.json` + package `openclaw.extensions` contract)
+- `trustnet` CLI on PATH (or set `trustnetBinary` in plugin config)
+- reachable TrustNet API (`/v1/root`, `/v1/decision`)
+- chain RPC URL and deployed `RootRegistry` for anchored verification
 
-Example anchored verify invocation:
+## Install in OpenClaw
+
+1. Install plugin package:
+```bash
+openclaw plugins install file:./plugin-openclaw
+```
+2. Add plugin entry config in OpenClaw config.
+3. Restart OpenClaw and check:
+```bash
+openclaw plugins list --json
+openclaw plugins doctor
+```
+
+If config is missing or invalid, the plugin loads in an inactive mode and logs a warning instead of enforcing decisions.
+
+Example config snippet:
+
+```json5
+{
+  "plugins": {
+    "entries": {
+      "trustnet-openclaw": {
+        "enabled": true,
+        "config": {
+          "apiBaseUrl": "http://127.0.0.1:8088",
+          "decider": "0xDECIDER...",
+          "targetPrincipalId": "0xTARGET...",
+          "toolMapPath": "./plugin-openclaw/tool_map.example.json",
+          "rpcUrl": "https://sepolia.infura.io/v3/YOUR_KEY",
+          "rootRegistry": "0xROOTREGISTRY...",
+          "publisherAddress": "0xPUBLISHER...",
+          "policyManifestHash": "0x...",
+          "receiptOutDir": "./.trustnet/receipts",
+          "askMode": "block",
+          "unmappedDecision": "deny",
+          "failOpen": false
+        }
+      }
+    }
+  }
+}
+```
+
+Local path mode (without `plugins install`): set
+`plugins.load.paths: ["./plugin-openclaw"]` and keep the same `entries.trustnet-openclaw.config` block.
+Do not use both install mode and local path mode at the same time.
+
+## Enforcement and verification flow
+
+1. OpenClaw calls `before_tool_call`.
+2. Plugin resolves tool mapping (`tool_map.example.json`) to `contextId`.
+3. Plugin calls:
+   - `GET /v1/root`
+   - `GET /v1/decision?decider=...&target=...&contextId=...`
+4. Plugin runs anchored verify:
 
 ```bash
 trustnet verify \
@@ -39,30 +90,19 @@ trustnet verify \
   --root-registry 0xROOTREGISTRY...
 ```
 
-## ActionReceipt emission
+5. Plugin enforces decision:
+   - `allow`: execution proceeds
+   - `ask`: blocked by default (`askMode: "block"`) unless explicitly configured to allow
+   - `deny`: blocked
+6. OpenClaw calls `after_tool_call`.
+7. Plugin emits ActionReceipt via `trustnet receipt` and optionally persists it to `receiptOutDir`.
+8. On `tool_result_persist`, plugin attaches receipt summary metadata to the transcript message.
 
-The stub uses the `trustnet receipt` CLI (in `crates/cli`) to generate receipts.
-This keeps hashing and signing behavior consistent with the Rust verifier.
-
-Example CLI invocation:
+## Run tests
 
 ```bash
-trustnet receipt \
-  --root /tmp/root.json \
-  --bundle /tmp/decision.json \
-  --tool exec \
-  --args /tmp/args.json \
-  --result /tmp/result.json \
-  --policy-manifest-hash 0x... \
-  --signer-key 0x... \
-  --out /tmp/receipt.json
+cd plugin-openclaw
+npm test
 ```
 
-Set `TRUSTNET_RECEIPT_SIGNER_KEY` in the environment if you do not want to pass `--signer-key`.
-
-## Notes
-
-- This is a **reference** only. Wire it to OpenClaw's actual plugin API and
-  replace the placeholder types with OpenClaw interfaces.
-- Use a secure signer. Do not expose signing keys to the LLM runtime.
-- Keep a deterministic tool mapping; do not allow the model to override it.
+The integration tests validate anchored verify invocation, decision enforcement, and receipt emission behavior.
