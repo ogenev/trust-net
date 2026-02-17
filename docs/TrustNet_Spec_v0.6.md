@@ -1534,29 +1534,31 @@ Success criteria:
 ```json5
 {
   "plugins": {
+    // Local path mode. If you used `openclaw plugins install`, remove `load.paths`.
+    "load": {
+      "paths": ["./plugin-openclaw"]
+    },
     "entries": {
-      "trustnet": {
+      "trustnet-openclaw": {
         "enabled": true,
-        "mode": "chain", // local|server|chain (initial MVP release uses RootRegistry anchoring)
-        "apiBaseUrl": "http://127.0.0.1:8088",
-        "rpcUrl": "https://sepolia.infura.io/v3/YOUR_KEY",
-        "rootRegistry": "0xROOTREGISTRY...",
-        "publisherAddress": "0xPUBLISHER...",
-        "policy": {
-          "decider": "0xDECIDER…",
-          "thresholds": {
-            "trustnet:ctx:code-exec:v1": { "allow": 2, "ask": 1 },
-            "trustnet:ctx:writes:v1": { "allow": 1, "ask": 0 },
-            "trustnet:ctx:messaging:v1": { "allow": 0, "ask": 0 }
-          },
-          "evidenceRequirements": {
-            "trustnet:ctx:code-exec:v1": { "requireEvidenceForPositiveET": true }
-          },
-          "fallback": {
-            "highRisk": "deny",
-            "mediumRisk": "ask",
-            "lowRisk": "ask"
-          }
+        "config": {
+          "apiBaseUrl": "http://127.0.0.1:8088",
+          "decider": "0xDECIDER...",
+          "targetPrincipalId": "0xTARGET...", // optional if OpenClaw context provides agentId
+          "toolMapPath": "./plugin-openclaw/tool_map.example.json",
+          "rpcUrl": "https://sepolia.infura.io/v3/YOUR_KEY",
+          "rootRegistry": "0xROOTREGISTRY...",
+          "publisherAddress": "0xPUBLISHER...",
+          "policyManifestHash": "0x...", // optional bytes32 attached to ActionReceipts
+          "receiptSignerKeyHex": "0x...", // optional signer key for receipt emission
+          "receiptOutDir": "./.trustnet/receipts", // optional
+          "trustnetBinary": "trustnet", // optional
+          "requestTimeoutMs": 5000,
+          "verifyTimeoutMs": 15000,
+          "receiptTimeoutMs": 15000,
+          "askMode": "block", // block|allow
+          "unmappedDecision": "deny", // deny|ask
+          "failOpen": false // keep false for release
         }
       }
     }
