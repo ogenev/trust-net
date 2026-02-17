@@ -1211,7 +1211,7 @@ A minimal TrustNet server consists of:
 
 - `epoch` (uint64)
 - `graphRoot` (bytes32 hex string)
-- `manifestUri` (string; may be inline for MVP)
+- `manifestUri` (string; SHOULD be a durable fetchable URI, e.g. `ipfs://` or `https://`)
 - `manifestHash` (bytes32)
 - `publisherSig` (required in server mode; signature over `epoch || graphRoot || manifestHash`)
 - `publisherKeyId` (optional; useful if rotating publisher keys)

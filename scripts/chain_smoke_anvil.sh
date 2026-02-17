@@ -141,6 +141,7 @@ DB_URL="sqlite://${DB_FILE}"
 INDEXER_CONFIG="${TMP_DIR}/indexer.toml"
 ROOT_JSON="${TMP_DIR}/root.json"
 DECISION_JSON="${TMP_DIR}/decision.json"
+MANIFEST_DIR="${TMP_DIR}/manifests"
 
 echo "Starting anvil on ${RPC_URL}"
 anvil --port "${ANVIL_PORT}" --chain-id 31337 >"${TMP_DIR}/anvil.log" 2>&1 &
@@ -195,6 +196,8 @@ max_gas_price_gwei = 0
 confirmations = 0
 max_retries = 3
 min_interval_secs = 1
+manifest_output_dir = "${MANIFEST_DIR}"
+manifest_public_base_uri = "file://${MANIFEST_DIR}"
 
 [logging]
 level = "info"
@@ -284,9 +287,11 @@ cargo run -q -p trustnet-cli -- verify \
 echo "Cross-checking root against on-chain RootRegistry"
 ROOT_GRAPH="$(jq -r '.graphRoot | ascii_downcase' "${ROOT_JSON}")"
 ROOT_MANIFEST_HASH="$(jq -r '.manifestHash | ascii_downcase' "${ROOT_JSON}")"
+ROOT_MANIFEST_URI="$(jq -r '.manifestUri // empty' "${ROOT_JSON}")"
 ONCHAIN_EPOCH="$(cast call --rpc-url "${RPC_URL}" "${ROOT_REGISTRY}" "currentEpoch()(uint256)" | tr -d '[:space:]')"
 ONCHAIN_ROOT="$(cast call --rpc-url "${RPC_URL}" "${ROOT_REGISTRY}" "getRootAt(uint256)(bytes32)" "${ROOT_EPOCH}" | tr -d '[:space:]')"
 ONCHAIN_MANIFEST_HASH="$(cast call --rpc-url "${RPC_URL}" "${ROOT_REGISTRY}" "getManifestHashAt(uint256)(bytes32)" "${ROOT_EPOCH}" | tr -d '[:space:]')"
+ONCHAIN_MANIFEST_URI="$(cast call --rpc-url "${RPC_URL}" "${ROOT_REGISTRY}" "getManifestURIAt(uint256)(string)" "${ROOT_EPOCH}" | tr -d '[:space:]\"')"
 
 if [[ "${ONCHAIN_EPOCH}" != "${ROOT_EPOCH}" ]]; then
   echo "epoch mismatch: root.json=${ROOT_EPOCH}, rootRegistry=${ONCHAIN_EPOCH}" >&2
@@ -300,6 +305,16 @@ fi
 
 if [[ "$(lower_hex "${ONCHAIN_MANIFEST_HASH}")" != "$(lower_hex "${ROOT_MANIFEST_HASH}")" ]]; then
   echo "manifestHash mismatch against RootRegistry" >&2
+  exit 1
+fi
+
+if [[ -z "${ROOT_MANIFEST_URI}" || "${ROOT_MANIFEST_URI}" == "inline" ]]; then
+  echo "manifestUri is missing or inline in API root response" >&2
+  exit 1
+fi
+
+if [[ "$(lower_hex "${ONCHAIN_MANIFEST_URI}")" != "$(lower_hex "${ROOT_MANIFEST_URI}")" ]]; then
+  echo "manifestUri mismatch against RootRegistry" >&2
   exit 1
 fi
 

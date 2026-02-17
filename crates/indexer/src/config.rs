@@ -154,6 +154,21 @@ pub struct PublisherConfig {
     /// Minimum interval between publishes in seconds
     #[serde(default = "default_min_publish_interval_secs")]
     pub min_interval_secs: u64,
+
+    /// Filesystem directory where canonical manifest JSON files are written before anchoring.
+    ///
+    /// Must be configured together with `manifest_public_base_uri`.
+    #[serde(default)]
+    pub manifest_output_dir: Option<String>,
+
+    /// Public base URI used to construct the anchored manifest URI.
+    ///
+    /// Example: `https://cdn.example.com/trustnet/manifests`
+    /// Final URI: `{manifest_public_base_uri}/epoch-{epoch}-0x{manifest_hash}.json`
+    ///
+    /// Must be configured together with `manifest_output_dir`.
+    #[serde(default)]
+    pub manifest_public_base_uri: Option<String>,
 }
 
 /// Logging configuration.
@@ -359,6 +374,39 @@ impl Config {
 
         if self.publisher.publish_interval_secs == 0 {
             anyhow::bail!("Publisher publish_interval_secs must be > 0");
+        }
+
+        match (
+            self.publisher.manifest_output_dir.as_deref(),
+            self.publisher.manifest_public_base_uri.as_deref(),
+        ) {
+            (Some(_), None) | (None, Some(_)) => {
+                anyhow::bail!(
+                    "Publisher manifest_output_dir and manifest_public_base_uri must be set together"
+                );
+            }
+            (Some(dir), Some(base_uri)) => {
+                if dir.trim().is_empty() {
+                    anyhow::bail!("Publisher manifest_output_dir cannot be empty");
+                }
+
+                let base_uri = base_uri.trim();
+                if base_uri.is_empty() {
+                    anyhow::bail!("Publisher manifest_public_base_uri cannot be empty");
+                }
+
+                let valid_prefixes = ["https://", "http://", "ipfs://", "file://"];
+                if !valid_prefixes
+                    .iter()
+                    .any(|prefix| base_uri.starts_with(prefix))
+                {
+                    anyhow::bail!(
+                        "Publisher manifest_public_base_uri must start with one of: {}",
+                        valid_prefixes.join(", ")
+                    );
+                }
+            }
+            (None, None) => {}
         }
 
         // Validate logging level
@@ -782,8 +830,73 @@ private_key = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
         assert_eq!(config.builder.rebuild_interval_secs, 300);
         assert!(config.publisher.auto_publish);
         assert_eq!(config.publisher.publish_interval_secs, 3600);
+        assert!(config.publisher.manifest_output_dir.is_none());
+        assert!(config.publisher.manifest_public_base_uri.is_none());
         assert_eq!(config.logging.level, "info");
         assert_eq!(config.logging.format, "pretty");
+    }
+
+    #[test]
+    fn test_validation_manifest_publish_config_requires_both_fields() {
+        let toml = r#"
+[network]
+rpc_url = "http://localhost:8545"
+chain_id = 1
+
+[contracts]
+trust_graph = "0x1111111111111111111111111111111111111111"
+root_registry = "0x2222222222222222222222222222222222222222"
+erc8004_reputation = "0x3333333333333333333333333333333333333333"
+
+[database]
+url = "sqlite://test.db"
+
+[sync]
+start_block = 0
+
+[publisher]
+private_key = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+manifest_output_dir = "/tmp/trustnet-manifests"
+        "#;
+
+        let result = Config::from_toml_str(toml);
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("must be set together"));
+    }
+
+    #[test]
+    fn test_validation_manifest_publish_config_rejects_invalid_uri_scheme() {
+        let toml = r#"
+[network]
+rpc_url = "http://localhost:8545"
+chain_id = 1
+
+[contracts]
+trust_graph = "0x1111111111111111111111111111111111111111"
+root_registry = "0x2222222222222222222222222222222222222222"
+erc8004_reputation = "0x3333333333333333333333333333333333333333"
+
+[database]
+url = "sqlite://test.db"
+
+[sync]
+start_block = 0
+
+[publisher]
+private_key = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+manifest_output_dir = "/tmp/trustnet-manifests"
+manifest_public_base_uri = "s3://bucket/path"
+        "#;
+
+        let result = Config::from_toml_str(toml);
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("must start with one of"));
     }
 
     #[test]

@@ -21,9 +21,9 @@ impl Storage {
             INSERT INTO epochs (
                 epoch, graph_root, published_at_block,
                 published_at, tx_hash, edge_count, manifest,
-                manifest_json, manifest_hash, publisher_sig, created_at_u64
+                manifest_json, manifest_uri, manifest_hash, publisher_sig, created_at_u64
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(epoch.epoch as i64)
@@ -35,6 +35,7 @@ impl Storage {
         // Keep legacy `manifest` column populated for backwards compatibility.
         .bind(&epoch.manifest_json)
         .bind(&epoch.manifest_json)
+        .bind(&epoch.manifest_uri)
         .bind(manifest_hash_bytes)
         .bind(publisher_sig_bytes)
         .bind(created_at_i64)
@@ -58,13 +59,15 @@ impl Storage {
             UPDATE epochs
             SET published_at_block = ?,
                 published_at = ?,
-                tx_hash = ?
+                tx_hash = ?,
+                manifest_uri = ?
             WHERE epoch = ?
             "#,
         )
         .bind(epoch.published_at_block as i64)
         .bind(epoch.published_at)
         .bind(tx_hash_bytes)
+        .bind(&epoch.manifest_uri)
         .bind(epoch.epoch as i64)
         .execute(&self.pool)
         .await
@@ -87,7 +90,7 @@ impl Storage {
             r#"
             SELECT epoch, graph_root, published_at_block,
                    published_at, tx_hash, edge_count, manifest,
-                   manifest_json, manifest_hash, publisher_sig, created_at_u64
+                   manifest_json, manifest_uri, manifest_hash, publisher_sig, created_at_u64
             FROM epochs
             ORDER BY epoch DESC
             LIMIT 1
@@ -108,7 +111,7 @@ impl Storage {
             r#"
             SELECT epoch, graph_root, published_at_block,
                    published_at, tx_hash, edge_count, manifest,
-                   manifest_json, manifest_hash, publisher_sig, created_at_u64
+                   manifest_json, manifest_uri, manifest_hash, publisher_sig, created_at_u64
             FROM epochs
             WHERE epoch = ?
             "#,
@@ -131,7 +134,7 @@ impl Storage {
             r#"
             SELECT epoch, graph_root, published_at_block,
                    published_at, tx_hash, edge_count, manifest,
-                   manifest_json, manifest_hash, publisher_sig, created_at_u64
+                   manifest_json, manifest_uri, manifest_hash, publisher_sig, created_at_u64
             FROM epochs
             WHERE graph_root = ?
             "#,
@@ -152,7 +155,7 @@ impl Storage {
             r#"
             SELECT epoch, graph_root, published_at_block,
                    published_at, tx_hash, edge_count, manifest,
-                   manifest_json, manifest_hash, publisher_sig, created_at_u64
+                   manifest_json, manifest_uri, manifest_hash, publisher_sig, created_at_u64
             FROM epochs
             ORDER BY epoch DESC
             "#,
@@ -173,7 +176,7 @@ impl Storage {
             r#"
             SELECT epoch, graph_root, published_at_block,
                    published_at, tx_hash, edge_count, manifest,
-                   manifest_json, manifest_hash, publisher_sig, created_at_u64
+                   manifest_json, manifest_uri, manifest_hash, publisher_sig, created_at_u64
             FROM epochs
             WHERE epoch >= ? AND epoch <= ?
             ORDER BY epoch ASC
@@ -210,6 +213,7 @@ impl Storage {
         let manifest_json: Option<String> = row.try_get("manifest_json").ok();
         let legacy_manifest: Option<String> = row.try_get("manifest").ok();
         let manifest_json = manifest_json.or(legacy_manifest);
+        let manifest_uri: Option<String> = row.try_get("manifest_uri").ok();
 
         let manifest_hash = manifest_hash_bytes
             .as_deref()
@@ -223,6 +227,7 @@ impl Storage {
             tx_hash,
             edge_count: row.get::<i64, _>("edge_count") as u64,
             manifest_json,
+            manifest_uri,
             manifest_hash,
             publisher_sig: publisher_sig_bytes,
             created_at_u64: created_at_u64.map(|v| v as u64),
@@ -261,6 +266,7 @@ mod tests {
             ))),
             edge_count: 42,
             manifest_json: Some(r#"{"version":"v1"}"#.to_string()),
+            manifest_uri: Some("https://example.com/manifests/epoch-1.json".to_string()),
             manifest_hash: Some(B256::from(hex!(
                 "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
             ))),
@@ -276,6 +282,7 @@ mod tests {
         assert_eq!(retrieved.graph_root, epoch.graph_root);
         assert_eq!(retrieved.edge_count, 42);
         assert_eq!(retrieved.manifest_json, epoch.manifest_json);
+        assert_eq!(retrieved.manifest_uri, epoch.manifest_uri);
         assert_eq!(retrieved.manifest_hash, epoch.manifest_hash);
         assert_eq!(retrieved.publisher_sig, epoch.publisher_sig);
         assert_eq!(retrieved.created_at_u64, epoch.created_at_u64);
@@ -309,6 +316,7 @@ mod tests {
                 tx_hash: None,
                 edge_count: i * 10,
                 manifest_json: None,
+                manifest_uri: None,
                 manifest_hash: None,
                 publisher_sig: None,
                 created_at_u64: None,

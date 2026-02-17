@@ -140,6 +140,8 @@ Key settings:
 - `contracts.*` - Contract addresses
 - `publisher.private_key` - Publisher wallet private key (keep secure!)
 - `publisher.publish_interval_secs` - Auto-publish interval (default: 3600 = 1 hour)
+- `publisher.manifest_output_dir` - Local directory where canonical manifests are written
+- `publisher.manifest_public_base_uri` - Public URI base anchored in RootRegistry
 - `database.url` - SQLite database path
 - `sync.start_block` - Block to start indexing from
 

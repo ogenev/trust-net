@@ -184,6 +184,7 @@ pub async fn build_server_root(input: &BuildServerRootInput) -> Result<BuildServ
             manifest_json: Some(
                 String::from_utf8(canonical).context("Manifest must be valid UTF-8")?,
             ),
+            manifest_uri: None,
             manifest_hash: Some(manifest_hash),
             publisher_sig: Some(publisher_sig.clone()),
             created_at_u64: Some(now_u64),

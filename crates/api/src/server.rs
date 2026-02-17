@@ -721,7 +721,7 @@ async fn get_root(
         epoch: epoch.epoch as u64,
         graph_root: hex_b256(&graph_root),
         edge_count: epoch.edge_count.max(0) as u64,
-        manifest_uri: manifest.as_ref().map(|_| "inline".to_string()),
+        manifest_uri: epoch.manifest_uri,
         manifest,
         manifest_hash,
         publisher_sig,
@@ -1519,6 +1519,7 @@ mod tests {
                 graph_root BLOB NOT NULL,
                 edge_count INTEGER NOT NULL,
                 manifest_json TEXT,
+                manifest_uri TEXT,
                 manifest_hash BLOB,
                 publisher_sig BLOB,
                 created_at_u64 INTEGER
@@ -1696,14 +1697,15 @@ mod tests {
         // Insert epoch.
         sqlx::query(
             r#"
-            INSERT INTO epochs (epoch, graph_root, edge_count, manifest_json, manifest_hash, publisher_sig, created_at_u64)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO epochs (epoch, graph_root, edge_count, manifest_json, manifest_uri, manifest_hash, publisher_sig, created_at_u64)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(1i64)
         .bind(graph_root.as_slice())
         .bind(2i64)
         .bind(r#"{"specVersion":"trustnet-spec-0.6"}"#)
+        .bind("https://cdn.example.com/trustnet/manifests/epoch-1.json")
         .bind([0xaau8; 32].as_slice())
         .bind([0x11u8; 65].as_slice())
         .bind(created_at_u64 as i64)
@@ -1781,6 +1783,10 @@ mod tests {
         let body = response.into_body().collect().await.unwrap().to_bytes();
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
 
+        assert_eq!(
+            json["manifestUri"],
+            "https://cdn.example.com/trustnet/manifests/epoch-1.json"
+        );
         assert_eq!(json["manifestHash"], format!("0x{}", "aa".repeat(32)));
         assert_eq!(json["publisherSig"], format!("0x{}", "11".repeat(65)));
     }

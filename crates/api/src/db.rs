@@ -14,6 +14,8 @@ pub struct DbEpoch {
     pub edge_count: i64,
     /// Canonical manifest JSON (RFC 8785 JCS), if present.
     pub manifest_json: Option<String>,
+    /// Public URI for the manifest, if present.
+    pub manifest_uri: Option<String>,
     /// `keccak256(canonical_manifest_json_bytes)`, if present.
     pub manifest_hash: Option<Vec<u8>>,
     /// Publisher signature bytes (typically 65 bytes), if present.
@@ -48,6 +50,7 @@ pub async fn get_latest_epoch(pool: &SqlitePool) -> anyhow::Result<Option<DbEpoc
             graph_root,
             edge_count,
             manifest_json,
+            manifest_uri,
             manifest_hash,
             publisher_sig,
             created_at_u64

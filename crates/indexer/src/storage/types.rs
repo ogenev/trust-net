@@ -220,6 +220,9 @@ pub struct EpochRecord {
     /// v0.4 uses this for reproducible root recomputation.
     pub manifest_json: Option<String>,
 
+    /// Public URI for the manifest anchored on-chain, when available.
+    pub manifest_uri: Option<String>,
+
     /// `keccak256(canonical_manifest_json_bytes)` when available.
     pub manifest_hash: Option<B256>,
 

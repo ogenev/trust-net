@@ -10,9 +10,13 @@ use alloy::signers::Signer;
 use alloy::sol;
 use anyhow::{Context, Result};
 use chrono::TimeZone;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::sync::{Notify, RwLock};
+use tokio::{
+    fs,
+    sync::{Notify, RwLock},
+};
 use tracing::{info, warn};
 
 use crate::config::PublisherConfig;
@@ -262,6 +266,62 @@ impl EventDrivenPublisher {
         Ok(())
     }
 
+    async fn publish_manifest_and_get_uri(
+        &self,
+        epoch: u64,
+        manifest_hash: B256,
+        manifest_json: &str,
+    ) -> Result<String> {
+        let output_dir = self
+            .config
+            .manifest_output_dir
+            .as_deref()
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Cannot publish epoch {}: publisher.manifest_output_dir is not configured",
+                    epoch
+                )
+            })?
+            .trim();
+        let public_base_uri = self
+            .config
+            .manifest_public_base_uri
+            .as_deref()
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Cannot publish epoch {}: publisher.manifest_public_base_uri is not configured",
+                    epoch
+                )
+            })?
+            .trim();
+
+        let output_dir = PathBuf::from(output_dir);
+        fs::create_dir_all(&output_dir).await.with_context(|| {
+            format!(
+                "Failed to create manifest output directory: {}",
+                output_dir.display()
+            )
+        })?;
+
+        let manifest_hash_hex = hex::encode(manifest_hash);
+        let file_name = format!("epoch-{}-0x{}.json", epoch, manifest_hash_hex);
+        let file_path = output_dir.join(&file_name);
+
+        fs::write(&file_path, manifest_json.as_bytes())
+            .await
+            .with_context(|| format!("Failed to write manifest file: {}", file_path.display()))?;
+
+        let manifest_uri = format!("{}/{}", public_base_uri.trim_end_matches('/'), file_name);
+        info!(
+            "Published manifest for epoch {} to {} (local: {})",
+            epoch,
+            manifest_uri,
+            file_path.display()
+        );
+
+        Ok(manifest_uri)
+    }
+
     /// Try to publish current root if needed.
     async fn try_publish(&self, trigger: &str) -> Result<PublishResult> {
         info!(
@@ -400,10 +460,22 @@ impl EventDrivenPublisher {
                 epoch_num
             )
         })?;
+        let manifest_uri_value = if let Some(uri) = stored_epoch_for_manifest
+            .as_ref()
+            .and_then(|epoch| epoch.manifest_uri.clone())
+        {
+            uri
+        } else {
+            let manifest_json_value = manifest_json.as_deref().ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Cannot publish epoch {}: missing manifest JSON for URI publication",
+                    epoch_num
+                )
+            })?;
 
-        // MVP: we store the full manifest JSON in the local DB; on-chain we anchor only its hash
-        // and provide a best-effort URI pointer.
-        let manifest_uri_value = "inline".to_string();
+            self.publish_manifest_and_get_uri(epoch_num, manifest_hash_value, manifest_json_value)
+                .await?
+        };
 
         let tx = self
             .contract
@@ -411,7 +483,7 @@ impl EventDrivenPublisher {
                 root_to_publish,
                 alloy::primitives::U256::from(epoch_num),
                 manifest_hash_value,
-                manifest_uri_value,
+                manifest_uri_value.clone(),
             )
             .send()
             .await
@@ -536,6 +608,9 @@ impl EventDrivenPublisher {
                     tx_hash: Some(receipt.transaction_hash), // New transaction hash
                     edge_count: existing.edge_count, // Keep original edge count
                     manifest_json: existing.manifest_json,
+                    manifest_uri: existing
+                        .manifest_uri
+                        .or_else(|| Some(manifest_uri_value.clone())),
                     manifest_hash: existing.manifest_hash,
                     publisher_sig: existing.publisher_sig,
                     created_at_u64: existing.created_at_u64,
@@ -567,6 +642,7 @@ impl EventDrivenPublisher {
                 tx_hash: Some(receipt.transaction_hash),
                 edge_count: edge_count_to_publish,
                 manifest_json,
+                manifest_uri: Some(manifest_uri_value),
                 manifest_hash,
                 publisher_sig,
                 created_at_u64: Some(created_at_u64),

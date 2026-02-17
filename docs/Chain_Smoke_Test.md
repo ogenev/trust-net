@@ -7,7 +7,7 @@ This smoke test validates the chain-mode MVP flow end-to-end:
 3. Publish an epoch root to `RootRegistry`
 4. Fetch `/v1/root` + `/v1/decision` from API
 5. Verify decision bundle cryptographically (`trustnet verify`)
-6. Cross-check `graphRoot` + `manifestHash` against on-chain `RootRegistry`
+6. Cross-check `graphRoot` + `manifestHash` + `manifestUri` against on-chain `RootRegistry`
 
 By default, the script exercises the `trustnet:ctx:code-exec:v1` context to match the initial OpenClaw-focused MVP profile.
 

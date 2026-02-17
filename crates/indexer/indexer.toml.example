@@ -61,6 +61,12 @@ private_key = "0x000000000000000000000000000000000000000000000000000000000000000
 max_fee_per_gas_gwei = 50
 max_priority_fee_per_gas_gwei = 2
 
+# Hosted manifest publication (required for on-chain release profile).
+# The indexer writes canonical manifests to `manifest_output_dir` and anchors
+# `manifest_public_base_uri/epoch-<N>-0x<manifestHash>.json` in RootRegistry.
+manifest_output_dir = "./manifests"
+manifest_public_base_uri = "https://example.com/trustnet/manifests"
+
 [quantizer]
 # ERC-8004 score quantization buckets (0-100 → -2 to +2)
 # [80, 60, 40, 20] means:
