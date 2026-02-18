@@ -1,5 +1,7 @@
 # Base Sepolia Dress Rehearsal (Public ERC-8004 Traffic, MVP A0+)
 
+> v0.7 note: Local-first (L0) is the default TrustNet profile. This rehearsal is for optional anchored chain compatibility and release-readiness checks.
+
 This runbook validates release readiness for the initial MVP profile on Base Sepolia using real traffic on official ERC-8004 contracts:
 
 1. Register/reuse public ERC-8004 agents on official IdentityRegistry.

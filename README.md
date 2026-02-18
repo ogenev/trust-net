@@ -1,42 +1,40 @@
 # TrustNet
 
-> **Verifiable, explainable trust-to-act for AI agents (TrustNet Spec v0.6, draft).**  
-> Gate actions using a deterministic decision rule plus cryptographic proofs against a committed `graphRoot`.
+> **Verifiable, explainable trust-to-act for AI agents (TrustNet Spec v0.7).**
+> Default profile is now local-first (L0): decisions are computed locally, with optional verifiable and chain profiles.
 
-## Spec (v0.6)
+## Spec Baseline (v0.7)
 
-This repo targets **TrustNet Spec v0.6 (draft)** and the ERC‑8004‑first MVP profile:
-- Spec: `docs/TrustNet_Spec_v0.6.md`
+This repo now tracks **TrustNet Spec v0.7** as the default implementation target:
+- Primary spec: `docs/TrustNet_Spec_v0.7.md`
 
-Current MVP implementation focus:
-- **OpenClaw gateway integration first** (runtime enforcement surface).
-- **`trustnet:ctx:code-exec:v1` first** for high-risk command execution.
-- **Mandatory RootRegistry anchoring** for the initial MVP release profile.
-- Payments enforcement modules remain available in-repo but are **deferred** from the initial MVP rollout.
+Implementation tracking and rollout status:
+- `docs/TrustNet_v0.7_Implementation_Tracker.md`
 
-TrustNet’s core properties:
-- **Context-scoped trust** (payments ≠ code exec).
+TrustNet core properties remain:
+- **Context-scoped trust** (payments != code exec).
 - **Decider-relative trust** (no global score; policy chooses whose ratings count).
-- **Verifiable “Why”** (exact edges used to ALLOW/ASK/DENY, with Merkle proofs).
+- **Why-by-default** explainability (exact edges used to ALLOW/ASK/DENY).
 
-## Deployment modes (v0.6)
+## Deployment Profiles (v0.7)
 
-- **Local mode:** single machine; decisions computed locally (roots/proofs optional).
-- **Server mode:** roots are signed by a configured root publisher key; gateways verify manifest hashes and signatures.
-- **Chain mode:** roots are anchored on-chain (RootRegistry) and can also be signed; proofs verify against the anchored root.
+- **Local-Lite (L0, default):** local trust store + local decision computation. No mandatory `/v1/root`, publisher signature, or RootRegistry check.
+- **Local-Verifiable (optional):** local decisions plus optional root/proof generation and verification.
+- **Server/Chain compatibility (optional):** shared API + anchored root validation for integration and legacy flows.
 
-Release profile note:
-- **Initial MVP release profile uses hybrid mode**: server components for ingestion/decision plus **mandatory chain anchor verification** against `RootRegistry` for high-risk enforcement.
+Current codebase note:
+- v0.6 server/chain paths are still present while Sprint 1 tasks (`TN-002` through `TN-009`) migrate OpenClaw runtime behavior to local-first.
+- `docs/Server_Smoke_Test.md`, `docs/Chain_Smoke_Test.md`, and `docs/Base_Sepolia_Dress_Rehearsal.md` are compatibility guides, not the default v0.7 path.
 
 ## Operator CLI
 
 Use the unified `trustnet` operator CLI (`crates/cli`):
 
-- `trustnet root` - build/insert server-mode root from DB
+- `trustnet root` - build/insert root epochs from DB for shared/verifiable profiles
 - `trustnet rate` - sign `trustnet.rating.v1` payloads
-- `trustnet verify` - verify decision bundle against root and, for the initial MVP release profile, cross-check on-chain root via `--rpc-url --root-registry --epoch`
-- `trustnet receipt` - build signed action receipt
-- `trustnet verify-receipt` - verify signed receipt
+- `trustnet verify` - verify decision bundles against roots (and optionally cross-check anchored roots via `--rpc-url --root-registry --epoch`)
+- `trustnet receipt` - build signed action receipts
+- `trustnet verify-receipt` - verify signed receipts
 
 Run with Cargo:
 
@@ -44,55 +42,52 @@ Run with Cargo:
 cargo run -p trustnet-cli -- --help
 ```
 
-## HTTP API (v0.6)
+## HTTP API
 
-- `GET /v1/root` → `{ epoch, graphRoot, manifest( or manifestUri ), manifestHash, publisherSig }`
-- `GET /v1/contexts` → canonical contexts (and/or their `contextId` hashes)
-- `GET /v1/decision?decider=<principalId>&target=<principalId>&contextId=<bytes32>` → `DecisionBundleV1` (ALLOW|ASK|DENY + why + constraints + proofs)
-- `GET /v1/proof?key=<edgeKey>` → debug membership/non-membership proof
-- `POST /v1/ratings` → append signed `trustnet.rating.v1` (server mode)
+The current API surface remains available for shared/compatibility profiles:
 
-## Contracts (Initial MVP Release: RootRegistry Required)
+- `GET /v1/root` -> `{ epoch, graphRoot, manifest( or manifestUri ), manifestHash, publisherSig }`
+- `GET /v1/contexts` -> canonical contexts (and/or `contextId` hashes)
+- `GET /v1/decision?decider=<principalId>&target=<principalId>&contextId=<bytes32>` -> `DecisionBundleV1`
+- `GET /v1/proof?key=<edgeKey>` -> debug membership/non-membership proof
+- `POST /v1/ratings` -> append signed `trustnet.rating.v1` (server mode)
 
-- `TrustGraph`: emits `EdgeRated(rater, target, level, contextId)` (events-only).
-- `RootRegistry`: anchors `{epoch, graphRoot, manifestHash (and optional manifestUri)}`. **Required in the initial MVP release profile**.
-- `TrustPathVerifier`: optional on-chain verifier (off-chain verification is sufficient for MVP).
-- `TrustNetPaymentsGuardModule`: optional on-chain enforcement module for native ETH payments (ALLOW-only with replay, deadline, cap, and root freshness checks). Included for later-phase payment gating, not initial OpenClaw MVP scope.
+## Contracts
 
-## Indexing + root building (v0.6)
+Contracts remain available for anchored/chain profiles:
 
-1) **Ingest** chain and/or server signals into `edges_raw`, including ERC‑8004 `NewFeedback` with guard `endpoint == "trustnet"` and `tag2 == "trustnet:v1"`, plus `ResponseAppended` verification stamps  
-2) **Normalize** `tag1 → contextId`, `agentId → agentWallet` (identity registry), and record evidence hashes, URIs, and observed ordering  
-3) **Reduce latest-wins** into `edges_latest` per `(rater, target, contextId)`  
-4) **Build root**: commit latest edges into a Sparse Merkle Map (`graphRoot`) plus Root Manifest + JCS `manifestHash`  
-5) **Serve decisions**: choose endorser deterministically and return a verifiable decision bundle with constraints
+- `TrustGraph` - emits `EdgeRated(rater, target, level, contextId)` events.
+- `RootRegistry` - anchors `{epoch, graphRoot, manifestHash (and optional manifestUri)}`.
+- `TrustPathVerifier` - optional on-chain verifier.
+- `TrustNetPaymentsGuardModule` - optional on-chain ETH payment guard module.
 
-## Smoke test
+## Smoke Tests And Rehearsals
 
-- Chain-mode guide (anvil E2E, initial MVP release baseline): `docs/Chain_Smoke_Test.md`
-- Base Sepolia dress rehearsal guide (release readiness): `docs/Base_Sepolia_Dress_Rehearsal.md`
-- Server-mode guide (local/dev-only): `docs/Server_Smoke_Test.md`
-- Automated in-process server-mode smoke test:
+- Server-mode compatibility guide: `docs/Server_Smoke_Test.md`
+- Chain-mode compatibility guide (Anvil): `docs/Chain_Smoke_Test.md`
+- Base Sepolia compatibility dress rehearsal: `docs/Base_Sepolia_Dress_Rehearsal.md`
+- Automated server smoke test:
 
 ```bash
 cargo test -p trustnet-api --test server_smoke
 ```
 
-- Automated chain-mode anvil smoke script:
+- Automated chain smoke script:
 
 ```bash
 ./scripts/chain_smoke_anvil.sh
 ```
 
-- Automated Base Sepolia dress rehearsal script:
+- Automated Base Sepolia rehearsal script:
 
 ```bash
 ./scripts/base_sepolia_public_rehearsal.sh
 ```
 
-## OpenClaw plugin (code-exec MVP)
+## OpenClaw Plugin
 
-`plugin-openclaw/` now contains a production plugin package (manifest + runtime hooks + integration tests) for OpenClaw enforcement in the initial MVP profile.
+`plugin-openclaw/` contains the OpenClaw enforcement plugin package and integration tests.
+The v0.7 target is local-first runtime behavior; anchored verification remains available as a compatibility path during migration.
 
 Run plugin integration tests:
 

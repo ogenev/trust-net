@@ -1,6 +1,6 @@
 # TrustNet Smart Contracts
 
-Smart contracts for the TrustNet reputation layer (Spec v0.6, draft).
+Smart contracts for the TrustNet reputation layer (Spec v0.7).
 
 ## Overview
 
@@ -10,7 +10,7 @@ TrustNet provides verifiable, explainable trust-to-act decisions for AI agents u
 - **2-hop proofs** with Sparse Merkle Maps
 - **Explainable** decisions showing which edges contributed
 
-See `docs/TrustNet_Spec_v0.6.md` for the current specification.
+See `docs/TrustNet_Spec_v0.7.md` for the current specification.
 
 ---
 
@@ -308,5 +308,5 @@ MIT - see [LICENSE](../LICENSE) for details.
 ## References
 
 - [ERC-8004 Specification](https://eips.ethereum.org/EIPS/eip-8004)
-- Spec v0.6: `docs/TrustNet_Spec_v0.6.md`
+- Spec v0.7: `docs/TrustNet_Spec_v0.7.md`
 - [Sparse Merkle Trees](https://docs.iden3.io/publications/pdfs/Merkle-Tree.pdf)

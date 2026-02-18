@@ -1,5 +1,7 @@
 # Chain-Mode Smoke Test (Anvil, End-to-End)
 
+> v0.7 note: Local-first (L0) is the default TrustNet profile. This chain-mode runbook is an optional compatibility/release-validation path.
+
 This smoke test validates the chain-mode MVP flow end-to-end:
 
 1. Emit ERC-8004 `NewFeedback` + `ResponseAppended` on-chain

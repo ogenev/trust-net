@@ -1,11 +1,11 @@
-# TrustNet Architecture (Spec v0.6 target)
+# TrustNet Architecture (Spec v0.7 target)
 
 ## Overview
 
 TrustNet uses a **modular architecture** with separate binaries for chain ingestion and HTTP serving.
 
 This repo is upgrading to match:
-- Spec: `docs/TrustNet_Spec_v0.6.md`
+- Spec: `docs/TrustNet_Spec_v0.7.md`
 - Upgrade plan: `docs/Upgrade_Plan_v0.6.md`
 
 ```

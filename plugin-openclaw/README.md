@@ -1,12 +1,17 @@
-# TrustNet OpenClaw Plugin (MVP Production Package)
+# TrustNet OpenClaw Plugin (v0.7 Local-First Migration)
 
-This package is the OpenClaw enforcement surface for TrustNet MVP:
-- OpenClaw-first runtime integration
-- `trustnet:ctx:code-exec:v1` as first high-risk context
-- mandatory RootRegistry anchoring checks before allow
+This package is the OpenClaw enforcement surface for TrustNet.
 
-This plugin now uses OpenClaw's real plugin lifecycle hooks:
-- `before_tool_call`: map tool -> context, fetch decision/root, verify anchoring, enforce ALLOW/ASK/DENY
+v0.7 default target:
+- `local-lite` (L0) local-first decisions with no mandatory chain dependency
+- `local-verifiable` optional proof/root verification path
+
+Current implementation status in this repo:
+- runtime still executes the anchored compatibility path while Sprint 1 items (`TN-002` through `TN-009`) are being implemented
+- this README keeps the current runnable config/flow and marks anchored checks as transitional, not default
+
+The plugin uses OpenClaw lifecycle hooks:
+- `before_tool_call`: map tool -> context, fetch decision/root, verify anchoring (current compatibility flow), enforce ALLOW/ASK/DENY
 - `after_tool_call`: emit ActionReceipt via `trustnet receipt`
 - `tool_result_persist`: attach TrustNet receipt metadata to persisted tool result messages
 
@@ -22,8 +27,10 @@ This plugin now uses OpenClaw's real plugin lifecycle hooks:
 
 - OpenClaw with plugin support (`openclaw.plugin.json` + package `openclaw.extensions` contract)
 - `trustnet` CLI on PATH (or set `trustnetBinary` in plugin config)
-- reachable TrustNet API (`/v1/root`, `/v1/decision`)
-- chain RPC URL and deployed `RootRegistry` for anchored verification
+- reachable TrustNet API (`/v1/root`, `/v1/decision`) for current compatibility flow
+- chain RPC URL and deployed `RootRegistry` for current anchored verification
+
+In the v0.7 local-first target state, chain RPC and RootRegistry become optional.
 
 ## Install in OpenClaw
 
@@ -40,7 +47,7 @@ openclaw plugins doctor
 
 If config is missing or invalid, the plugin loads in an inactive mode and logs a warning instead of enforcing decisions.
 
-Example config snippet:
+Current compatibility config snippet:
 
 ```json5
 {
@@ -72,7 +79,7 @@ Local path mode (without `plugins install`): set
 `plugins.load.paths: ["./plugin-openclaw"]` and keep the same `entries.trustnet-openclaw.config` block.
 Do not use both install mode and local path mode at the same time.
 
-## Enforcement and verification flow
+## Current compatibility enforcement flow
 
 1. OpenClaw calls `before_tool_call`.
 2. Plugin resolves tool mapping (`tool_map.example.json`) to `contextId`.
@@ -105,4 +112,5 @@ cd plugin-openclaw
 npm test
 ```
 
-The integration tests validate anchored verify invocation, decision enforcement, and receipt emission behavior.
+The integration tests currently validate anchored compatibility behavior (verify invocation, decision enforcement, and receipt emission).
+Local-first integration coverage is planned under `TN-009`.

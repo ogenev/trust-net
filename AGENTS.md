@@ -8,7 +8,7 @@
 - **Verifiable proofs** (tiny bundles verifiable against a committed `graphRoot`).
 - **Why-by-default** explainability (the exact edges used to allow/ask/deny).
 
-Current specs: docs/TrustNet_Spec_v0.6.md
+Current specs: docs/TrustNet_Spec_v0.7.md
 
 ## ERC-8004
 Specs: https://eips.ethereum.org/EIPS/eip-8004

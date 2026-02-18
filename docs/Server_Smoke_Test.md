@@ -1,5 +1,7 @@
 # Server-Mode Smoke Test (Local, No Chain, True 2-Hop)
 
+> v0.7 note: Local-first (L0) is the default TrustNet profile. This guide is maintained for optional server/shared-mode compatibility validation.
+
 This guide validates a real 2-hop decision path in server mode:
 
 1. ingest `D -> E` and `E -> T` signed ratings (`POST /v1/ratings`)

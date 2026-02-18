@@ -16,7 +16,7 @@ pragma solidity ^0.8.26;
  * - Simple epoch advancement (monotonically increasing)
  * - Root manifest anchoring (manifestHash + manifestURI)
  *
- * Spec: docs/TrustNet_Spec_v0.6.md §10.5
+ * Spec: docs/TrustNet_Spec_v0.7.md §11
  */
 contract RootRegistry {
     /// @notice Version identifier for this contract
