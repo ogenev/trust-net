@@ -184,8 +184,9 @@ export function basePluginConfig({
   rootRegistry,
   publisherAddress,
 }) {
-  const resolvedMode = mode ?? "local-verifiable";
-  const resolvedIncludeChainConfig = includeChainConfig ?? true;
+  const resolvedMode = mode ?? "local-lite";
+  const resolvedIncludeChainConfig =
+    includeChainConfig ?? resolvedMode === "local-verifiable";
 
   const config = {
     mode: resolvedMode,
