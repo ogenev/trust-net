@@ -12,6 +12,7 @@ Current implementation status in this repo:
 - local SQLite trust store is implemented (`edges_latest`, `receipts`, `agents`)
 - local decision engine module is implemented with Rust-equivalent scoring semantics (`TN-005`)
 - `before_tool_call` now computes decisions directly from local `edges_latest` in `local-lite` (`TN-006`)
+- ASK action flow is implemented with ticketed retries and edge writes (`allow_once`, `allow_ttl`, `allow_always`, `block`) (`TN-007`)
 - `local-verifiable` keeps API decision/root compatibility flow plus anchored verification until sidecar work (`TN-013+`)
 
 The plugin uses OpenClaw lifecycle hooks:
@@ -22,10 +23,12 @@ The plugin uses OpenClaw lifecycle hooks:
 ## Files
 
 - `index.js`: production plugin runtime entrypoint
+- `src/ask-actions.js`: ASK ticket + action normalization utilities
 - `openclaw.plugin.json`: plugin manifest + config schema
 - `tool_map.example.json`: deterministic tool -> context mapping
 - `config.example.json5`: OpenClaw plugin config example
 - `test/integration.test.js`: runtime integration tests (mock server + mock trustnet CLI)
+- `test/ask-actions.test.js`: ASK action behavior tests
 
 ## Requirements
 
@@ -85,7 +88,7 @@ Local path mode (without `plugins install`): set
 `plugins.load.paths: ["./plugin-openclaw"]` and keep the same `entries.trustnet-openclaw.config` block.
 Do not use both install mode and local path mode at the same time.
 
-## Current enforcement flow (TN-006)
+## Current enforcement flow (TN-007)
 
 1. OpenClaw calls `before_tool_call`.
 2. Plugin resolves tool mapping (`tool_map.example.json`) to `contextId`.
@@ -105,7 +108,10 @@ trustnet verify \
 
 5. Plugin enforces decision:
    - `allow`: execution proceeds
-   - `ask`: blocked by default (`askMode: "block"`) unless explicitly configured to allow
+   - `ask`: if `askMode: "block"` plugin returns `trustnetAsk` prompt metadata with a one-time `ticket`
+   - host retries same call with `trustnetAskAction` (`allow_once`, `allow_ttl`, `allow_always`, `block`) and the ticket
+   - `allow_ttl`/`allow_always`/`block` write direct `D->T` edges; `allow_once` does not
+   - reused/expired/mismatched tickets are rejected
    - `deny`: blocked
 6. OpenClaw calls `after_tool_call`.
 7. Plugin records receipt metadata in SQLite `receipts` and optional JSON at `receiptOutDir`:

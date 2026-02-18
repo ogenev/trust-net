@@ -21,8 +21,23 @@ import {
   shouldVerifyDecisionBundleAnchored,
   verifyDecisionBundleAnchored,
 } from "./src/internal.js";
+import {
+  ASK_ACTION_ALLOW_ALWAYS,
+  ASK_ACTION_ALLOW_ONCE,
+  ASK_ACTION_ALLOW_TTL,
+  ASK_ACTION_BLOCK,
+  buildAskActionEvidenceRef,
+  buildAskPromptPayload,
+  consumeAskTicket,
+  defaultAskTtlSecondsForMapping,
+  issueAskTicket,
+  normalizeAskAction,
+} from "./src/ask-actions.js";
 import { decideLocalTrust } from "./src/decision-engine.js";
 import { openTrustStore } from "./src/store.js";
+
+const DIRECT_ALLOW_LEVEL = 2;
+const DIRECT_BLOCK_LEVEL = -2;
 
 function deriveThresholdsForMapping(mapping) {
   const riskTier =
@@ -31,6 +46,115 @@ function deriveThresholdsForMapping(mapping) {
     return { allow: 1, ask: 1 };
   }
   return { allow: 2, ask: 1 };
+}
+
+function readAskActionInput(event, ctx) {
+  if (event && typeof event === "object" && event.trustnetAskAction) {
+    return event.trustnetAskAction;
+  }
+  if (ctx && typeof ctx === "object" && ctx.trustnetAskAction) {
+    return ctx.trustnetAskAction;
+  }
+  return undefined;
+}
+
+function applyAskAction({
+  askAction,
+  mapping,
+  targetPrincipalId,
+  config,
+  trustStore,
+  callKey,
+  sessionKey,
+  toolName,
+}) {
+  const nowMs = Date.now();
+
+  if (askAction.action === ASK_ACTION_ALLOW_ONCE) {
+    return {
+      allow: true,
+      action: askAction.action,
+      userApproved: true,
+      persistedEdge: false,
+    };
+  }
+
+  if (askAction.action === ASK_ACTION_ALLOW_ALWAYS) {
+    trustStore.upsertEdgeLatest({
+      rater: config.decider,
+      target: targetPrincipalId,
+      contextId: mapping.contextId,
+      level: DIRECT_ALLOW_LEVEL,
+      updatedAt: nowMs,
+      source: "ask-action:allow-always",
+      evidenceRef: buildAskActionEvidenceRef({
+        action: askAction.action,
+        callKey,
+        sessionKey,
+        toolName,
+      }),
+    });
+    return {
+      allow: true,
+      action: askAction.action,
+      userApproved: true,
+      persistedEdge: true,
+    };
+  }
+
+  if (askAction.action === ASK_ACTION_ALLOW_TTL) {
+    const ttlSeconds = askAction.ttlSeconds ?? defaultAskTtlSecondsForMapping(mapping);
+    const expiresAtMs = nowMs + ttlSeconds * 1000;
+    trustStore.upsertEdgeLatest({
+      rater: config.decider,
+      target: targetPrincipalId,
+      contextId: mapping.contextId,
+      level: DIRECT_ALLOW_LEVEL,
+      updatedAt: nowMs,
+      source: "ask-action:allow-ttl",
+      evidenceRef: buildAskActionEvidenceRef({
+        action: askAction.action,
+        ttlSeconds,
+        expiresAtMs,
+        callKey,
+        sessionKey,
+        toolName,
+      }),
+    });
+    return {
+      allow: true,
+      action: askAction.action,
+      ttlSeconds,
+      expiresAtMs,
+      userApproved: true,
+      persistedEdge: true,
+    };
+  }
+
+  if (askAction.action === ASK_ACTION_BLOCK) {
+    trustStore.upsertEdgeLatest({
+      rater: config.decider,
+      target: targetPrincipalId,
+      contextId: mapping.contextId,
+      level: DIRECT_BLOCK_LEVEL,
+      updatedAt: nowMs,
+      source: "ask-action:block",
+      evidenceRef: buildAskActionEvidenceRef({
+        action: askAction.action,
+        callKey,
+        sessionKey,
+        toolName,
+      }),
+    });
+    return {
+      allow: false,
+      action: askAction.action,
+      userApproved: false,
+      persistedEdge: true,
+    };
+  }
+
+  throw new Error(`unsupported TrustNet ASK action: ${askAction.action}`);
 }
 
 export default function registerTrustNetOpenClawPlugin(api) {
@@ -57,6 +181,7 @@ export default function registerTrustNetOpenClawPlugin(api) {
   }
 
   const pendingByCallKey = new Map();
+  const pendingAskByTicket = new Map();
   const receiptSummariesBySessionTool = new Map();
 
   api.logger.debug?.(
@@ -81,6 +206,7 @@ export default function registerTrustNetOpenClawPlugin(api) {
       }
 
       const targetPrincipalId = resolveTargetPrincipalId(config, ctx);
+      const callKey = buildCallKey(ctx.sessionKey, event.toolName, event.params);
       trustStore.upsertAgent({
         principalId: targetPrincipalId,
         source: "runtime-session",
@@ -92,6 +218,7 @@ export default function registerTrustNetOpenClawPlugin(api) {
       let root;
       let decisionBundle;
       let localDecision;
+      let askResolution;
 
       if (config.mode === MODE_LOCAL_LITE) {
         const directEdge = trustStore.getEdgeLatest({
@@ -135,17 +262,60 @@ export default function registerTrustNetOpenClawPlugin(api) {
       if (decision === DECISION_DENY) {
         return { block: true, blockReason: buildDecisionBlockReason(decision, mapping) };
       }
-      if (decision === DECISION_ASK && config.askMode === ASK_MODE_BLOCK) {
-        return { block: true, blockReason: buildDecisionBlockReason(decision, mapping) };
+      if (decision === DECISION_ASK) {
+        const askActionInput = readAskActionInput(event, ctx);
+        if (askActionInput !== undefined) {
+          const askAction = normalizeAskAction(askActionInput);
+          const askTicket = consumeAskTicket(pendingAskByTicket, askAction.ticket);
+          if (!askTicket) {
+            throw new Error("invalid or expired TrustNet ASK ticket");
+          }
+          if (
+            askTicket.callKey !== callKey ||
+            askTicket.contextId !== mapping.contextId ||
+            askTicket.targetPrincipalId !== targetPrincipalId
+          ) {
+            throw new Error("TrustNet ASK ticket does not match current tool call");
+          }
+
+          askResolution = applyAskAction({
+            askAction,
+            mapping,
+            targetPrincipalId,
+            config,
+            trustStore,
+            callKey,
+            sessionKey: ctx.sessionKey,
+            toolName: event.toolName,
+          });
+          if (!askResolution.allow) {
+            return { block: true, blockReason: buildDecisionBlockReason(DECISION_DENY, mapping) };
+          }
+        } else if (config.askMode === ASK_MODE_BLOCK) {
+          const askTicket = issueAskTicket(pendingAskByTicket, {
+            callKey,
+            contextId: mapping.contextId,
+            targetPrincipalId,
+          });
+          return {
+            block: true,
+            blockReason: buildDecisionBlockReason(decision, mapping),
+            trustnetAsk: buildAskPromptPayload({
+              ticket: askTicket,
+              mapping,
+              targetPrincipalId,
+            }),
+          };
+        }
       }
 
-      const callKey = buildCallKey(ctx.sessionKey, event.toolName, event.params);
       queuePush(pendingByCallKey, callKey, {
         decision,
         mapping,
         root,
         decisionBundle,
         localDecision,
+        askResolution,
         targetPrincipalId,
       });
 
@@ -194,6 +364,15 @@ export default function registerTrustNetOpenClawPlugin(api) {
             de: pending.localDecision?.levelDe ?? 0,
             et: pending.localDecision?.levelEt ?? 0,
           },
+          askAction: pending.askResolution
+            ? {
+                action: pending.askResolution.action,
+                ttlSeconds: pending.askResolution.ttlSeconds ?? null,
+                expiresAtU64: pending.askResolution.expiresAtMs ?? null,
+                persistedEdge: pending.askResolution.persistedEdge,
+                userApproved: pending.askResolution.userApproved,
+              }
+            : null,
         };
       }
       const epoch =

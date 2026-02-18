@@ -84,7 +84,7 @@
           "block",
           "allow"
         ],
-        "description": "How ASK is handled in before_tool_call."
+        "description": "How ASK is handled in before_tool_call. In block mode, plugin returns trustnetAsk ticket metadata and expects retry with trustnetAskAction."
       },
       "unmappedDecision": {
         "type": "string",

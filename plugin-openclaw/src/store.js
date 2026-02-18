@@ -38,6 +38,38 @@ function encodeJson(value) {
   return value === undefined ? null : JSON.stringify(value);
 }
 
+function readEdgeExpiryMs(evidenceRef) {
+  if (typeof evidenceRef !== "string" || evidenceRef.trim().length === 0) {
+    return undefined;
+  }
+  try {
+    const parsed = JSON.parse(evidenceRef);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return undefined;
+    }
+    const raw =
+      parsed.expiresAtU64 ??
+      parsed.expiresAtMs ??
+      parsed.expiresAt ??
+      parsed.expiry ??
+      parsed.expiryMs;
+    if (!Number.isInteger(raw) || raw <= 0) {
+      return undefined;
+    }
+    return raw;
+  } catch {
+    return undefined;
+  }
+}
+
+function isEdgeExpired(evidenceRef, nowMs) {
+  const expiresAtMs = readEdgeExpiryMs(evidenceRef);
+  if (expiresAtMs === undefined) {
+    return false;
+  }
+  return expiresAtMs <= nowMs;
+}
+
 function loadDatabaseSync() {
   try {
     const sqlite = require("node:sqlite");
@@ -186,6 +218,7 @@ export function openTrustStore(trustStorePath) {
     SELECT
       de.target AS endorser,
       de.level_i8 AS level_de,
+      de.evidence_ref AS de_evidence_ref,
       COALESCE(et.level_i8, 0) AS level_et,
       et.updated_at_u64 AS et_updated_at_u64,
       et.evidence_ref AS et_evidence_ref
@@ -269,6 +302,9 @@ export function openTrustStore(trustStorePath) {
       if (!row) {
         return undefined;
       }
+      if (isEdgeExpired(row.evidence_ref, Date.now())) {
+        return undefined;
+      }
       return {
         level: Number(row.level_i8),
         updatedAt: Number(row.updated_at_u64),
@@ -283,17 +319,22 @@ export function openTrustStore(trustStorePath) {
         ensureNonEmptyString(input.contextId, "query.contextId").toLowerCase(),
         ensureNonEmptyString(input.target, "query.target"),
       );
-      return rows.map((row) => ({
-        endorser: row.endorser,
-        levelDe: Number(row.level_de),
-        levelEt: Number(row.level_et),
-        etUpdatedAt:
-          row.et_updated_at_u64 === null || row.et_updated_at_u64 === undefined
-            ? null
-            : Number(row.et_updated_at_u64),
-        etHasEvidence:
-          typeof row.et_evidence_ref === "string" && row.et_evidence_ref.trim().length > 0,
-      }));
+      return rows.map((row) => {
+        const nowMs = Date.now();
+        const levelDe = isEdgeExpired(row.de_evidence_ref, nowMs) ? 0 : Number(row.level_de);
+        const levelEt = isEdgeExpired(row.et_evidence_ref, nowMs) ? 0 : Number(row.level_et);
+        return {
+          endorser: row.endorser,
+          levelDe,
+          levelEt,
+          etUpdatedAt:
+            row.et_updated_at_u64 === null || row.et_updated_at_u64 === undefined
+              ? null
+              : Number(row.et_updated_at_u64),
+          etHasEvidence:
+            typeof row.et_evidence_ref === "string" && row.et_evidence_ref.trim().length > 0,
+        };
+      });
     },
     close() {
       db.close();

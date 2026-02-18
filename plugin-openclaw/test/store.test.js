@@ -165,3 +165,98 @@ test("local trust store creates schema and enforces latest-wins edge updates", (
   assert.equal(agentCount, 2);
   db.close();
 });
+
+test("local trust store ignores expired TTL edges in reads", () => {
+  const trustStorePath = makeTempDbPath();
+  const store = openTrustStore(trustStorePath);
+  const nowMs = Date.now();
+
+  store.upsertEdgeLatest({
+    rater: "0xdecider",
+    target: "0xtarget",
+    contextId: "0xcontext",
+    level: 2,
+    updatedAt: nowMs,
+    evidenceRef: JSON.stringify({
+      type: "trustnet.askAction.v1",
+      action: "allow_ttl",
+      expiresAtU64: nowMs - 1,
+    }),
+    source: "ask-action:allow-ttl",
+  });
+
+  const expiredDirect = store.getEdgeLatest({
+    rater: "0xdecider",
+    target: "0xtarget",
+    contextId: "0xcontext",
+  });
+  assert.equal(expiredDirect, undefined);
+
+  store.upsertEdgeLatest({
+    rater: "0xdecider",
+    target: "0xendorser-expired",
+    contextId: "0xcontext",
+    level: 2,
+    updatedAt: nowMs,
+    evidenceRef: JSON.stringify({
+      type: "trustnet.askAction.v1",
+      action: "allow_ttl",
+      expiresAtU64: nowMs - 1,
+    }),
+    source: "ask-action:allow-ttl",
+  });
+  store.upsertEdgeLatest({
+    rater: "0xendorser-expired",
+    target: "0xtarget",
+    contextId: "0xcontext",
+    level: 2,
+    updatedAt: nowMs,
+    source: "manual",
+  });
+
+  store.upsertEdgeLatest({
+    rater: "0xdecider",
+    target: "0xendorser-active",
+    contextId: "0xcontext",
+    level: 2,
+    updatedAt: nowMs,
+    source: "manual",
+  });
+  store.upsertEdgeLatest({
+    rater: "0xendorser-active",
+    target: "0xtarget",
+    contextId: "0xcontext",
+    level: 2,
+    updatedAt: nowMs,
+    evidenceRef: JSON.stringify({
+      type: "trustnet.askAction.v1",
+      action: "allow_ttl",
+      expiresAtU64: nowMs + 60_000,
+    }),
+    source: "ask-action:allow-ttl",
+  });
+
+  const endorserCandidates = store.listEndorserCandidates({
+    decider: "0xdecider",
+    target: "0xtarget",
+    contextId: "0xcontext",
+  });
+  assert.deepEqual(endorserCandidates, [
+    {
+      endorser: "0xendorser-active",
+      levelDe: 2,
+      levelEt: 2,
+      etUpdatedAt: nowMs,
+      etHasEvidence: true,
+    },
+    {
+      endorser: "0xendorser-expired",
+      levelDe: 0,
+      levelEt: 2,
+      etUpdatedAt: nowMs,
+      etHasEvidence: false,
+    },
+  ]);
+
+  store.close();
+});
