@@ -66,6 +66,47 @@
         "type": "string",
         "description": "SQLite database path for local TrustNet tables (`edges_latest`, `receipts`, `agents`). Defaults to ./.trustnet/local-trust.db."
       },
+      "trustCircles": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "Trust circle policy preset controlling which endorsers count in local-lite mode.",
+        "properties": {
+          "default": {
+            "type": "string",
+            "enum": [
+              "onlyMe",
+              "myContacts",
+              "openclawVerified",
+              "custom"
+            ],
+            "default": "onlyMe"
+          },
+          "endorsers": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "myContacts": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "openclawVerified": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "custom": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      },
       "requestTimeoutMs": {
         "type": "number",
         "minimum": 1
@@ -136,6 +177,10 @@
     "trustStorePath": {
       "label": "Trust Store Path",
       "help": "SQLite path for local edges/receipts/agents persistence."
+    },
+    "trustCircles": {
+      "label": "Trust Circles",
+      "help": "Select onlyMe/myContacts/openclawVerified/custom and provide corresponding endorser lists for local-lite."
     },
     "failOpen": {
       "label": "Fail Open",

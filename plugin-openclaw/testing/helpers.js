@@ -175,6 +175,7 @@ export function basePluginConfig({
   trustnetBinary,
   receiptOutDir,
   trustStorePath,
+  trustCircles,
   failOpen,
   askMode,
   unmappedDecision,
@@ -200,6 +201,9 @@ export function basePluginConfig({
     askMode,
     unmappedDecision,
   };
+  if (trustCircles && typeof trustCircles === "object") {
+    config.trustCircles = trustCircles;
+  }
   if (typeof apiBaseUrl === "string" && apiBaseUrl.trim().length > 0) {
     config.apiBaseUrl = apiBaseUrl;
   }

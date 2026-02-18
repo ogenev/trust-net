@@ -52,6 +52,28 @@ function seedDirectEdge(trustStorePath, level) {
   seedStore.close();
 }
 
+function seedEndorserPath(trustStorePath, { endorser, levelDe = 2, levelEt = 2 }) {
+  const seedStore = openTrustStore(trustStorePath);
+  const nowMs = Date.now();
+  seedStore.upsertEdgeLatest({
+    rater: DECIDER_PRINCIPAL_ID,
+    target: endorser,
+    contextId: EXEC_CONTEXT_ID,
+    level: levelDe,
+    updatedAt: nowMs,
+    source: "test-seed",
+  });
+  seedStore.upsertEdgeLatest({
+    rater: endorser,
+    target: TARGET_PRINCIPAL_ID,
+    contextId: EXEC_CONTEXT_ID,
+    level: levelEt,
+    updatedAt: nowMs + 1,
+    source: "test-seed",
+  });
+  seedStore.close();
+}
+
 test("default mode is local-lite and computes decision without API or chain config", async () => {
   const tmpDir = makeTempDir();
   const toolMapPath = path.join(tmpDir, "tool-map.json");
@@ -277,6 +299,73 @@ test("local-lite hard veto blocks without TrustNet API", async () => {
   );
   assert.equal(beforeResult.block, true);
   assert.match(beforeResult.blockReason, /TrustNet DENY/);
+});
+
+test("local-lite default trust circle onlyMe ignores D->E->T endorsements", async () => {
+  const tmpDir = makeTempDir();
+  const toolMapPath = path.join(tmpDir, "tool-map.json");
+  const trustStorePath = path.join(tmpDir, "trust-store.sqlite");
+  const contactEndorser = "0xendorser-contact-1";
+  writeToolMap(toolMapPath);
+  seedEndorserPath(trustStorePath, {
+    endorser: contactEndorser,
+    levelDe: 2,
+    levelEt: 2,
+  });
+
+  const { api, hooks } = createMockApi({
+    rootDir: tmpDir,
+    pluginConfig: basePluginConfig({
+      toolMapPath,
+      trustStorePath,
+      mode: "local-lite",
+      includeChainConfig: false,
+    }),
+  });
+  registerTrustNetOpenClawPlugin(api);
+
+  const beforeResult = await hooks.get("before_tool_call")(
+    { toolName: "exec", params: { command: "echo should-block" } },
+    { sessionKey: "session-lite-circle-only-me", agentId: "0xagent", toolName: "exec" },
+  );
+  assert.equal(beforeResult.block, true);
+  assert.match(beforeResult.blockReason, /TrustNet DENY/);
+});
+
+test("local-lite myContacts trust circle counts configured endorsers", async () => {
+  const tmpDir = makeTempDir();
+  const toolMapPath = path.join(tmpDir, "tool-map.json");
+  const trustStorePath = path.join(tmpDir, "trust-store.sqlite");
+  const contactEndorser = "0xendorser-contact-2";
+  writeToolMap(toolMapPath);
+  seedEndorserPath(trustStorePath, {
+    endorser: contactEndorser,
+    levelDe: 2,
+    levelEt: 2,
+  });
+
+  const { api, hooks } = createMockApi({
+    rootDir: tmpDir,
+    pluginConfig: basePluginConfig({
+      toolMapPath,
+      trustStorePath,
+      mode: "local-lite",
+      includeChainConfig: false,
+      trustCircles: {
+        default: "myContacts",
+        endorsers: {
+          myContacts: [contactEndorser],
+        },
+      },
+    }),
+  });
+  registerTrustNetOpenClawPlugin(api);
+
+  const beforeResult = await hooks.get("before_tool_call")(
+    { toolName: "exec", params: { command: "echo should-allow" } },
+    { sessionKey: "session-lite-circle-my-contacts", agentId: "0xagent", toolName: "exec" },
+  );
+  assert.equal(beforeResult, undefined);
 });
 
 test(

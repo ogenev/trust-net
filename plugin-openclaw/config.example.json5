@@ -22,6 +22,14 @@
           "policyManifestHash": "0x...", // optional, attached to local-verifiable receipt metadata
           "receiptOutDir": "./.trustnet/receipts", // optional (high-risk local receipts only)
           "trustStorePath": "./.trustnet/local-trust.db", // optional, defaults to this path
+          "trustCircles": {
+            "default": "onlyMe", // onlyMe|myContacts|openclawVerified|custom
+            "endorsers": {
+              "myContacts": ["0xCONTACT_ENDORSER..."],
+              "openclawVerified": ["0xVERIFIED_ENDORSER..."],
+              "custom": ["0xCUSTOM_ENDORSER..."]
+            }
+          },
           "trustnetBinary": "trustnet", // optional
           "requestTimeoutMs": 5000,
           "verifyTimeoutMs": 15000,

@@ -14,6 +14,7 @@ Current implementation status in this repo:
 - `before_tool_call` now computes decisions directly from local `edges_latest` in `local-lite` (`TN-006`)
 - ASK action flow is implemented with ticketed retries and edge writes (`allow_once`, `allow_ttl`, `allow_always`, `block`) (`TN-007`)
 - receipt persistence now emits `trustnet.receipt.v1` local receipts with decision/why snapshots for high-risk mappings (`TN-008`)
+- Trust Circles policy primitive is implemented for local-lite (`onlyMe`, `myContacts`, `openclawVerified`, `custom`) (`TN-010`)
 - `local-verifiable` keeps API decision/root compatibility flow plus anchored verification until sidecar work (`TN-013+`)
 
 The plugin uses OpenClaw lifecycle hooks:
@@ -75,6 +76,14 @@ Mode-based config snippet:
           "policyManifestHash": "0x...",
           "receiptOutDir": "./.trustnet/receipts",
           "trustStorePath": "./.trustnet/local-trust.db",
+          "trustCircles": {
+            "default": "onlyMe",
+            "endorsers": {
+              "myContacts": ["0xCONTACT_ENDORSER..."],
+              "openclawVerified": ["0xVERIFIED_ENDORSER..."],
+              "custom": ["0xCUSTOM_ENDORSER..."]
+            }
+          },
           "askMode": "block",
           "unmappedDecision": "deny",
           "failOpen": false
@@ -94,7 +103,7 @@ Do not use both install mode and local path mode at the same time.
 1. OpenClaw calls `before_tool_call`.
 2. Plugin resolves tool mapping (`tool_map.example.json`) to `contextId`.
 3. Decision source by mode:
-   - `local-lite`: compute decision from local SQLite `edges_latest` using TrustNet scoring semantics.
+   - `local-lite`: compute decision from local SQLite `edges_latest` using TrustNet scoring semantics and trust-circle endorser filtering.
    - `local-verifiable`: call `GET /v1/root` and `GET /v1/decision?...` (compatibility flow).
 4. Plugin runs anchored verify only when `mode = local-verifiable`:
 

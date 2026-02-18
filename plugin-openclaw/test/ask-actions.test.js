@@ -8,6 +8,8 @@ import { DECIDER_PRINCIPAL_ID, EXEC_CONTEXT_ID, TARGET_PRINCIPAL_ID } from "../t
 import { basePluginConfig, createMockApi, makeTempDir, writeToolMap } from "../testing/helpers.js";
 import { openTrustStore } from "../src/store.js";
 
+const ASK_ENDORSER = "0xendorser0000000000000000000000000000000001";
+
 function askActionEvent(ticket, action, extra = {}) {
   return {
     trustnetAskAction: {
@@ -22,14 +24,14 @@ function seedAskDecisionEdges(trustStorePath) {
   const store = openTrustStore(trustStorePath);
   store.upsertEdgeLatest({
     rater: DECIDER_PRINCIPAL_ID,
-    target: "0xendorser0000000000000000000000000000000001",
+    target: ASK_ENDORSER,
     contextId: EXEC_CONTEXT_ID,
     level: 1,
     updatedAt: Date.now(),
     source: "test-seed",
   });
   store.upsertEdgeLatest({
-    rater: "0xendorser0000000000000000000000000000000001",
+    rater: ASK_ENDORSER,
     target: TARGET_PRINCIPAL_ID,
     contextId: EXEC_CONTEXT_ID,
     level: 1,
@@ -37,6 +39,22 @@ function seedAskDecisionEdges(trustStorePath) {
     source: "test-seed",
   });
   store.close();
+}
+
+function askModePluginConfig({ toolMapPath, trustStorePath, receiptOutDir }) {
+  return basePluginConfig({
+    toolMapPath,
+    trustStorePath,
+    receiptOutDir,
+    mode: "local-lite",
+    includeChainConfig: false,
+    trustCircles: {
+      default: "myContacts",
+      endorsers: {
+        myContacts: [ASK_ENDORSER],
+      },
+    },
+  });
 }
 
 test("ASK allow_once resumes a blocked call without writing edges", async () => {
@@ -49,12 +67,10 @@ test("ASK allow_once resumes a blocked call without writing edges", async () => 
 
   const { api, hooks } = createMockApi({
     rootDir: tmpDir,
-    pluginConfig: basePluginConfig({
+    pluginConfig: askModePluginConfig({
       toolMapPath,
       trustStorePath,
       receiptOutDir,
-      mode: "local-lite",
-      includeChainConfig: false,
     }),
   });
   registerTrustNetOpenClawPlugin(api);
@@ -137,11 +153,9 @@ test("ASK allow_always writes D->T=+2 and future calls allow without prompt", as
 
   const { api, hooks } = createMockApi({
     rootDir: tmpDir,
-    pluginConfig: basePluginConfig({
+    pluginConfig: askModePluginConfig({
       toolMapPath,
       trustStorePath,
-      mode: "local-lite",
-      includeChainConfig: false,
     }),
   });
   registerTrustNetOpenClawPlugin(api);
@@ -205,11 +219,9 @@ test("ASK block writes D->T=-2 and enforces DENY", async () => {
 
   const { api, hooks } = createMockApi({
     rootDir: tmpDir,
-    pluginConfig: basePluginConfig({
+    pluginConfig: askModePluginConfig({
       toolMapPath,
       trustStorePath,
-      mode: "local-lite",
-      includeChainConfig: false,
     }),
   });
   registerTrustNetOpenClawPlugin(api);
@@ -274,11 +286,9 @@ test("ASK action ticket is required and cannot be replayed", async () => {
 
   const { api, hooks } = createMockApi({
     rootDir: tmpDir,
-    pluginConfig: basePluginConfig({
+    pluginConfig: askModePluginConfig({
       toolMapPath,
       trustStorePath,
-      mode: "local-lite",
-      includeChainConfig: false,
     }),
   });
   registerTrustNetOpenClawPlugin(api);

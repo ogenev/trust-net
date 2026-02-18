@@ -36,6 +36,7 @@ import {
 import { decideLocalTrust } from "./src/decision-engine.js";
 import { buildLocalInteractionReceipt, shouldPersistReceiptForMapping } from "./src/local-receipt.js";
 import { openTrustStore } from "./src/store.js";
+import { filterCandidatesByTrustCircle, parseTrustCirclePolicy } from "./src/trust-circles.js";
 
 const DIRECT_ALLOW_LEVEL = 2;
 const DIRECT_BLOCK_LEVEL = -2;
@@ -162,8 +163,10 @@ export default function registerTrustNetOpenClawPlugin(api) {
   let config;
   let toolMapEntries;
   let trustStore;
+  let trustCirclePolicy;
   try {
     config = parseConfig(api);
+    trustCirclePolicy = parseTrustCirclePolicy(api.pluginConfig);
     toolMapEntries = loadToolMap(config.toolMapPath);
     trustStore = openTrustStore(config.trustStorePath);
     trustStore.upsertAgent({
@@ -189,6 +192,9 @@ export default function registerTrustNetOpenClawPlugin(api) {
     `trustnet-openclaw: loaded ${toolMapEntries.length} tool mapping entries from ${config.toolMapPath}`,
   );
   api.logger.debug?.(`trustnet-openclaw: local trust store ready at ${config.trustStorePath}`);
+  api.logger.debug?.(
+    `trustnet-openclaw: trust circle preset=${trustCirclePolicy.default} active for local-lite decisions`,
+  );
 
   api.on("before_tool_call", async (event, ctx) => {
     try {
@@ -232,10 +238,11 @@ export default function registerTrustNetOpenClawPlugin(api) {
           target: targetPrincipalId,
           contextId: mapping.contextId,
         });
+        const policyCandidates = filterCandidatesByTrustCircle(trustCirclePolicy, candidates);
         localDecision = decideLocalTrust({
           thresholds: deriveThresholdsForMapping(mapping),
           levelDt: directEdge?.level ?? 0,
-          candidates: candidates.map((candidate) => ({
+          candidates: policyCandidates.map((candidate) => ({
             endorser: candidate.endorser,
             levelDe: candidate.levelDe,
             levelEt: candidate.levelEt,
