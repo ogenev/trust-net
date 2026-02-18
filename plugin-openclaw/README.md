@@ -10,7 +10,8 @@ Current implementation status in this repo:
 - mode-based config is implemented (`local-lite`, `local-verifiable`)
 - `local-lite` is now the default and does not require chain RPC or RootRegistry config
 - local SQLite trust store is implemented (`edges_latest`, `receipts`, `agents`)
-- anchored verification runs only in `local-verifiable` mode while local decision computation is still in progress (`TN-005` through `TN-009`)
+- local decision engine module is implemented with Rust-equivalent scoring semantics (`TN-005`)
+- anchored verification runs only in `local-verifiable` mode while `before_tool_call` still uses API decision compatibility flow (`TN-006` through `TN-009`)
 
 The plugin uses OpenClaw lifecycle hooks:
 - `before_tool_call`: map tool -> context, fetch decision/root, optionally verify anchoring (`local-verifiable`), enforce ALLOW/ASK/DENY
