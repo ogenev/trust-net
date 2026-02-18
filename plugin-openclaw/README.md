@@ -9,7 +9,8 @@ v0.7 default target:
 Current implementation status in this repo:
 - mode-based config is implemented (`local-lite`, `local-verifiable`)
 - `local-lite` is now the default and does not require chain RPC or RootRegistry config
-- anchored verification runs only in `local-verifiable` mode while local decision computation is still in progress (`TN-004` through `TN-009`)
+- local SQLite trust store is implemented (`edges_latest`, `receipts`, `agents`)
+- anchored verification runs only in `local-verifiable` mode while local decision computation is still in progress (`TN-005` through `TN-009`)
 
 The plugin uses OpenClaw lifecycle hooks:
 - `before_tool_call`: map tool -> context, fetch decision/root, optionally verify anchoring (`local-verifiable`), enforce ALLOW/ASK/DENY
@@ -28,6 +29,7 @@ The plugin uses OpenClaw lifecycle hooks:
 
 - OpenClaw with plugin support (`openclaw.plugin.json` + package `openclaw.extensions` contract)
 - `trustnet` CLI on PATH (or set `trustnetBinary` in plugin config)
+- Node runtime with `node:sqlite` support for local trust store persistence
 - reachable TrustNet API (`/v1/root`, `/v1/decision`) for current compatibility flow
 - chain RPC URL, RootRegistry, and publisher address only when `mode: "local-verifiable"` is enabled
 
@@ -66,6 +68,7 @@ Mode-based config snippet:
           // "publisherAddress": "0xPUBLISHER...",
           "policyManifestHash": "0x...",
           "receiptOutDir": "./.trustnet/receipts",
+          "trustStorePath": "./.trustnet/local-trust.db",
           "askMode": "block",
           "unmappedDecision": "deny",
           "failOpen": false
@@ -103,7 +106,7 @@ trustnet verify \
    - `ask`: blocked by default (`askMode: "block"`) unless explicitly configured to allow
    - `deny`: blocked
 6. OpenClaw calls `after_tool_call`.
-7. Plugin emits ActionReceipt via `trustnet receipt` and optionally persists it to `receiptOutDir`.
+7. Plugin emits ActionReceipt via `trustnet receipt`, writes it to SQLite `receipts`, and optionally persists JSON to `receiptOutDir`.
 8. On `tool_result_persist`, plugin attaches receipt summary metadata to the transcript message.
 
 ## Run tests

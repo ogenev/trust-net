@@ -20,13 +20,23 @@ import {
   shouldVerifyDecisionBundleAnchored,
   verifyDecisionBundleAnchored,
 } from "./src/internal.js";
+import { openTrustStore } from "./src/store.js";
 
 export default function registerTrustNetOpenClawPlugin(api) {
   let config;
   let toolMapEntries;
+  let trustStore;
   try {
     config = parseConfig(api);
     toolMapEntries = loadToolMap(config.toolMapPath);
+    trustStore = openTrustStore(config.trustStorePath);
+    trustStore.upsertAgent({
+      principalId: config.decider,
+      source: "plugin-config",
+      metadata: {
+        role: "decider",
+      },
+    });
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
     api.logger.warn?.(
@@ -41,6 +51,7 @@ export default function registerTrustNetOpenClawPlugin(api) {
   api.logger.debug?.(
     `trustnet-openclaw: loaded ${toolMapEntries.length} tool mapping entries from ${config.toolMapPath}`,
   );
+  api.logger.debug?.(`trustnet-openclaw: local trust store ready at ${config.trustStorePath}`);
 
   api.on("before_tool_call", async (event, ctx) => {
     try {
@@ -59,6 +70,13 @@ export default function registerTrustNetOpenClawPlugin(api) {
       }
 
       const targetPrincipalId = resolveTargetPrincipalId(config, ctx);
+      trustStore.upsertAgent({
+        principalId: targetPrincipalId,
+        source: "runtime-session",
+        metadata: {
+          sessionKey: ctx.sessionKey ?? null,
+        },
+      });
       const [root, decisionBundle] = await Promise.all([
         fetchRoot(config),
         fetchDecision(config, targetPrincipalId, mapping.contextId),
@@ -89,6 +107,7 @@ export default function registerTrustNetOpenClawPlugin(api) {
         mapping,
         root,
         decisionBundle,
+        targetPrincipalId,
       });
 
       return undefined;
@@ -133,6 +152,22 @@ export default function registerTrustNetOpenClawPlugin(api) {
         receipt,
       };
       const receiptPath = persistReceipt(config, meta);
+      trustStore.insertReceipt({
+        callKey,
+        sessionKey: ctx.sessionKey,
+        decider: config.decider,
+        target: pending.targetPrincipalId,
+        toolName: event.toolName,
+        contextId: pending.mapping.contextId,
+        decision: pending.decision,
+        epoch: Number(pending.decisionBundle.epoch),
+        createdAt: Date.now(),
+        receiptId:
+          typeof receipt?.receiptId === "string" && receipt.receiptId.length > 0
+            ? receipt.receiptId
+            : undefined,
+        receipt,
+      });
       queuePush(
         receiptSummariesBySessionTool,
         `${ctx.sessionKey ?? "no-session"}:${event.toolName}`,
@@ -172,5 +207,14 @@ export default function registerTrustNetOpenClawPlugin(api) {
       return;
     }
     return { message };
+  });
+
+  api.on("shutdown", () => {
+    try {
+      trustStore.close();
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      api.logger.error?.(`trustnet-openclaw failed to close trust store: ${reason}`);
+    }
   });
 }

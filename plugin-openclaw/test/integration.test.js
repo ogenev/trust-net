@@ -4,6 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createServer } from "node:http";
+import { DatabaseSync } from "node:sqlite";
 
 import registerTrustNetOpenClawPlugin from "../index.js";
 
@@ -174,6 +175,7 @@ function basePluginConfig({
   toolMapPath,
   trustnetBinary,
   receiptOutDir,
+  trustStorePath,
   failOpen,
   askMode,
   unmappedDecision,
@@ -194,6 +196,7 @@ function basePluginConfig({
     toolMapPath,
     trustnetBinary,
     receiptOutDir,
+    trustStorePath,
     failOpen,
     askMode,
     unmappedDecision,
@@ -211,13 +214,14 @@ function basePluginConfig({
 test(
   "local-verifiable allow decision performs anchored verify, emits receipt, and annotates persisted tool result",
   async () => {
-  const tmpDir = makeTempDir();
-  const toolMapPath = path.join(tmpDir, "tool-map.json");
-  const callsLogPath = path.join(tmpDir, "trustnet-calls.log");
-  const trustnetBinaryPath = path.join(tmpDir, "trustnet");
-  const receiptOutDir = path.join(tmpDir, "receipts");
-  writeToolMap(toolMapPath);
-  writeMockTrustnetBinary(trustnetBinaryPath, callsLogPath);
+    const tmpDir = makeTempDir();
+    const toolMapPath = path.join(tmpDir, "tool-map.json");
+    const callsLogPath = path.join(tmpDir, "trustnet-calls.log");
+    const trustnetBinaryPath = path.join(tmpDir, "trustnet");
+    const receiptOutDir = path.join(tmpDir, "receipts");
+    const trustStorePath = path.join(tmpDir, "trust-store.sqlite");
+    writeToolMap(toolMapPath);
+    writeMockTrustnetBinary(trustnetBinaryPath, callsLogPath);
 
     const server = await startTrustnetServer({ decision: "allow" });
     const { api, hooks } = createMockApi({
@@ -227,6 +231,7 @@ test(
         toolMapPath,
         trustnetBinary: trustnetBinaryPath,
         receiptOutDir,
+        trustStorePath,
         mode: "local-verifiable",
       }),
     });
@@ -284,6 +289,36 @@ test(
 
     const receipts = fs.readdirSync(receiptOutDir);
     assert.equal(receipts.length, 1);
+
+    const db = new DatabaseSync(trustStorePath);
+    const tableNames = db
+      .prepare(
+        `
+          SELECT name
+          FROM sqlite_master
+          WHERE type = 'table'
+            AND name IN ('edges_latest', 'receipts', 'agents')
+          ORDER BY name
+        `,
+      )
+      .all()
+      .map((row) => row.name);
+    assert.deepEqual(tableNames, ["agents", "edges_latest", "receipts"]);
+
+    const receiptRow = db
+      .prepare("SELECT decider, target, context_id, decision FROM receipts LIMIT 1")
+      .get();
+    assert.equal(receiptRow.decider, "0xdecider000000000000000000000000000000000001");
+    assert.equal(receiptRow.target, "0xtarget000000000000000000000000000000000001");
+    assert.equal(
+      receiptRow.context_id,
+      "0x88329f80681e8980157f3ce652efd4fd18edf3c55202d5fb4f4da8a23e2d6971",
+    );
+    assert.equal(receiptRow.decision, "allow");
+
+    const agentCount = db.prepare("SELECT COUNT(*) AS c FROM agents").get().c;
+    assert.equal(agentCount, 2);
+    db.close();
 
     await server.close();
   },

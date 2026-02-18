@@ -19,6 +19,7 @@
           // "publisherAddress": "0xPUBLISHER...",
           "policyManifestHash": "0x...", // optional, included in ActionReceipts
           "receiptOutDir": "./.trustnet/receipts", // optional
+          "trustStorePath": "./.trustnet/local-trust.db", // optional, defaults to this path
           "trustnetBinary": "trustnet", // optional
           "requestTimeoutMs": 5000,
           "verifyTimeoutMs": 15000,

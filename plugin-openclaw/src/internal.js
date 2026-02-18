@@ -22,6 +22,7 @@ const HEX_BYTES32_RE = /^0x[a-fA-F0-9]{64}$/;
 const DEFAULT_REQUEST_TIMEOUT_MS = 5_000;
 const DEFAULT_VERIFY_TIMEOUT_MS = 15_000;
 const DEFAULT_RECEIPT_TIMEOUT_MS = 15_000;
+const DEFAULT_TRUST_STORE_PATH = ".trustnet/local-trust.db";
 
 function isRecord(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -137,6 +138,10 @@ export function parseConfig(api) {
   const trustnetBinary = readOptionalString(raw, "trustnetBinary") ?? "trustnet";
   const receiptOutDirRaw = readOptionalString(raw, "receiptOutDir");
   const receiptOutDir = receiptOutDirRaw ? resolvePath(api, receiptOutDirRaw) : undefined;
+  const trustStorePath = resolvePath(
+    api,
+    readOptionalString(raw, "trustStorePath") ?? DEFAULT_TRUST_STORE_PATH,
+  );
 
   const targetPrincipalId = readOptionalString(raw, "targetPrincipalId");
   const failOpen = readOptionalBoolean(raw, "failOpen", false);
@@ -161,6 +166,7 @@ export function parseConfig(api) {
     receiptSignerKeyHex,
     trustnetBinary,
     receiptOutDir,
+    trustStorePath,
     failOpen,
     askMode,
     unmappedDecision,

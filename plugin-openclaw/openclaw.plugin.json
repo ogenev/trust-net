@@ -62,6 +62,10 @@
         "type": "string",
         "description": "Optional directory for persisted ActionReceipt JSON files."
       },
+      "trustStorePath": {
+        "type": "string",
+        "description": "SQLite database path for local TrustNet tables (`edges_latest`, `receipts`, `agents`). Defaults to ./.trustnet/local-trust.db."
+      },
       "requestTimeoutMs": {
         "type": "number",
         "minimum": 1
@@ -128,6 +132,10 @@
     "receiptOutDir": {
       "label": "Receipt Output Directory",
       "help": "If set, emitted ActionReceipts are persisted here."
+    },
+    "trustStorePath": {
+      "label": "Trust Store Path",
+      "help": "SQLite path for local edges/receipts/agents persistence."
     },
     "failOpen": {
       "label": "Fail Open",
