@@ -34,6 +34,7 @@ import {
   normalizeAskAction,
 } from "./src/ask-actions.js";
 import { decideLocalTrust } from "./src/decision-engine.js";
+import { buildLocalInteractionReceipt, shouldPersistReceiptForMapping } from "./src/local-receipt.js";
 import { openTrustStore } from "./src/store.js";
 
 const DIRECT_ALLOW_LEVEL = 2;
@@ -342,9 +343,16 @@ export default function registerTrustNetOpenClawPlugin(api) {
     }
 
     try {
-      let receipt;
+      if (!shouldPersistReceiptForMapping(pending.mapping)) {
+        api.logger.debug?.(
+          `trustnet-openclaw: skipping receipt persistence for non-high risk tool ${event.toolName}`,
+        );
+        return;
+      }
+
+      let verifiableReceipt;
       if (pending.root && pending.decisionBundle) {
-        receipt = emitActionReceipt(config, {
+        verifiableReceipt = emitActionReceipt(config, {
           toolName: event.toolName,
           params: event.params,
           result: event.result,
@@ -352,29 +360,23 @@ export default function registerTrustNetOpenClawPlugin(api) {
           root: pending.root,
           decisionBundle: pending.decisionBundle,
         });
-      } else {
-        receipt = {
-          type: "trustnet.localReceipt.pending-v0.7",
-          decision: pending.decision,
-          score: pending.localDecision?.score ?? null,
-          thresholds: pending.localDecision?.thresholds ?? null,
-          endorser: pending.localDecision?.endorser ?? null,
-          levels: {
-            dt: pending.localDecision?.levelDt ?? 0,
-            de: pending.localDecision?.levelDe ?? 0,
-            et: pending.localDecision?.levelEt ?? 0,
-          },
-          askAction: pending.askResolution
-            ? {
-                action: pending.askResolution.action,
-                ttlSeconds: pending.askResolution.ttlSeconds ?? null,
-                expiresAtU64: pending.askResolution.expiresAtMs ?? null,
-                persistedEdge: pending.askResolution.persistedEdge,
-                userApproved: pending.askResolution.userApproved,
-              }
-            : null,
-        };
       }
+      const createdAtMs = Date.now();
+      const receipt = buildLocalInteractionReceipt({
+        decision: pending.decision,
+        mapping: pending.mapping,
+        targetPrincipalId: pending.targetPrincipalId,
+        toolName: event.toolName,
+        params: event.params,
+        result: event.result,
+        error: event.error,
+        createdAtMs,
+        localDecision: pending.localDecision,
+        decisionBundle: pending.decisionBundle,
+        root: pending.root,
+        askResolution: pending.askResolution,
+        verifiableReceipt,
+      });
       const epoch =
         pending.decisionBundle && pending.decisionBundle.epoch !== undefined
           ? Number(pending.decisionBundle.epoch)
@@ -399,7 +401,7 @@ export default function registerTrustNetOpenClawPlugin(api) {
         contextId: pending.mapping.contextId,
         decision: pending.decision,
         epoch,
-        createdAt: Date.now(),
+        createdAt: createdAtMs,
         receiptId:
           typeof receipt?.receiptId === "string" && receipt.receiptId.length > 0
             ? receipt.receiptId

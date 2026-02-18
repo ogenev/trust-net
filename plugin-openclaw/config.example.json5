@@ -19,8 +19,8 @@
           // "rpcUrl": "https://sepolia.infura.io/v3/YOUR_KEY",
           // "rootRegistry": "0xROOTREGISTRY...",
           // "publisherAddress": "0xPUBLISHER...",
-          "policyManifestHash": "0x...", // optional, included in ActionReceipts
-          "receiptOutDir": "./.trustnet/receipts", // optional
+          "policyManifestHash": "0x...", // optional, attached to local-verifiable receipt metadata
+          "receiptOutDir": "./.trustnet/receipts", // optional (high-risk local receipts only)
           "trustStorePath": "./.trustnet/local-trust.db", // optional, defaults to this path
           "trustnetBinary": "trustnet", // optional
           "requestTimeoutMs": 5000,

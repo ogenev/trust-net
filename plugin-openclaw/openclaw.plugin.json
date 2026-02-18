@@ -60,7 +60,7 @@
       },
       "receiptOutDir": {
         "type": "string",
-        "description": "Optional directory for persisted ActionReceipt JSON files."
+        "description": "Optional directory for persisted high-risk TrustNet local receipt JSON files."
       },
       "trustStorePath": {
         "type": "string",
@@ -131,7 +131,7 @@
     },
     "receiptOutDir": {
       "label": "Receipt Output Directory",
-      "help": "If set, emitted ActionReceipts are persisted here."
+      "help": "If set, emitted high-risk TrustNet local receipts are persisted here."
     },
     "trustStorePath": {
       "label": "Trust Store Path",

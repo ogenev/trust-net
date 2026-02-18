@@ -16,6 +16,27 @@ import {
   writeToolMap,
 } from "../testing/helpers.js";
 
+function writeToolMapForRisk(filePath, riskTier) {
+  fs.writeFileSync(
+    filePath,
+    JSON.stringify(
+      {
+        version: 1,
+        entries: [
+          {
+            pattern: "^exec$",
+            context: "trustnet:ctx:agent-collab:code-exec:v1",
+            contextId: EXEC_CONTEXT_ID,
+            riskTier,
+          },
+        ],
+      },
+      null,
+      2,
+    ),
+  );
+}
+
 test(
   "local-verifiable allow decision performs anchored verify, emits receipt, and annotates persisted tool result",
   async () => {
@@ -111,7 +132,7 @@ test(
     assert.deepEqual(tableNames, ["agents", "edges_latest", "receipts"]);
 
     const receiptRow = db
-      .prepare("SELECT decider, target, context_id, decision FROM receipts LIMIT 1")
+      .prepare("SELECT decider, target, context_id, decision, receipt_json FROM receipts LIMIT 1")
       .get();
     assert.equal(receiptRow.decider, "0xdecider000000000000000000000000000000000001");
     assert.equal(receiptRow.target, "0xtarget000000000000000000000000000000000001");
@@ -120,6 +141,15 @@ test(
       EXEC_CONTEXT_ID,
     );
     assert.equal(receiptRow.decision, "allow");
+    const receiptPayload = JSON.parse(receiptRow.receipt_json);
+    assert.equal(receiptPayload.type, "trustnet.receipt.v1");
+    assert.equal(receiptPayload.decision, "allow");
+    assert.equal(receiptPayload.contextId, EXEC_CONTEXT_ID);
+    assert.equal(receiptPayload.tool, "exec");
+    assert.match(receiptPayload.argsHash, /^0x[0-9a-f]{64}$/);
+    assert.match(receiptPayload.resultHash, /^0x[0-9a-f]{64}$/);
+    assert.ok(receiptPayload.verifiable);
+    assert.equal(receiptPayload.verifiable.receiptId, "mock-1");
 
     const agentCount = db.prepare("SELECT COUNT(*) AS c FROM agents").get().c;
     assert.equal(agentCount, 2);
@@ -195,12 +225,86 @@ test("local-lite mode computes from local store without TrustNet API", async () 
   const receiptMeta = JSON.parse(fs.readFileSync(path.join(receiptOutDir, receipts[0]), "utf8"));
   assert.equal(receiptMeta.decision, "allow");
   assert.equal(receiptMeta.epoch, null);
-  assert.equal(receiptMeta.receipt.type, "trustnet.localReceipt.pending-v0.7");
+  assert.equal(receiptMeta.receipt.type, "trustnet.receipt.v1");
+  assert.equal(receiptMeta.receipt.tool, "exec");
+  assert.equal(receiptMeta.receipt.contextId, EXEC_CONTEXT_ID);
+  assert.match(receiptMeta.receipt.argsHash, /^0x[0-9a-f]{64}$/);
+  assert.match(receiptMeta.receipt.resultHash, /^0x[0-9a-f]{64}$/);
+  assert.ok(receiptMeta.receipt.why);
+  assert.ok(receiptMeta.receipt.decisionSnapshot);
 
   const db = new DatabaseSync(trustStorePath);
   const row = db.prepare("SELECT decision, epoch FROM receipts LIMIT 1").get();
   assert.equal(row.decision, "allow");
   assert.equal(row.epoch, null);
+  db.close();
+});
+
+test("local-lite skips receipt persistence for non-high risk tools", async () => {
+  const tmpDir = makeTempDir();
+  const toolMapPath = path.join(tmpDir, "tool-map.json");
+  const receiptOutDir = path.join(tmpDir, "receipts");
+  const trustStorePath = path.join(tmpDir, "trust-store.sqlite");
+  writeToolMapForRisk(toolMapPath, "medium");
+
+  const seedStore = openTrustStore(trustStorePath);
+  seedStore.upsertEdgeLatest({
+    rater: "0xdecider000000000000000000000000000000000001",
+    target: "0xtarget000000000000000000000000000000000001",
+    contextId: EXEC_CONTEXT_ID,
+    level: 2,
+    updatedAt: Date.now(),
+    source: "test-seed",
+  });
+  seedStore.close();
+
+  const { api, hooks } = createMockApi({
+    rootDir: tmpDir,
+    pluginConfig: basePluginConfig({
+      toolMapPath,
+      receiptOutDir,
+      trustStorePath,
+      mode: "local-lite",
+      includeChainConfig: false,
+    }),
+  });
+  registerTrustNetOpenClawPlugin(api);
+
+  const ctx = {
+    sessionKey: "session-lite-medium-1",
+    agentId: "0xagent",
+    toolName: "exec",
+  };
+
+  const beforeResult = await hooks.get("before_tool_call")(
+    { toolName: "exec", params: { command: "echo medium" } },
+    ctx,
+  );
+  assert.equal(beforeResult, undefined);
+
+  await hooks.get("after_tool_call")(
+    {
+      toolName: "exec",
+      params: { command: "echo medium" },
+      result: { stdout: "medium" },
+    },
+    ctx,
+  );
+
+  const persistResult = hooks.get("tool_result_persist")(
+    {
+      toolName: "exec",
+      message: { role: "tool", content: "medium" },
+    },
+    ctx,
+  );
+  assert.equal(persistResult, undefined);
+
+  assert.equal(fs.existsSync(receiptOutDir), false);
+
+  const db = new DatabaseSync(trustStorePath);
+  const receiptCount = db.prepare("SELECT COUNT(*) AS c FROM receipts").get().c;
+  assert.equal(receiptCount, 0);
   db.close();
 });
 
