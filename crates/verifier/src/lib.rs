@@ -594,7 +594,7 @@ pub fn generate_vectors_v0_6() -> serde_json::Value {
 
     let rater_pid = PrincipalId::from_evm_address(rater_addr);
     let target_pid = PrincipalId::from_evm_address(target_addr);
-    let context = ContextId::from(trustnet_core::CTX_GLOBAL);
+    let context = ContextId::from(trustnet_core::CTX_AGENT_COLLAB_CODE_EXEC);
 
     let edge_key = compute_edge_key(&rater_pid, &target_pid, &context);
     let leaf_v = LeafValueV1 {
@@ -639,7 +639,7 @@ pub fn generate_vectors_v0_6() -> serde_json::Value {
         },
         "hashes": {
             "tagTrustnetV1": format!("0x{}", hex::encode(trustnet_core::TAG_TRUSTNET_V1.as_slice())),
-            "contextRegistryHash": format!("0x{}", hex::encode(keccak256(br#"[\"trustnet:ctx:global:v1\",\"trustnet:ctx:payments:v1\",\"trustnet:ctx:code-exec:v1\",\"trustnet:ctx:writes:v1\",\"trustnet:ctx:messaging:v1\"]"#).as_slice()))
+            "contextRegistryHash": format!("0x{}", hex::encode(keccak256(br#"[\"trustnet:ctx:agent-collab:messaging:v1\",\"trustnet:ctx:agent-collab:files:read:v1\",\"trustnet:ctx:agent-collab:files:write:v1\",\"trustnet:ctx:agent-collab:code-exec:v1\",\"trustnet:ctx:agent-collab:delegation:v1\",\"trustnet:ctx:agent-collab:data-share:v1\"]"#).as_slice()))
         }
     })
 }

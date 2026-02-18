@@ -11,43 +11,57 @@ pragma solidity ^0.8.26;
  */
 library TrustNetContexts {
     /**
-     * @notice Global context - general trust rating across all capabilities
-     * @dev keccak256("trustnet:ctx:global:v1")
+     * @notice Agent-collab messaging context.
+     * @dev keccak256("trustnet:ctx:agent-collab:messaging:v1")
      */
-    bytes32 public constant GLOBAL =
-        0x430faa5635b6f437d8b5a2d66333fe4fbcf75602232a76b67e94fd4a3275169b;
+    bytes32 public constant AGENT_COLLAB_MESSAGING =
+        0x04b03219e64c6472e5872ec762574f95cad7503f96392e00dae2bbbeaddd8158;
 
     /**
-     * @notice Payments context - trust for executing payment transactions
-     * @dev keccak256("trustnet:ctx:payments:v1")
-     * @dev Used for gating payment actions (e.g., agent can spend ≤ $50)
+     * @notice Agent-collab files-read context.
+     * @dev keccak256("trustnet:ctx:agent-collab:files:read:v1")
      */
-    bytes32 public constant PAYMENTS =
-        0x195c31d552212fd148934033b94b89c00b603e2b73e757a2b7684b4cc9602147;
+    bytes32 public constant AGENT_COLLAB_FILES_READ =
+        0xc1fec36e15bcd80ff1f0c7d817e26b6a558c5f027fb0e2af1fcef6755e6c04aa;
 
     /**
-     * @notice Code execution context - trust for running code/CI/CD
-     * @dev keccak256("trustnet:ctx:code-exec:v1")
-     * @dev Used for gating code execution (e.g., PR runs, deployment scripts)
+     * @notice Agent-collab files-write context.
+     * @dev keccak256("trustnet:ctx:agent-collab:files:write:v1")
      */
-    bytes32 public constant CODE_EXEC =
-        0x5efe84ba1b51e4f09cf7666eca4d0685fcccf1ee1f5c051bfd1b40c537b4565b;
+    bytes32 public constant AGENT_COLLAB_FILES_WRITE =
+        0x129283efa53ecd8ee862e64bbe6ca301c1f52167c643b55aafa8a668874769cf;
 
     /**
-     * @notice Writes context - trust for data write operations
-     * @dev keccak256("trustnet:ctx:writes:v1")
-     * @dev Used for gating write access (e.g., CRM updates, database modifications)
+     * @notice Agent-collab code-exec context.
+     * @dev keccak256("trustnet:ctx:agent-collab:code-exec:v1")
      */
-    bytes32 public constant WRITES =
-        0xa4d767d43a1aa6ce314b2c1df834966b812e18b0b99fcce9faf1591c0a6f2674;
+    bytes32 public constant AGENT_COLLAB_CODE_EXEC =
+        0x88329f80681e8980157f3ce652efd4fd18edf3c55202d5fb4f4da8a23e2d6971;
 
     /**
-     * @notice Messaging context - trust for messaging/notification operations
-     * @dev keccak256("trustnet:ctx:messaging:v1")
-     * @dev Used for gating outbound messaging (e.g., email, Slack, SMS)
+     * @notice Agent-collab delegation context.
+     * @dev keccak256("trustnet:ctx:agent-collab:delegation:v1")
      */
-    bytes32 public constant MESSAGING =
-        0x9a61a0d65a04cee1ab884471f6d8f2b07d58922715c5a822f2a3caaf7e587841;
+    bytes32 public constant AGENT_COLLAB_DELEGATION =
+        0xc6664c53c5aa763dbc7a4925c548e6600ce8d337698eb2faed7c9d348c3055d2;
+
+    /**
+     * @notice Agent-collab data-share context.
+     * @dev keccak256("trustnet:ctx:agent-collab:data-share:v1")
+     */
+    bytes32 public constant AGENT_COLLAB_DATA_SHARE =
+        0xc217daac2c1b96669c55300178ca750feaf0eceffc89d9878cd3a5518d3ad33c;
+
+    // Convenience aliases used by existing contracts/tests.
+    bytes32 public constant MESSAGING = AGENT_COLLAB_MESSAGING;
+    bytes32 public constant FILES_READ = AGENT_COLLAB_FILES_READ;
+    bytes32 public constant FILES_WRITE = AGENT_COLLAB_FILES_WRITE;
+    bytes32 public constant CODE_EXEC = AGENT_COLLAB_CODE_EXEC;
+    bytes32 public constant DELEGATION = AGENT_COLLAB_DELEGATION;
+    bytes32 public constant DATA_SHARE = AGENT_COLLAB_DATA_SHARE;
+    bytes32 public constant GLOBAL = AGENT_COLLAB_DATA_SHARE;
+    bytes32 public constant PAYMENTS = AGENT_COLLAB_DELEGATION;
+    bytes32 public constant WRITES = AGENT_COLLAB_FILES_WRITE;
 
     /**
      * @notice Compute the context ID for a custom capability namespace
@@ -82,11 +96,12 @@ library TrustNetContexts {
      */
     function isCanonical(bytes32 contextId) internal pure returns (bool) {
         return
-            contextId == GLOBAL ||
-            contextId == PAYMENTS ||
-            contextId == CODE_EXEC ||
-            contextId == WRITES ||
-            contextId == MESSAGING;
+            contextId == AGENT_COLLAB_MESSAGING ||
+            contextId == AGENT_COLLAB_FILES_READ ||
+            contextId == AGENT_COLLAB_FILES_WRITE ||
+            contextId == AGENT_COLLAB_CODE_EXEC ||
+            contextId == AGENT_COLLAB_DELEGATION ||
+            contextId == AGENT_COLLAB_DATA_SHARE;
     }
 
     /**
@@ -99,11 +114,12 @@ library TrustNetContexts {
         pure
         returns (string memory)
     {
-        if (contextId == GLOBAL) return "global";
-        if (contextId == PAYMENTS) return "payments";
-        if (contextId == CODE_EXEC) return "code-exec";
-        if (contextId == WRITES) return "writes";
-        if (contextId == MESSAGING) return "messaging";
+        if (contextId == AGENT_COLLAB_MESSAGING) return "agent-collab:messaging";
+        if (contextId == AGENT_COLLAB_FILES_READ) return "agent-collab:files:read";
+        if (contextId == AGENT_COLLAB_FILES_WRITE) return "agent-collab:files:write";
+        if (contextId == AGENT_COLLAB_CODE_EXEC) return "agent-collab:code-exec";
+        if (contextId == AGENT_COLLAB_DELEGATION) return "agent-collab:delegation";
+        if (contextId == AGENT_COLLAB_DATA_SHARE) return "agent-collab:data-share";
         return "unknown";
     }
 }

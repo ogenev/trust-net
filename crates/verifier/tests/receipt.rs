@@ -36,7 +36,7 @@ fn action_receipt_roundtrip_verifies() -> anyhow::Result<()> {
 
     let decider = PrincipalId::from_evm_address(decider_addr);
     let target = PrincipalId::from_evm_address(target_addr);
-    let context_id = ContextId::from(trustnet_core::CTX_GLOBAL);
+    let context_id = ContextId::from(trustnet_core::CTX_AGENT_COLLAB_CODE_EXEC);
 
     // Build a tiny SMM with only DT present (direct allow).
     let dt_level = Level::strong_positive();

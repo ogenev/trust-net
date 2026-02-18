@@ -42,13 +42,13 @@ pub fn keccak256(data: &[u8]) -> B256 {
 /// # Example
 ///
 /// ```
-/// use trustnet_core::{ContextId, CTX_PAYMENTS};
+/// use trustnet_core::{ContextId, CTX_AGENT_COLLAB_CODE_EXEC};
 /// use trustnet_core::hashing::compute_edge_key;
 /// use alloy_primitives::Address;
 ///
 /// let rater = trustnet_core::PrincipalId::from_evm_address(Address::from([0x11; 20]));
 /// let target = trustnet_core::PrincipalId::from_evm_address(Address::from([0x22; 20]));
-/// let context = ContextId::from(CTX_PAYMENTS);
+/// let context = ContextId::from(CTX_AGENT_COLLAB_CODE_EXEC);
 ///
 /// let key = compute_edge_key(&rater, &target, &context);
 /// ```
@@ -204,8 +204,8 @@ mod tests {
         assert_eq!(keccak256(input), TAG_TRUSTNET_V1);
 
         // Verify a trustnet context hash
-        let input = b"trustnet:ctx:global:v1";
-        assert_eq!(keccak256(input), CTX_GLOBAL);
+        let input = b"trustnet:ctx:agent-collab:code-exec:v1";
+        assert_eq!(keccak256(input), CTX_AGENT_COLLAB_CODE_EXEC);
     }
 
     #[test]
@@ -216,7 +216,7 @@ mod tests {
         let target = PrincipalId::from_evm_address(Address::from(hex!(
             "2222222222222222222222222222222222222222"
         )));
-        let context = ContextId::from(CTX_PAYMENTS);
+        let context = ContextId::from(CTX_AGENT_COLLAB_FILES_WRITE);
 
         let key = compute_edge_key(&rater, &target, &context);
 
@@ -433,7 +433,7 @@ mod tests {
         let target = PrincipalId::from_evm_address(Address::from(hex!(
             "0000000000000000000000000000000000000002"
         )));
-        let context = ContextId::from(CTX_GLOBAL);
+        let context = ContextId::from(CTX_AGENT_COLLAB_CODE_EXEC);
 
         let key = compute_edge_key(&rater, &target, &context);
 

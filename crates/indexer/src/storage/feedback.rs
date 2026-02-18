@@ -280,7 +280,7 @@ mod tests {
             feedback_index: U256::from(1u64),
             value: 100,
             value_decimals: 0,
-            tag1: "trustnet:ctx:payments:v1".to_string(),
+            tag1: "trustnet:ctx:agent-collab:code-exec:v1".to_string(),
             tag2: "trustnet:v1".to_string(),
             endpoint: "trustnet".to_string(),
             feedback_uri: None,

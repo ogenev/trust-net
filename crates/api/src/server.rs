@@ -197,18 +197,37 @@ fn load_decision_policy_from_env() -> anyhow::Result<DecisionPolicy> {
         require_evidence_dt: default_require_evidence_dt,
     };
 
-    // Optional per-context overrides (MVP-friendly):
+    // Optional per-context overrides:
     // - TRUSTNET_ALLOW_THRESHOLD_<CONTEXT>
     // - TRUSTNET_ASK_THRESHOLD_<CONTEXT>
     // - TRUSTNET_DECISION_TTL_SECONDS_<CONTEXT>
     //
-    // Context suffixes: GLOBAL, PAYMENTS, CODE_EXEC, WRITES, MESSAGING.
+    // Context suffixes use v0.7 agent-collab names.
     let known_contexts = [
-        ("GLOBAL", ContextId::from(trustnet_core::CTX_GLOBAL)),
-        ("PAYMENTS", ContextId::from(trustnet_core::CTX_PAYMENTS)),
-        ("CODE_EXEC", ContextId::from(trustnet_core::CTX_CODE_EXEC)),
-        ("WRITES", ContextId::from(trustnet_core::CTX_WRITES)),
-        ("MESSAGING", ContextId::from(trustnet_core::CTX_MESSAGING)),
+        (
+            "AGENT_COLLAB_MESSAGING",
+            ContextId::from(trustnet_core::CTX_AGENT_COLLAB_MESSAGING),
+        ),
+        (
+            "AGENT_COLLAB_FILES_READ",
+            ContextId::from(trustnet_core::CTX_AGENT_COLLAB_FILES_READ),
+        ),
+        (
+            "AGENT_COLLAB_FILES_WRITE",
+            ContextId::from(trustnet_core::CTX_AGENT_COLLAB_FILES_WRITE),
+        ),
+        (
+            "AGENT_COLLAB_CODE_EXEC",
+            ContextId::from(trustnet_core::CTX_AGENT_COLLAB_CODE_EXEC),
+        ),
+        (
+            "AGENT_COLLAB_DELEGATION",
+            ContextId::from(trustnet_core::CTX_AGENT_COLLAB_DELEGATION),
+        ),
+        (
+            "AGENT_COLLAB_DATA_SHARE",
+            ContextId::from(trustnet_core::CTX_AGENT_COLLAB_DATA_SHARE),
+        ),
     ];
 
     let mut by_context = HashMap::new();
@@ -349,14 +368,11 @@ async fn health(State(_state): State<AppState>) -> &'static str {
 }
 
 fn is_allowlisted_context_id(context_id: &ContextId) -> bool {
-    matches!(
-        *context_id.inner(),
-        trustnet_core::CTX_GLOBAL
-            | trustnet_core::CTX_PAYMENTS
-            | trustnet_core::CTX_CODE_EXEC
-            | trustnet_core::CTX_WRITES
-            | trustnet_core::CTX_MESSAGING
-    )
+    trustnet_core::is_supported_context_id_v0_7(context_id.inner())
+}
+
+fn normalize_context_id(context_id: &ContextId) -> Option<ContextId> {
+    trustnet_core::normalize_context_id_v0_7(context_id.inner()).map(ContextId::from)
 }
 
 const ERROR_CODE_INVALID_REQUEST: &str = "invalid_request";
@@ -476,20 +492,7 @@ fn internal_error<E: std::fmt::Display>(err: E) -> (StatusCode, Json<ErrorRespon
 }
 
 fn ttl_seconds_for_context_id(context_id: &ContextId) -> u64 {
-    let id = context_id.inner();
-    if *id == trustnet_core::CTX_PAYMENTS {
-        return 30 * 24 * 60 * 60;
-    }
-    if *id == trustnet_core::CTX_CODE_EXEC {
-        return 7 * 24 * 60 * 60;
-    }
-    if *id == trustnet_core::CTX_WRITES {
-        return 7 * 24 * 60 * 60;
-    }
-    if *id == trustnet_core::CTX_MESSAGING {
-        return 7 * 24 * 60 * 60;
-    }
-    0
+    trustnet_core::ttl_seconds_for_context_id_v0_7(context_id.inner()).unwrap_or(0)
 }
 
 fn edge_is_expired(updated_at_u64: u64, context_id: &ContextId, as_of_u64: u64) -> bool {
@@ -746,29 +749,34 @@ async fn get_contexts() -> Json<ContextsResponse> {
     Json(ContextsResponse {
         contexts: vec![
             ContextInfo {
-                name: "trustnet:ctx:global:v1".to_string(),
-                context_id: hex_b256(&trustnet_core::CTX_GLOBAL),
-                description: "Global context (capability-agnostic)".to_string(),
+                name: trustnet_core::CTX_STR_AGENT_COLLAB_MESSAGING.to_string(),
+                context_id: hex_b256(&trustnet_core::CTX_AGENT_COLLAB_MESSAGING),
+                description: "Agent collaboration messaging".to_string(),
             },
             ContextInfo {
-                name: "trustnet:ctx:payments:v1".to_string(),
-                context_id: hex_b256(&trustnet_core::CTX_PAYMENTS),
-                description: "Payments context".to_string(),
+                name: trustnet_core::CTX_STR_AGENT_COLLAB_FILES_READ.to_string(),
+                context_id: hex_b256(&trustnet_core::CTX_AGENT_COLLAB_FILES_READ),
+                description: "Agent collaboration file reads".to_string(),
             },
             ContextInfo {
-                name: "trustnet:ctx:code-exec:v1".to_string(),
-                context_id: hex_b256(&trustnet_core::CTX_CODE_EXEC),
-                description: "Code execution context".to_string(),
+                name: trustnet_core::CTX_STR_AGENT_COLLAB_FILES_WRITE.to_string(),
+                context_id: hex_b256(&trustnet_core::CTX_AGENT_COLLAB_FILES_WRITE),
+                description: "Agent collaboration file writes".to_string(),
             },
             ContextInfo {
-                name: "trustnet:ctx:writes:v1".to_string(),
-                context_id: hex_b256(&trustnet_core::CTX_WRITES),
-                description: "Writes/modification context".to_string(),
+                name: trustnet_core::CTX_STR_AGENT_COLLAB_CODE_EXEC.to_string(),
+                context_id: hex_b256(&trustnet_core::CTX_AGENT_COLLAB_CODE_EXEC),
+                description: "Agent collaboration code execution".to_string(),
             },
             ContextInfo {
-                name: "trustnet:ctx:messaging:v1".to_string(),
-                context_id: hex_b256(&trustnet_core::CTX_MESSAGING),
-                description: "Messaging context".to_string(),
+                name: trustnet_core::CTX_STR_AGENT_COLLAB_DELEGATION.to_string(),
+                context_id: hex_b256(&trustnet_core::CTX_AGENT_COLLAB_DELEGATION),
+                description: "Agent collaboration delegation".to_string(),
+            },
+            ContextInfo {
+                name: trustnet_core::CTX_STR_AGENT_COLLAB_DATA_SHARE.to_string(),
+                context_id: hex_b256(&trustnet_core::CTX_AGENT_COLLAB_DATA_SHARE),
+                description: "Agent collaboration data sharing".to_string(),
             },
         ],
     })
@@ -942,6 +950,8 @@ async fn get_decision(
     if !is_allowlisted_context_id(&context_id) {
         return Err(unknown_context("Unknown contextId"));
     }
+    let context_id =
+        normalize_context_id(&context_id).ok_or_else(|| unknown_context("Unknown contextId"))?;
 
     let epoch = db::get_latest_epoch(&state.db)
         .await
@@ -1273,6 +1283,8 @@ async fn post_rating(
     if !is_allowlisted_context_id(&context_id) {
         return Err(unknown_context("Unknown contextId"));
     }
+    let context_id =
+        normalize_context_id(&context_id).ok_or_else(|| unknown_context("Unknown contextId"))?;
 
     let level = Level::new(event.level).map_err(|e| bad_request(e.to_string()))?;
 
@@ -1640,7 +1652,7 @@ mod tests {
         let decider = PrincipalId::from([0x10u8; 32]);
         let endorser = PrincipalId::from([0x20u8; 32]);
         let target = PrincipalId::from([0x30u8; 32]);
-        let context_id = ContextId::from(trustnet_core::CTX_CODE_EXEC);
+        let context_id = ContextId::from(trustnet_core::CTX_AGENT_COLLAB_CODE_EXEC);
 
         let created_at_u64 = 1000u64;
         let updated_at_u64 = 1000u64;
@@ -1758,8 +1770,11 @@ mod tests {
     #[tokio::test]
     async fn test_get_contexts() {
         let response = get_contexts().await;
-        assert_eq!(response.0.contexts.len(), 5);
-        assert_eq!(response.0.contexts[0].name, "trustnet:ctx:global:v1");
+        assert_eq!(response.0.contexts.len(), 6);
+        assert_eq!(
+            response.0.contexts[0].name,
+            "trustnet:ctx:agent-collab:messaging:v1"
+        );
     }
 
     #[tokio::test]
@@ -2125,7 +2140,7 @@ mod tests {
         .bind(feedback_index.as_slice())
         .bind([0u8; 32].as_slice())
         .bind(0i64)
-        .bind("trustnet:ctx:payments:v1")
+        .bind("trustnet:ctx:agent-collab:code-exec:v1")
         .bind("trustnet:v1")
         .bind("trustnet")
         .bind(None::<&str>)
@@ -2297,6 +2312,34 @@ mod tests {
             hex_bytes(decider.as_bytes()),
             hex_bytes(target.as_bytes()),
             hex_b256(unknown_context_id.inner())
+        );
+
+        let response = app
+            .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["error"]["code"], "unknown_context");
+    }
+
+    #[tokio::test]
+    async fn test_get_decision_rejects_legacy_v06_context_id() {
+        let (state, _tmp, decider, _endorser, target, _context_id) = setup_state().await;
+        let app = Router::new()
+            .route("/v1/decision", get(get_decision))
+            .with_state(state);
+
+        let legacy_context_id = ContextId::from(trustnet_core::hashing::keccak256(
+            b"trustnet:ctx:code-exec:v1",
+        ));
+        let uri = format!(
+            "/v1/decision?decider={}&target={}&contextId={}",
+            hex_bytes(decider.as_bytes()),
+            hex_bytes(target.as_bytes()),
+            hex_b256(legacy_context_id.inner())
         );
 
         let response = app

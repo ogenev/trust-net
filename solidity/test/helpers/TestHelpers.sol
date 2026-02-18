@@ -76,16 +76,17 @@ contract TestHelpers is Test {
         bytes32[] memory contexts = new bytes32[](count);
 
         if (canonical) {
-            bytes32[5] memory canonicalContexts = [
-                TrustNetContexts.GLOBAL,
-                TrustNetContexts.PAYMENTS,
-                TrustNetContexts.CODE_EXEC,
-                TrustNetContexts.WRITES,
-                TrustNetContexts.MESSAGING
+            bytes32[6] memory canonicalContexts = [
+                TrustNetContexts.AGENT_COLLAB_MESSAGING,
+                TrustNetContexts.AGENT_COLLAB_FILES_READ,
+                TrustNetContexts.AGENT_COLLAB_FILES_WRITE,
+                TrustNetContexts.AGENT_COLLAB_CODE_EXEC,
+                TrustNetContexts.AGENT_COLLAB_DELEGATION,
+                TrustNetContexts.AGENT_COLLAB_DATA_SHARE
             ];
 
             for (uint256 i = 0; i < count; i++) {
-                contexts[i] = canonicalContexts[i % 5];
+                contexts[i] = canonicalContexts[i % 6];
             }
         } else {
             for (uint256 i = 0; i < count; i++) {

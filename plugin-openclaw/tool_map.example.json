@@ -3,29 +3,43 @@
   "entries": [
     {
       "pattern": "^exec$",
-      "context": "trustnet:ctx:code-exec:v1",
-      "contextId": "0x5efe84ba1b51e4f09cf7666eca4d0685fcccf1ee1f5c051bfd1b40c537b4565b",
+      "context": "trustnet:ctx:agent-collab:code-exec:v1",
+      "contextId": "0x88329f80681e8980157f3ce652efd4fd18edf3c55202d5fb4f4da8a23e2d6971",
       "riskTier": "high",
       "constraints": { "ttlSeconds": 60 }
     },
     {
-      "pattern": "^fs\\.write$",
-      "context": "trustnet:ctx:writes:v1",
-      "contextId": "0xa4d767d43a1aa6ce314b2c1df834966b812e18b0b99fcce9faf1591c0a6f2674",
+      "pattern": "^fs\\.read$",
+      "context": "trustnet:ctx:agent-collab:files:read:v1",
+      "contextId": "0xc1fec36e15bcd80ff1f0c7d817e26b6a558c5f027fb0e2af1fcef6755e6c04aa",
       "riskTier": "medium",
+      "constraints": { "ttlSeconds": 300 }
+    },
+    {
+      "pattern": "^fs\\.write$",
+      "context": "trustnet:ctx:agent-collab:files:write:v1",
+      "contextId": "0x129283efa53ecd8ee862e64bbe6ca301c1f52167c643b55aafa8a668874769cf",
+      "riskTier": "high",
       "constraints": { "ttlSeconds": 300 }
     },
     {
       "pattern": "^messaging\\.send$",
-      "context": "trustnet:ctx:messaging:v1",
-      "contextId": "0x9a61a0d65a04cee1ab884471f6d8f2b07d58922715c5a822f2a3caaf7e587841",
+      "context": "trustnet:ctx:agent-collab:messaging:v1",
+      "contextId": "0x04b03219e64c6472e5872ec762574f95cad7503f96392e00dae2bbbeaddd8158",
       "riskTier": "medium",
       "constraints": { "ttlSeconds": 300 }
     },
     {
+      "pattern": "^delegate\\..*$",
+      "context": "trustnet:ctx:agent-collab:delegation:v1",
+      "contextId": "0xc6664c53c5aa763dbc7a4925c548e6600ce8d337698eb2faed7c9d348c3055d2",
+      "riskTier": "high",
+      "constraints": { "ttlSeconds": 60 }
+    },
+    {
       "pattern": ".*",
-      "context": "trustnet:ctx:global:v1",
-      "contextId": "0x430faa5635b6f437d8b5a2d66333fe4fbcf75602232a76b67e94fd4a3275169b",
+      "context": "trustnet:ctx:agent-collab:data-share:v1",
+      "contextId": "0xc217daac2c1b96669c55300178ca750feaf0eceffc89d9878cd3a5518d3ad33c",
       "riskTier": "low",
       "constraints": { "ttlSeconds": 300 }
     }

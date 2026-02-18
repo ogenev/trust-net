@@ -174,7 +174,7 @@ async fn server_mode_true_two_hop_smoke_flow_is_verifiable() {
     let pk_decider = [0x11u8; 32];
     let pk_endorser = [0x22u8; 32];
     let target = "0x3333333333333333333333333333333333333333";
-    let context = "trustnet:ctx:code-exec:v1";
+    let context = "trustnet:ctx:agent-collab:code-exec:v1";
 
     let payload_et = build_signed_rating_event(pk_endorser, target, context, 2);
     let endorser = payload_et["rater"]

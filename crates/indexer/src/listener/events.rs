@@ -6,7 +6,7 @@ use alloy::sol;
 use alloy::sol_types::SolEvent;
 use anyhow::{Context, Result};
 use std::str::FromStr;
-use trustnet_core::hashing::{compute_subject_id, keccak256};
+use trustnet_core::hashing::compute_subject_id;
 use trustnet_core::types::{ContextId, PrincipalId};
 
 use crate::storage::{EdgeRecord, EdgeSource, FeedbackRecord, FeedbackResponseRecord};
@@ -411,16 +411,17 @@ fn is_hex_bytes32(value: &str) -> bool {
 }
 
 fn is_canonical_context_string(value: &str) -> bool {
-    value.starts_with("trustnet:ctx:") && value.ends_with(":v1")
+    trustnet_core::is_canonical_context_string_v0_7(value)
 }
 
 fn parse_context_id(tag1: &str) -> Option<ContextId> {
     if is_canonical_context_string(tag1) {
-        return Some(ContextId::from(keccak256(tag1.as_bytes())));
+        return trustnet_core::context_id_from_string_v0_7(tag1).map(ContextId::from);
     }
 
     if is_hex_bytes32(tag1) {
-        return B256::from_str(tag1).ok().map(ContextId::from);
+        let parsed = B256::from_str(tag1).ok()?;
+        return trustnet_core::normalize_context_id_v0_7(&parsed).map(ContextId::from);
     }
 
     None
@@ -447,6 +448,7 @@ fn score_from_value(value: i128, value_decimals: u8) -> Option<u8> {
 mod tests {
     use super::*;
     use crate::ordering::observed_at_for_chain;
+    use trustnet_core::hashing::keccak256;
     use trustnet_core::types::Level;
 
     fn base_event() -> NewFeedbackEvent {
@@ -456,7 +458,7 @@ mod tests {
             feedback_index: U256::from(7u64),
             value: 85,
             value_decimals: 0,
-            tag1: "trustnet:ctx:payments:v1".to_string(),
+            tag1: "trustnet:ctx:agent-collab:messaging:v1".to_string(),
             tag2: "trustnet:v1".to_string(),
             endpoint: "trustnet".to_string(),
             feedback_uri: Some("ipfs://example".to_string()),
@@ -554,9 +556,32 @@ mod tests {
     }
 
     #[test]
+    fn test_to_edge_record_rejects_legacy_context_string() {
+        let mut event = base_event();
+        event.tag1 = "trustnet:ctx:code-exec:v1".to_string();
+
+        let observed_at_u64 =
+            observed_at_for_chain(event.block_number, event.tx_index, event.log_index);
+
+        assert!(event
+            .to_edge_record(
+                1,
+                1,
+                observed_at_u64,
+                Some(Address::repeat_byte(0x33)),
+                Some(Address::repeat_byte(0x44)),
+            )
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
     fn test_to_edge_record_parses_hex_context_id() {
         let mut event = base_event();
-        event.tag1 = format!("0x{}", hex::encode(trustnet_core::CTX_PAYMENTS.as_slice()));
+        event.tag1 = format!(
+            "0x{}",
+            hex::encode(trustnet_core::CTX_AGENT_COLLAB_MESSAGING.as_slice())
+        );
 
         let observed_at_u64 =
             observed_at_for_chain(event.block_number, event.tx_index, event.log_index);
@@ -574,7 +599,7 @@ mod tests {
 
         assert_eq!(
             edge.context_id,
-            ContextId::from(trustnet_core::CTX_PAYMENTS)
+            ContextId::from(trustnet_core::CTX_AGENT_COLLAB_MESSAGING)
         );
     }
 

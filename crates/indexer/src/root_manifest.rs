@@ -237,13 +237,10 @@ pub struct DefaultEdgeValueV1 {
 /// This is `keccak256(JCS(contextStrings[]))`.
 pub fn build_context_registry_hash_v1() -> B256 {
     // Canonical ordering must not change across versions.
-    let contexts = vec![
-        "trustnet:ctx:global:v1",
-        "trustnet:ctx:payments:v1",
-        "trustnet:ctx:code-exec:v1",
-        "trustnet:ctx:writes:v1",
-        "trustnet:ctx:messaging:v1",
-    ];
+    let contexts: Vec<&str> = trustnet_core::CANONICAL_CONTEXTS_V0_7
+        .iter()
+        .map(|(name, _)| *name)
+        .collect();
     let canonical = serde_jcs::to_vec(&contexts).expect("JCS serialization");
     trustnet_core::hashing::keccak256(&canonical)
 }
@@ -252,55 +249,17 @@ pub fn build_context_registry_hash_v1() -> B256 {
 ///
 /// Represented as a JSON object keyed by canonical context strings.
 pub fn default_ttl_policy_v1() -> TtlPolicyV1 {
-    // These defaults are intentionally conservative and can be made configurable.
     let mut policy = TtlPolicyV1::new();
-    policy.insert(
-        "trustnet:ctx:global:v1".to_string(),
-        TtlPolicyEntryV1 { ttl_seconds: 0 },
-    );
-    policy.insert(
-        "trustnet:ctx:payments:v1".to_string(),
-        TtlPolicyEntryV1 {
-            ttl_seconds: 30 * 24 * 60 * 60,
-        },
-    );
-    policy.insert(
-        "trustnet:ctx:code-exec:v1".to_string(),
-        TtlPolicyEntryV1 {
-            ttl_seconds: 7 * 24 * 60 * 60,
-        },
-    );
-    policy.insert(
-        "trustnet:ctx:writes:v1".to_string(),
-        TtlPolicyEntryV1 {
-            ttl_seconds: 7 * 24 * 60 * 60,
-        },
-    );
-    policy.insert(
-        "trustnet:ctx:messaging:v1".to_string(),
-        TtlPolicyEntryV1 {
-            ttl_seconds: 7 * 24 * 60 * 60,
-        },
-    );
+    for (context, context_id) in trustnet_core::CANONICAL_CONTEXTS_V0_7 {
+        let ttl_seconds = trustnet_core::ttl_seconds_for_context_id_v0_7(&context_id).unwrap_or(0);
+        policy.insert(context.to_string(), TtlPolicyEntryV1 { ttl_seconds });
+    }
     policy
 }
 
 /// Resolve TTL seconds for a context id using the default policy.
 pub fn ttl_seconds_for_context_id(context_id: &ContextId) -> u64 {
-    let id = context_id.inner();
-    if *id == trustnet_core::CTX_PAYMENTS {
-        return 30 * 24 * 60 * 60;
-    }
-    if *id == trustnet_core::CTX_CODE_EXEC {
-        return 7 * 24 * 60 * 60;
-    }
-    if *id == trustnet_core::CTX_WRITES {
-        return 7 * 24 * 60 * 60;
-    }
-    if *id == trustnet_core::CTX_MESSAGING {
-        return 7 * 24 * 60 * 60;
-    }
-    0
+    trustnet_core::ttl_seconds_for_context_id_v0_7(context_id.inner()).unwrap_or(0)
 }
 
 /// Build a chain-mode Root Manifest (v0.4).

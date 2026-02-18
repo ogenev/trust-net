@@ -17,8 +17,8 @@ function writeToolMap(filePath) {
     entries: [
       {
         pattern: "^exec$",
-        context: "trustnet:ctx:code-exec:v1",
-        contextId: "0x5efe84ba1b51e4f09cf7666eca4d0685fcccf1ee1f5c051bfd1b40c537b4565b",
+        context: "trustnet:ctx:agent-collab:code-exec:v1",
+        contextId: "0x88329f80681e8980157f3ce652efd4fd18edf3c55202d5fb4f4da8a23e2d6971",
         riskTier: "high",
       },
     ],
