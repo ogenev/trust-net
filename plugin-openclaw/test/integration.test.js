@@ -177,24 +177,119 @@ function basePluginConfig({
   failOpen,
   askMode,
   unmappedDecision,
+  mode,
+  includeChainConfig,
+  rpcUrl,
+  rootRegistry,
+  publisherAddress,
 }) {
-  return {
+  const resolvedMode = mode ?? "local-verifiable";
+  const resolvedIncludeChainConfig = includeChainConfig ?? true;
+
+  const config = {
+    mode: resolvedMode,
     apiBaseUrl,
     decider: "0xdecider000000000000000000000000000000000001",
     targetPrincipalId: "0xtarget000000000000000000000000000000000001",
     toolMapPath,
-    rpcUrl: "https://sepolia.example/rpc",
-    rootRegistry: "0x1111111111111111111111111111111111111111",
-    publisherAddress: "0x2222222222222222222222222222222222222222",
     trustnetBinary,
     receiptOutDir,
     failOpen,
     askMode,
     unmappedDecision,
   };
+
+  if (resolvedIncludeChainConfig) {
+    config.rpcUrl = rpcUrl ?? "https://sepolia.example/rpc";
+    config.rootRegistry = rootRegistry ?? "0x1111111111111111111111111111111111111111";
+    config.publisherAddress = publisherAddress ?? "0x2222222222222222222222222222222222222222";
+  }
+
+  return config;
 }
 
-test("allow decision performs anchored verify, emits receipt, and annotates persisted tool result", async () => {
+test(
+  "local-verifiable allow decision performs anchored verify, emits receipt, and annotates persisted tool result",
+  async () => {
+  const tmpDir = makeTempDir();
+  const toolMapPath = path.join(tmpDir, "tool-map.json");
+  const callsLogPath = path.join(tmpDir, "trustnet-calls.log");
+  const trustnetBinaryPath = path.join(tmpDir, "trustnet");
+  const receiptOutDir = path.join(tmpDir, "receipts");
+  writeToolMap(toolMapPath);
+  writeMockTrustnetBinary(trustnetBinaryPath, callsLogPath);
+
+    const server = await startTrustnetServer({ decision: "allow" });
+    const { api, hooks } = createMockApi({
+      rootDir: tmpDir,
+      pluginConfig: basePluginConfig({
+        apiBaseUrl: server.apiBaseUrl,
+        toolMapPath,
+        trustnetBinary: trustnetBinaryPath,
+        receiptOutDir,
+        mode: "local-verifiable",
+      }),
+    });
+
+    registerTrustNetOpenClawPlugin(api);
+
+    const beforeHook = hooks.get("before_tool_call");
+    const afterHook = hooks.get("after_tool_call");
+    const persistHook = hooks.get("tool_result_persist");
+
+    assert.ok(beforeHook);
+    assert.ok(afterHook);
+    assert.ok(persistHook);
+
+    const event = {
+      toolName: "exec",
+      params: { command: "echo hi" },
+    };
+    const ctx = {
+      sessionKey: "session-1",
+      agentId: "0xagent",
+      toolName: "exec",
+    };
+
+    const beforeResult = await beforeHook(event, ctx);
+    assert.equal(beforeResult, undefined);
+
+    await afterHook(
+      {
+        toolName: "exec",
+        params: { command: "echo hi" },
+        result: { stdout: "hi" },
+      },
+      ctx,
+    );
+
+    const persistResult = persistHook(
+      {
+        toolName: "exec",
+        message: { role: "tool", content: "hi" },
+      },
+      ctx,
+    );
+
+    assert.ok(persistResult);
+    assert.ok(persistResult.message);
+    assert.equal(persistResult.message.metadata.trustnet.decision, "allow");
+
+    const calls = fs.readFileSync(callsLogPath, "utf8").trim().split("\n");
+    assert.equal(calls.length, 2);
+    assert.match(calls[0], /^verify /);
+    assert.match(calls[0], /--rpc-url https:\/\/sepolia\.example\/rpc/);
+    assert.match(calls[0], /--root-registry 0x1111111111111111111111111111111111111111/);
+    assert.match(calls[1], /^receipt /);
+
+    const receipts = fs.readdirSync(receiptOutDir);
+    assert.equal(receipts.length, 1);
+
+    await server.close();
+  },
+);
+
+test("local-lite mode works without chain config and skips anchored verify", async () => {
   const tmpDir = makeTempDir();
   const toolMapPath = path.join(tmpDir, "tool-map.json");
   const callsLogPath = path.join(tmpDir, "trustnet-calls.log");
@@ -211,59 +306,36 @@ test("allow decision performs anchored verify, emits receipt, and annotates pers
       toolMapPath,
       trustnetBinary: trustnetBinaryPath,
       receiptOutDir,
+      mode: "local-lite",
+      includeChainConfig: false,
     }),
   });
 
   registerTrustNetOpenClawPlugin(api);
 
-  const beforeHook = hooks.get("before_tool_call");
-  const afterHook = hooks.get("after_tool_call");
-  const persistHook = hooks.get("tool_result_persist");
-
-  assert.ok(beforeHook);
-  assert.ok(afterHook);
-  assert.ok(persistHook);
-
-  const event = {
-    toolName: "exec",
-    params: { command: "echo hi" },
-  };
   const ctx = {
-    sessionKey: "session-1",
+    sessionKey: "session-lite-1",
     agentId: "0xagent",
     toolName: "exec",
   };
-
-  const beforeResult = await beforeHook(event, ctx);
+  const beforeResult = await hooks.get("before_tool_call")(
+    { toolName: "exec", params: { command: "echo local-lite" } },
+    ctx,
+  );
   assert.equal(beforeResult, undefined);
 
-  await afterHook(
+  await hooks.get("after_tool_call")(
     {
       toolName: "exec",
-      params: { command: "echo hi" },
-      result: { stdout: "hi" },
+      params: { command: "echo local-lite" },
+      result: { stdout: "local-lite" },
     },
     ctx,
   );
-
-  const persistResult = persistHook(
-    {
-      toolName: "exec",
-      message: { role: "tool", content: "hi" },
-    },
-    ctx,
-  );
-
-  assert.ok(persistResult);
-  assert.ok(persistResult.message);
-  assert.equal(persistResult.message.metadata.trustnet.decision, "allow");
 
   const calls = fs.readFileSync(callsLogPath, "utf8").trim().split("\n");
-  assert.equal(calls.length, 2);
-  assert.match(calls[0], /^verify /);
-  assert.match(calls[0], /--rpc-url https:\/\/sepolia\.example\/rpc/);
-  assert.match(calls[0], /--root-registry 0x1111111111111111111111111111111111111111/);
-  assert.match(calls[1], /^receipt /);
+  assert.equal(calls.length, 1);
+  assert.match(calls[0], /^receipt /);
 
   const receipts = fs.readdirSync(receiptOutDir);
   assert.equal(receipts.length, 1);
@@ -271,7 +343,7 @@ test("allow decision performs anchored verify, emits receipt, and annotates pers
   await server.close();
 });
 
-test("deny decision blocks tool call", async () => {
+test("local-verifiable deny decision blocks tool call", async () => {
   const tmpDir = makeTempDir();
   const toolMapPath = path.join(tmpDir, "tool-map.json");
   const callsLogPath = path.join(tmpDir, "trustnet-calls.log");
@@ -286,6 +358,7 @@ test("deny decision blocks tool call", async () => {
       apiBaseUrl: server.apiBaseUrl,
       toolMapPath,
       trustnetBinary: trustnetBinaryPath,
+      mode: "local-verifiable",
     }),
   });
 
@@ -323,6 +396,7 @@ test("verify failure blocks by default and can be configured to fail-open", asyn
       apiBaseUrl: server.apiBaseUrl,
       toolMapPath,
       trustnetBinary: trustnetBinaryPath,
+      mode: "local-verifiable",
       failOpen: false,
     }),
   });
@@ -340,6 +414,7 @@ test("verify failure blocks by default and can be configured to fail-open", asyn
       apiBaseUrl: server.apiBaseUrl,
       toolMapPath,
       trustnetBinary: trustnetBinaryPath,
+      mode: "local-verifiable",
       failOpen: true,
     }),
   });
@@ -352,6 +427,29 @@ test("verify failure blocks by default and can be configured to fail-open", asyn
 
   delete process.env.TRUSTNET_VERIFY_FAIL;
   await server.close();
+});
+
+test("local-verifiable mode without chain config keeps plugin inactive", () => {
+  const tmpDir = makeTempDir();
+  const toolMapPath = path.join(tmpDir, "tool-map.json");
+  writeToolMap(toolMapPath);
+  const { api, hooks, logs } = createMockApi({
+    rootDir: tmpDir,
+    pluginConfig: basePluginConfig({
+      apiBaseUrl: "http://127.0.0.1:8088",
+      toolMapPath,
+      trustnetBinary: "trustnet",
+      mode: "local-verifiable",
+      includeChainConfig: false,
+    }),
+  });
+
+  registerTrustNetOpenClawPlugin(api);
+
+  assert.equal(hooks.size, 0);
+  assert.ok(
+    logs.warn.some((message) => message.includes("rpcUrl is required when mode=local-verifiable")),
+  );
 });
 
 test("missing config keeps plugin inactive instead of throwing", () => {

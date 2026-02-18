@@ -7,11 +7,12 @@ v0.7 default target:
 - `local-verifiable` optional proof/root verification path
 
 Current implementation status in this repo:
-- runtime still executes the anchored compatibility path while Sprint 1 items (`TN-002` through `TN-009`) are being implemented
-- this README keeps the current runnable config/flow and marks anchored checks as transitional, not default
+- mode-based config is implemented (`local-lite`, `local-verifiable`)
+- `local-lite` is now the default and does not require chain RPC or RootRegistry config
+- anchored verification runs only in `local-verifiable` mode while local decision computation is still in progress (`TN-004` through `TN-009`)
 
 The plugin uses OpenClaw lifecycle hooks:
-- `before_tool_call`: map tool -> context, fetch decision/root, verify anchoring (current compatibility flow), enforce ALLOW/ASK/DENY
+- `before_tool_call`: map tool -> context, fetch decision/root, optionally verify anchoring (`local-verifiable`), enforce ALLOW/ASK/DENY
 - `after_tool_call`: emit ActionReceipt via `trustnet receipt`
 - `tool_result_persist`: attach TrustNet receipt metadata to persisted tool result messages
 
@@ -28,9 +29,7 @@ The plugin uses OpenClaw lifecycle hooks:
 - OpenClaw with plugin support (`openclaw.plugin.json` + package `openclaw.extensions` contract)
 - `trustnet` CLI on PATH (or set `trustnetBinary` in plugin config)
 - reachable TrustNet API (`/v1/root`, `/v1/decision`) for current compatibility flow
-- chain RPC URL and deployed `RootRegistry` for current anchored verification
-
-In the v0.7 local-first target state, chain RPC and RootRegistry become optional.
+- chain RPC URL, RootRegistry, and publisher address only when `mode: "local-verifiable"` is enabled
 
 ## Install in OpenClaw
 
@@ -47,7 +46,7 @@ openclaw plugins doctor
 
 If config is missing or invalid, the plugin loads in an inactive mode and logs a warning instead of enforcing decisions.
 
-Current compatibility config snippet:
+Mode-based config snippet:
 
 ```json5
 {
@@ -56,13 +55,15 @@ Current compatibility config snippet:
       "trustnet-openclaw": {
         "enabled": true,
         "config": {
+          "mode": "local-lite",
           "apiBaseUrl": "http://127.0.0.1:8088",
           "decider": "0xDECIDER...",
           "targetPrincipalId": "0xTARGET...",
           "toolMapPath": "./plugin-openclaw/tool_map.example.json",
-          "rpcUrl": "https://sepolia.infura.io/v3/YOUR_KEY",
-          "rootRegistry": "0xROOTREGISTRY...",
-          "publisherAddress": "0xPUBLISHER...",
+          // local-verifiable only:
+          // "rpcUrl": "https://sepolia.infura.io/v3/YOUR_KEY",
+          // "rootRegistry": "0xROOTREGISTRY...",
+          // "publisherAddress": "0xPUBLISHER...",
           "policyManifestHash": "0x...",
           "receiptOutDir": "./.trustnet/receipts",
           "askMode": "block",
@@ -79,14 +80,14 @@ Local path mode (without `plugins install`): set
 `plugins.load.paths: ["./plugin-openclaw"]` and keep the same `entries.trustnet-openclaw.config` block.
 Do not use both install mode and local path mode at the same time.
 
-## Current compatibility enforcement flow
+## Current enforcement flow (TN-002)
 
 1. OpenClaw calls `before_tool_call`.
 2. Plugin resolves tool mapping (`tool_map.example.json`) to `contextId`.
 3. Plugin calls:
    - `GET /v1/root`
    - `GET /v1/decision?decider=...&target=...&contextId=...`
-4. Plugin runs anchored verify:
+4. Plugin runs anchored verify only when `mode = local-verifiable`:
 
 ```bash
 trustnet verify \
@@ -97,7 +98,7 @@ trustnet verify \
   --root-registry 0xROOTREGISTRY...
 ```
 
-5. Plugin enforces decision:
+5. In `local-lite`, step 4 is skipped. Plugin then enforces decision:
    - `allow`: execution proceeds
    - `ask`: blocked by default (`askMode: "block"`) unless explicitly configured to allow
    - `deny`: blocked
@@ -112,5 +113,6 @@ cd plugin-openclaw
 npm test
 ```
 
-The integration tests currently validate anchored compatibility behavior (verify invocation, decision enforcement, and receipt emission).
-Local-first integration coverage is planned under `TN-009`.
+The integration tests validate both:
+- `local-verifiable` anchored compatibility behavior (verify invocation + decision enforcement + receipt emission)
+- `local-lite` behavior without chain config (verify skipped + decision enforcement + receipt emission)

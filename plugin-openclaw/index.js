@@ -17,6 +17,7 @@ import {
   queuePush,
   queueShift,
   resolveTargetPrincipalId,
+  shouldVerifyDecisionBundleAnchored,
   verifyDecisionBundleAnchored,
 } from "./src/internal.js";
 
@@ -70,7 +71,9 @@ export default function registerTrustNetOpenClawPlugin(api) {
         decider: config.decider,
         target: targetPrincipalId,
       });
-      verifyDecisionBundleAnchored(config, root, decisionBundle);
+      if (shouldVerifyDecisionBundleAnchored(config)) {
+        verifyDecisionBundleAnchored(config, root, decisionBundle);
+      }
 
       const decision = normalizeDecision(decisionBundle.decision);
       if (decision === DECISION_DENY) {

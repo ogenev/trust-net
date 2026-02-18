@@ -8,10 +8,13 @@ export const DECISION_ALLOW = "allow";
 export const DECISION_ASK = "ask";
 export const DECISION_DENY = "deny";
 export const ASK_MODE_BLOCK = "block";
+export const MODE_LOCAL_LITE = "local-lite";
+export const MODE_LOCAL_VERIFIABLE = "local-verifiable";
 const ASK_MODE_ALLOW = "allow";
 
 const DECISIONS = new Set([DECISION_ALLOW, DECISION_ASK, DECISION_DENY]);
 const ASK_MODES = new Set([ASK_MODE_BLOCK, ASK_MODE_ALLOW]);
+const MODES = new Set([MODE_LOCAL_LITE, MODE_LOCAL_VERIFIABLE]);
 
 const HEX_ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/;
 const HEX_BYTES32_RE = /^0x[a-fA-F0-9]{64}$/;
@@ -99,18 +102,30 @@ function resolvePath(api, rawPath) {
 export function parseConfig(api) {
   const raw = ensureRecord(api.pluginConfig ?? {}, "pluginConfig");
 
+  const mode = readOptionalEnum(raw, "mode", MODES, MODE_LOCAL_LITE);
   const apiBaseUrl = readRequiredString(raw, "apiBaseUrl");
   const decider = readRequiredString(raw, "decider");
   const toolMapPath = resolvePath(api, readRequiredString(raw, "toolMapPath"));
-  const rpcUrl = readRequiredString(raw, "rpcUrl");
-  const rootRegistry = readRequiredString(raw, "rootRegistry");
-  const publisherAddress = readRequiredString(raw, "publisherAddress");
+  const rpcUrl = readOptionalString(raw, "rpcUrl");
+  const rootRegistry = readOptionalString(raw, "rootRegistry");
+  const publisherAddress = readOptionalString(raw, "publisherAddress");
 
-  if (!HEX_ADDRESS_RE.test(rootRegistry)) {
+  if (rootRegistry && !HEX_ADDRESS_RE.test(rootRegistry)) {
     throw new Error("pluginConfig.rootRegistry must be a 20-byte hex address");
   }
-  if (!HEX_ADDRESS_RE.test(publisherAddress)) {
+  if (publisherAddress && !HEX_ADDRESS_RE.test(publisherAddress)) {
     throw new Error("pluginConfig.publisherAddress must be a 20-byte hex address");
+  }
+  if (mode === MODE_LOCAL_VERIFIABLE) {
+    if (!rpcUrl) {
+      throw new Error("pluginConfig.rpcUrl is required when mode=local-verifiable");
+    }
+    if (!rootRegistry) {
+      throw new Error("pluginConfig.rootRegistry is required when mode=local-verifiable");
+    }
+    if (!publisherAddress) {
+      throw new Error("pluginConfig.publisherAddress is required when mode=local-verifiable");
+    }
   }
 
   const policyManifestHash = readOptionalString(raw, "policyManifestHash");
@@ -134,6 +149,7 @@ export function parseConfig(api) {
   );
 
   return {
+    mode,
     apiBaseUrl,
     decider,
     toolMapPath,
@@ -333,6 +349,12 @@ function runTrustnetCommand(config, args, timeoutMs) {
 }
 
 export function verifyDecisionBundleAnchored(config, root, decisionBundle) {
+  if (!config.publisherAddress || !config.rpcUrl || !config.rootRegistry) {
+    throw new Error(
+      "anchored verification requires publisherAddress, rpcUrl, and rootRegistry configuration",
+    );
+  }
+
   withTempDir("trustnet-openclaw-verify-", (tmpDir) => {
     const rootPath = path.join(tmpDir, "root.json");
     const bundlePath = path.join(tmpDir, "decision.json");
@@ -358,6 +380,10 @@ export function verifyDecisionBundleAnchored(config, root, decisionBundle) {
       config.verifyTimeoutMs,
     );
   });
+}
+
+export function shouldVerifyDecisionBundleAnchored(config) {
+  return config.mode === MODE_LOCAL_VERIFIABLE;
 }
 
 export function emitActionReceipt(config, payload) {

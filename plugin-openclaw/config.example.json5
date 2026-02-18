@@ -8,13 +8,15 @@
       "trustnet-openclaw": {
         "enabled": true,
         "config": {
+          "mode": "local-lite", // local-lite|local-verifiable (default local-lite)
           "apiBaseUrl": "http://127.0.0.1:8088",
           "decider": "0xDECIDER...",
           "targetPrincipalId": "0xTARGET...", // optional if OpenClaw context already provides agentId
           "toolMapPath": "./plugin-openclaw/tool_map.example.json",
-          "rpcUrl": "https://sepolia.infura.io/v3/YOUR_KEY",
-          "rootRegistry": "0xROOTREGISTRY...",
-          "publisherAddress": "0xPUBLISHER...",
+          // local-verifiable only:
+          // "rpcUrl": "https://sepolia.infura.io/v3/YOUR_KEY",
+          // "rootRegistry": "0xROOTREGISTRY...",
+          // "publisherAddress": "0xPUBLISHER...",
           "policyManifestHash": "0x...", // optional, included in ActionReceipts
           "receiptOutDir": "./.trustnet/receipts", // optional
           "trustnetBinary": "trustnet", // optional

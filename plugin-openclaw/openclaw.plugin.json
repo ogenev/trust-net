@@ -1,11 +1,20 @@
 {
   "id": "trustnet-openclaw",
   "name": "TrustNet Enforcement",
-  "description": "TrustNet trust-to-act enforcement for OpenClaw tool execution with mandatory RootRegistry anchoring checks.",
+  "description": "TrustNet trust-to-act enforcement for OpenClaw with mode-based local-first runtime.",
   "configSchema": {
     "type": "object",
     "additionalProperties": false,
     "properties": {
+      "mode": {
+        "type": "string",
+        "enum": [
+          "local-lite",
+          "local-verifiable"
+        ],
+        "description": "Execution mode. local-lite skips chain anchoring; local-verifiable enforces verify against RootRegistry.",
+        "default": "local-lite"
+      },
       "apiBaseUrl": {
         "type": "string",
         "description": "TrustNet API base URL (for /v1/root and /v1/decision)."
@@ -24,17 +33,17 @@
       },
       "rpcUrl": {
         "type": "string",
-        "description": "RPC endpoint used for RootRegistry anchoring checks."
+        "description": "RPC endpoint for anchored verification in local-verifiable mode."
       },
       "rootRegistry": {
         "type": "string",
         "pattern": "^0x[a-fA-F0-9]{40}$",
-        "description": "RootRegistry contract address."
+        "description": "RootRegistry contract address used in local-verifiable mode."
       },
       "publisherAddress": {
         "type": "string",
         "pattern": "^0x[a-fA-F0-9]{40}$",
-        "description": "Trusted root publisher address."
+        "description": "Trusted root publisher address used in local-verifiable mode."
       },
       "policyManifestHash": {
         "type": "string",
@@ -88,6 +97,10 @@
     }
   },
   "uiHints": {
+    "mode": {
+      "label": "Mode",
+      "help": "Use local-lite for chain-free runtime, local-verifiable to enforce RootRegistry verification."
+    },
     "apiBaseUrl": {
       "label": "TrustNet API URL",
       "help": "Base URL for decision and root endpoints."
@@ -102,15 +115,15 @@
     },
     "rpcUrl": {
       "label": "RPC URL",
-      "help": "Chain RPC used to verify RootRegistry anchoring."
+      "help": "Optional in local-lite. Required in local-verifiable mode."
     },
     "rootRegistry": {
       "label": "RootRegistry Address",
-      "help": "Onchain root anchor contract address."
+      "help": "Optional in local-lite. Required in local-verifiable mode."
     },
     "publisherAddress": {
       "label": "Publisher Address",
-      "help": "Expected publisher EOA for root signatures."
+      "help": "Optional in local-lite. Required in local-verifiable mode."
     },
     "receiptOutDir": {
       "label": "Receipt Output Directory",
