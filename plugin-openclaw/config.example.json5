@@ -9,6 +9,8 @@
         "enabled": true,
         "config": {
           "mode": "local-lite", // local-lite|local-verifiable (default local-lite)
+          // local-lite: optional
+          // local-verifiable: required (compatibility API for /v1/root + /v1/decision)
           "apiBaseUrl": "http://127.0.0.1:8088",
           "decider": "0xDECIDER...",
           "targetPrincipalId": "0xTARGET...", // optional if OpenClaw context already provides agentId

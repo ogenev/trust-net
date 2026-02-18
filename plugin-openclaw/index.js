@@ -17,10 +17,21 @@ import {
   queuePush,
   queueShift,
   resolveTargetPrincipalId,
+  MODE_LOCAL_LITE,
   shouldVerifyDecisionBundleAnchored,
   verifyDecisionBundleAnchored,
 } from "./src/internal.js";
+import { decideLocalTrust } from "./src/decision-engine.js";
 import { openTrustStore } from "./src/store.js";
+
+function deriveThresholdsForMapping(mapping) {
+  const riskTier =
+    typeof mapping?.riskTier === "string" ? mapping.riskTier.trim().toLowerCase() : "";
+  if (riskTier === "low") {
+    return { allow: 1, ask: 1 };
+  }
+  return { allow: 2, ask: 1 };
+}
 
 export default function registerTrustNetOpenClawPlugin(api) {
   let config;
@@ -77,23 +88,50 @@ export default function registerTrustNetOpenClawPlugin(api) {
           sessionKey: ctx.sessionKey ?? null,
         },
       });
-      const [root, decisionBundle] = await Promise.all([
-        fetchRoot(config),
-        fetchDecision(config, targetPrincipalId, mapping.contextId),
-      ]);
+      let decision;
+      let root;
+      let decisionBundle;
+      let localDecision;
 
-      ensureDecisionConsistency({
-        mapping,
-        decisionBundle,
-        root,
-        decider: config.decider,
-        target: targetPrincipalId,
-      });
-      if (shouldVerifyDecisionBundleAnchored(config)) {
-        verifyDecisionBundleAnchored(config, root, decisionBundle);
+      if (config.mode === MODE_LOCAL_LITE) {
+        const directEdge = trustStore.getEdgeLatest({
+          rater: config.decider,
+          target: targetPrincipalId,
+          contextId: mapping.contextId,
+        });
+        const candidates = trustStore.listEndorserCandidates({
+          decider: config.decider,
+          target: targetPrincipalId,
+          contextId: mapping.contextId,
+        });
+        localDecision = decideLocalTrust({
+          thresholds: deriveThresholdsForMapping(mapping),
+          levelDt: directEdge?.level ?? 0,
+          candidates: candidates.map((candidate) => ({
+            endorser: candidate.endorser,
+            levelDe: candidate.levelDe,
+            levelEt: candidate.levelEt,
+          })),
+        });
+        decision = normalizeDecision(localDecision.decision);
+      } else {
+        [root, decisionBundle] = await Promise.all([
+          fetchRoot(config),
+          fetchDecision(config, targetPrincipalId, mapping.contextId),
+        ]);
+
+        ensureDecisionConsistency({
+          mapping,
+          decisionBundle,
+          root,
+          decider: config.decider,
+          target: targetPrincipalId,
+        });
+        if (shouldVerifyDecisionBundleAnchored(config)) {
+          verifyDecisionBundleAnchored(config, root, decisionBundle);
+        }
+        decision = normalizeDecision(decisionBundle.decision);
       }
-
-      const decision = normalizeDecision(decisionBundle.decision);
       if (decision === DECISION_DENY) {
         return { block: true, blockReason: buildDecisionBlockReason(decision, mapping) };
       }
@@ -107,6 +145,7 @@ export default function registerTrustNetOpenClawPlugin(api) {
         mapping,
         root,
         decisionBundle,
+        localDecision,
         targetPrincipalId,
       });
 
@@ -133,14 +172,34 @@ export default function registerTrustNetOpenClawPlugin(api) {
     }
 
     try {
-      const receipt = emitActionReceipt(config, {
-        toolName: event.toolName,
-        params: event.params,
-        result: event.result,
-        error: event.error,
-        root: pending.root,
-        decisionBundle: pending.decisionBundle,
-      });
+      let receipt;
+      if (pending.root && pending.decisionBundle) {
+        receipt = emitActionReceipt(config, {
+          toolName: event.toolName,
+          params: event.params,
+          result: event.result,
+          error: event.error,
+          root: pending.root,
+          decisionBundle: pending.decisionBundle,
+        });
+      } else {
+        receipt = {
+          type: "trustnet.localReceipt.pending-v0.7",
+          decision: pending.decision,
+          score: pending.localDecision?.score ?? null,
+          thresholds: pending.localDecision?.thresholds ?? null,
+          endorser: pending.localDecision?.endorser ?? null,
+          levels: {
+            dt: pending.localDecision?.levelDt ?? 0,
+            de: pending.localDecision?.levelDe ?? 0,
+            et: pending.localDecision?.levelEt ?? 0,
+          },
+        };
+      }
+      const epoch =
+        pending.decisionBundle && pending.decisionBundle.epoch !== undefined
+          ? Number(pending.decisionBundle.epoch)
+          : null;
 
       const meta = {
         generatedAt: new Date().toISOString(),
@@ -148,7 +207,7 @@ export default function registerTrustNetOpenClawPlugin(api) {
         toolName: event.toolName,
         decision: pending.decision,
         contextId: pending.mapping.contextId,
-        epoch: Number(pending.decisionBundle.epoch),
+        epoch,
         receipt,
       };
       const receiptPath = persistReceipt(config, meta);
@@ -160,7 +219,7 @@ export default function registerTrustNetOpenClawPlugin(api) {
         toolName: event.toolName,
         contextId: pending.mapping.contextId,
         decision: pending.decision,
-        epoch: Number(pending.decisionBundle.epoch),
+        epoch,
         createdAt: Date.now(),
         receiptId:
           typeof receipt?.receiptId === "string" && receipt.receiptId.length > 0
@@ -174,7 +233,7 @@ export default function registerTrustNetOpenClawPlugin(api) {
         {
           decision: pending.decision,
           contextId: pending.mapping.contextId,
-          epoch: Number(pending.decisionBundle.epoch),
+          epoch,
           receiptPath,
         },
       );

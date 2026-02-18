@@ -170,6 +170,37 @@ export function openTrustStore(trustStorePath) {
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
+  const selectEdgeLatestStatement = db.prepare(`
+    SELECT
+      level_i8,
+      updated_at_u64,
+      evidence_ref
+    FROM edges_latest
+    WHERE rater = ?
+      AND target = ?
+      AND context_id = ?
+    LIMIT 1
+  `);
+
+  const selectEndorserCandidatesStatement = db.prepare(`
+    SELECT
+      de.target AS endorser,
+      de.level_i8 AS level_de,
+      COALESCE(et.level_i8, 0) AS level_et,
+      et.updated_at_u64 AS et_updated_at_u64,
+      et.evidence_ref AS et_evidence_ref
+    FROM edges_latest AS de
+    LEFT JOIN edges_latest AS et
+      ON et.rater = de.target
+      AND et.target = ?
+      AND et.context_id = de.context_id
+    WHERE de.rater = ?
+      AND de.context_id = ?
+      AND de.level_i8 > 0
+      AND de.target <> ?
+    ORDER BY de.target ASC
+  `);
+
   return {
     path: resolvedPath,
     upsertEdgeLatest(edge) {
@@ -227,6 +258,42 @@ export function openTrustStore(trustStorePath) {
         normalizeTimestamp(row.createdAt),
         JSON.stringify(row.receipt ?? null),
       );
+    },
+    getEdgeLatest(edgeRef) {
+      const input = edgeRef ?? {};
+      const row = selectEdgeLatestStatement.get(
+        ensureNonEmptyString(input.rater, "edgeRef.rater"),
+        ensureNonEmptyString(input.target, "edgeRef.target"),
+        ensureNonEmptyString(input.contextId, "edgeRef.contextId").toLowerCase(),
+      );
+      if (!row) {
+        return undefined;
+      }
+      return {
+        level: Number(row.level_i8),
+        updatedAt: Number(row.updated_at_u64),
+        evidenceRef: row.evidence_ref ?? null,
+      };
+    },
+    listEndorserCandidates(query) {
+      const input = query ?? {};
+      const rows = selectEndorserCandidatesStatement.all(
+        ensureNonEmptyString(input.target, "query.target"),
+        ensureNonEmptyString(input.decider, "query.decider"),
+        ensureNonEmptyString(input.contextId, "query.contextId").toLowerCase(),
+        ensureNonEmptyString(input.target, "query.target"),
+      );
+      return rows.map((row) => ({
+        endorser: row.endorser,
+        levelDe: Number(row.level_de),
+        levelEt: Number(row.level_et),
+        etUpdatedAt:
+          row.et_updated_at_u64 === null || row.et_updated_at_u64 === undefined
+            ? null
+            : Number(row.et_updated_at_u64),
+        etHasEvidence:
+          typeof row.et_evidence_ref === "string" && row.et_evidence_ref.trim().length > 0,
+      }));
     },
     close() {
       db.close();

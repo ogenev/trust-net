@@ -52,6 +52,71 @@ test("local trust store creates schema and enforces latest-wins edge updates", (
     updatedAt: 250,
     source: "manual-newer",
   });
+  store.upsertEdgeLatest({
+    rater: "0xdecider",
+    target: "0xendorser-a",
+    contextId: "0xcontext",
+    level: 2,
+    updatedAt: 260,
+    source: "manual-newer",
+  });
+  store.upsertEdgeLatest({
+    rater: "0xendorser-a",
+    target: "0xtarget",
+    contextId: "0xcontext",
+    level: 1,
+    updatedAt: 261,
+    evidenceRef: "receipt:abc",
+    source: "manual-newer",
+  });
+  store.upsertEdgeLatest({
+    rater: "0xdecider",
+    target: "0xendorser-b",
+    contextId: "0xcontext",
+    level: 1,
+    updatedAt: 262,
+    source: "manual-newer",
+  });
+  store.upsertEdgeLatest({
+    rater: "0xendorser-b",
+    target: "0xtarget",
+    contextId: "0xcontext",
+    level: 2,
+    updatedAt: 263,
+    source: "manual-newer",
+  });
+
+  const direct = store.getEdgeLatest({
+    rater: "0xdecider",
+    target: "0xtarget",
+    contextId: "0xcontext",
+  });
+  assert.ok(direct);
+  assert.equal(direct.level, 2);
+  assert.equal(direct.updatedAt, 250);
+  assert.equal(direct.evidenceRef, null);
+
+  const endorserCandidates = store.listEndorserCandidates({
+    decider: "0xdecider",
+    target: "0xtarget",
+    contextId: "0xcontext",
+  });
+  assert.deepEqual(endorserCandidates, [
+    {
+      endorser: "0xendorser-a",
+      levelDe: 2,
+      levelEt: 1,
+      etUpdatedAt: 261,
+      etHasEvidence: true,
+    },
+    {
+      endorser: "0xendorser-b",
+      levelDe: 1,
+      levelEt: 2,
+      etUpdatedAt: 263,
+      etHasEvidence: false,
+    },
+  ]);
 
   store.insertReceipt({
     receiptId: "receipt-1",

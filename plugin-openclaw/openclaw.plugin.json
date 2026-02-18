@@ -17,7 +17,7 @@
       },
       "apiBaseUrl": {
         "type": "string",
-        "description": "TrustNet API base URL (for /v1/root and /v1/decision)."
+        "description": "TrustNet API base URL. Optional in local-lite; required in local-verifiable compatibility mode."
       },
       "decider": {
         "type": "string",
@@ -107,7 +107,7 @@
     },
     "apiBaseUrl": {
       "label": "TrustNet API URL",
-      "help": "Base URL for decision and root endpoints."
+      "help": "Optional in local-lite. Required in local-verifiable mode."
     },
     "decider": {
       "label": "Decider",

@@ -104,7 +104,7 @@ export function parseConfig(api) {
   const raw = ensureRecord(api.pluginConfig ?? {}, "pluginConfig");
 
   const mode = readOptionalEnum(raw, "mode", MODES, MODE_LOCAL_LITE);
-  const apiBaseUrl = readRequiredString(raw, "apiBaseUrl");
+  const apiBaseUrl = readOptionalString(raw, "apiBaseUrl");
   const decider = readRequiredString(raw, "decider");
   const toolMapPath = resolvePath(api, readRequiredString(raw, "toolMapPath"));
   const rpcUrl = readOptionalString(raw, "rpcUrl");
@@ -118,6 +118,9 @@ export function parseConfig(api) {
     throw new Error("pluginConfig.publisherAddress must be a 20-byte hex address");
   }
   if (mode === MODE_LOCAL_VERIFIABLE) {
+    if (!apiBaseUrl) {
+      throw new Error("pluginConfig.apiBaseUrl is required when mode=local-verifiable");
+    }
     if (!rpcUrl) {
       throw new Error("pluginConfig.rpcUrl is required when mode=local-verifiable");
     }
@@ -282,6 +285,9 @@ async function fetchJson(url, timeoutMs) {
 }
 
 export async function fetchDecision(config, targetPrincipalId, contextId) {
+  if (!config.apiBaseUrl) {
+    throw new Error("pluginConfig.apiBaseUrl is required for API decision fetch");
+  }
   const url = new URL("/v1/decision", config.apiBaseUrl);
   url.searchParams.set("decider", config.decider);
   url.searchParams.set("target", targetPrincipalId);
@@ -290,6 +296,9 @@ export async function fetchDecision(config, targetPrincipalId, contextId) {
 }
 
 export async function fetchRoot(config) {
+  if (!config.apiBaseUrl) {
+    throw new Error("pluginConfig.apiBaseUrl is required for root fetch");
+  }
   const url = new URL("/v1/root", config.apiBaseUrl);
   return fetchJson(url.toString(), config.requestTimeoutMs);
 }

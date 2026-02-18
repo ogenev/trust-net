@@ -11,11 +11,12 @@ Current implementation status in this repo:
 - `local-lite` is now the default and does not require chain RPC or RootRegistry config
 - local SQLite trust store is implemented (`edges_latest`, `receipts`, `agents`)
 - local decision engine module is implemented with Rust-equivalent scoring semantics (`TN-005`)
-- anchored verification runs only in `local-verifiable` mode while `before_tool_call` still uses API decision compatibility flow (`TN-006` through `TN-009`)
+- `before_tool_call` now computes decisions directly from local `edges_latest` in `local-lite` (`TN-006`)
+- `local-verifiable` keeps API decision/root compatibility flow plus anchored verification until sidecar work (`TN-013+`)
 
 The plugin uses OpenClaw lifecycle hooks:
-- `before_tool_call`: map tool -> context, fetch decision/root, optionally verify anchoring (`local-verifiable`), enforce ALLOW/ASK/DENY
-- `after_tool_call`: emit ActionReceipt via `trustnet receipt`
+- `before_tool_call`: map tool -> context, compute local decision in `local-lite` (or fetch decision/root in `local-verifiable`), enforce ALLOW/ASK/DENY
+- `after_tool_call`: persist receipt metadata (`local-lite` local snapshot; `local-verifiable` ActionReceipt via `trustnet receipt`)
 - `tool_result_persist`: attach TrustNet receipt metadata to persisted tool result messages
 
 ## Files
@@ -29,9 +30,9 @@ The plugin uses OpenClaw lifecycle hooks:
 ## Requirements
 
 - OpenClaw with plugin support (`openclaw.plugin.json` + package `openclaw.extensions` contract)
-- `trustnet` CLI on PATH (or set `trustnetBinary` in plugin config)
+- `trustnet` CLI on PATH (or set `trustnetBinary`) for `local-verifiable` ActionReceipt path
 - Node runtime with `node:sqlite` support for local trust store persistence
-- reachable TrustNet API (`/v1/root`, `/v1/decision`) for current compatibility flow
+- reachable TrustNet API (`/v1/root`, `/v1/decision`) only for `local-verifiable` compatibility flow
 - chain RPC URL, RootRegistry, and publisher address only when `mode: "local-verifiable"` is enabled
 
 ## Install in OpenClaw
@@ -84,13 +85,13 @@ Local path mode (without `plugins install`): set
 `plugins.load.paths: ["./plugin-openclaw"]` and keep the same `entries.trustnet-openclaw.config` block.
 Do not use both install mode and local path mode at the same time.
 
-## Current enforcement flow (TN-002)
+## Current enforcement flow (TN-006)
 
 1. OpenClaw calls `before_tool_call`.
 2. Plugin resolves tool mapping (`tool_map.example.json`) to `contextId`.
-3. Plugin calls:
-   - `GET /v1/root`
-   - `GET /v1/decision?decider=...&target=...&contextId=...`
+3. Decision source by mode:
+   - `local-lite`: compute decision from local SQLite `edges_latest` using TrustNet scoring semantics.
+   - `local-verifiable`: call `GET /v1/root` and `GET /v1/decision?...` (compatibility flow).
 4. Plugin runs anchored verify only when `mode = local-verifiable`:
 
 ```bash
@@ -102,12 +103,14 @@ trustnet verify \
   --root-registry 0xROOTREGISTRY...
 ```
 
-5. In `local-lite`, step 4 is skipped. Plugin then enforces decision:
+5. Plugin enforces decision:
    - `allow`: execution proceeds
    - `ask`: blocked by default (`askMode: "block"`) unless explicitly configured to allow
    - `deny`: blocked
 6. OpenClaw calls `after_tool_call`.
-7. Plugin emits ActionReceipt via `trustnet receipt`, writes it to SQLite `receipts`, and optionally persists JSON to `receiptOutDir`.
+7. Plugin records receipt metadata in SQLite `receipts` and optional JSON at `receiptOutDir`:
+   - `local-lite`: local decision snapshot (no API/proof dependency)
+   - `local-verifiable`: ActionReceipt via `trustnet receipt`
 8. On `tool_result_persist`, plugin attaches receipt summary metadata to the transcript message.
 
 ## Run tests
@@ -119,4 +122,4 @@ npm test
 
 The integration tests validate both:
 - `local-verifiable` anchored compatibility behavior (verify invocation + decision enforcement + receipt emission)
-- `local-lite` behavior without chain config (verify skipped + decision enforcement + receipt emission)
+- `local-lite` local-only behavior (no API dependency, local decision enforcement, local receipt persistence)
