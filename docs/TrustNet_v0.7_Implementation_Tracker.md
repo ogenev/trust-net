@@ -39,15 +39,15 @@ Update this file after each implemented item so status, evidence, and validation
 | TN-009 | P0 | Sprint 1 | Rewrite plugin integration tests for local-first behavior | Done | Codex | 2026-02-25 | e693946 (2026-02-18) | Merged and pushed |
 | TN-010 | P1 | Sprint 2 | Add Trust Circles policy model (`onlyMe`, `myContacts`, `openclawVerified`, `custom`) | Done | Codex | 2026-03-02 | 411a55a (2026-02-19) | Merged and pushed |
 | TN-011 | P1 | Sprint 2 | Add Agent Card import/verify/store (`openclaw.agentCard.v1`) | Done | Codex | 2026-03-03 | 6e6d776 (2026-02-19) | Merged and pushed |
-| TN-012 | P1 | Sprint 2 | Add trust management commands/workflows (`trust`, `block`, `endorse`, `status`) | In Progress | Codex | 2026-03-05 | local-uncommitted (2026-02-19) | Durable confirmation tickets + trust workflow actions implemented and validated; pending commit |
+| TN-012 | P1 | Sprint 2 | Add trust management commands/workflows (`trust`, `block`, `endorse`, `status`) | Done | Codex | 2026-03-05 | 11aaea5, 2280855 (2026-02-19) | Merged and pushed; TS+ESLint hardening follow-up complete |
 | TN-013 | P2 | Sprint 3 | Make sidecar/API proof flow optional for `local-verifiable` mode only | Planned | TBD | 2026-03-10 | - | L1/L0 unaffected |
 | TN-014 | P2 | Sprint 3 | Update API decision contract for optional-proof mode | Planned | TBD | 2026-03-11 | - | Keep compatibility path |
 | TN-015 | P2 | Sprint 3 | Update verifier/CLI for v0.7 local receipt while keeping legacy receipt compatibility | Planned | TBD | 2026-03-12 | - | Dual-format parsing |
 
 ## Current Sprint Focus
 - Sprint 1 P0 (TN-001 through TN-009) is complete and merged.
-- Sprint 2 progress: TN-010 and TN-011 are complete and merged.
-- TN-012 is now active (trust management workflows with explicit confirmation).
+- Sprint 2 progress: TN-010, TN-011, and TN-012 are complete and merged.
+- Next planned item: TN-013 (`local-verifiable` optional-proof sidecar/API flow).
 
 ## Definition of Done
 An item may move to `Done` only when all apply:
@@ -66,6 +66,8 @@ RUSTFLAGS="-D warnings" cargo +nightly clippy --workspace --all-features --locke
 Plugin validation (run when plugin changes are included):
 ```bash
 cd plugin-openclaw
+npm run lint
+npm run typecheck
 npm test
 ```
 
@@ -125,6 +127,12 @@ npm test
 | 2026-02-19 | TN-012 | `cargo nextest run --workspace` | PASS | 138 passed, 0 failed |
 | 2026-02-19 | TN-012 | `cargo +nightly fmt --all` | PASS | Formatting clean |
 | 2026-02-19 | TN-012 | `RUSTFLAGS="-D warnings" cargo +nightly clippy --workspace --all-features --locked` | PASS | No warnings/errors |
+| 2026-02-19 | TN-012 follow-up (TS/ESLint) | `cd plugin-openclaw && npm run lint` | PASS | ESLint clean with TS flat config |
+| 2026-02-19 | TN-012 follow-up (TS/ESLint) | `cd plugin-openclaw && npm run typecheck` | PASS | TypeScript check passed |
+| 2026-02-19 | TN-012 follow-up (TS/ESLint) | `cd plugin-openclaw && npm test` | PASS | 56 passed, 0 failed |
+| 2026-02-19 | TN-012 follow-up (TS/ESLint) | `cargo nextest run --workspace` | PASS | 138 passed, 0 failed |
+| 2026-02-19 | TN-012 follow-up (TS/ESLint) | `cargo +nightly fmt --all` | PASS | Formatting clean |
+| 2026-02-19 | TN-012 follow-up (TS/ESLint) | `RUSTFLAGS="-D warnings" cargo +nightly clippy --workspace --all-features --locked` | PASS | No warnings/errors |
 
 ## Implementation Log
 | Date | IDs | Summary | Key Files | Follow-ups |
@@ -142,3 +150,4 @@ npm test
 | 2026-02-18 | TN-010 | Added Trust Circles policy model in local-lite (`onlyMe`, `myContacts`, `openclawVerified`, `custom`), wired endorser filtering before local scoring, updated plugin config schema/examples, and added preset/filter regression coverage plus ASK-flow fixture updates for the new default | `plugin-openclaw/src/trust-circles.js`, `plugin-openclaw/index.js`, `plugin-openclaw/openclaw.plugin.json`, `plugin-openclaw/config.example.json5`, `plugin-openclaw/README.md`, `plugin-openclaw/test/trust-circles.test.js`, `plugin-openclaw/test/integration.test.js`, `plugin-openclaw/test/ask-actions.test.js`, `plugin-openclaw/testing/helpers.js` | Commit TN-010 and start TN-011 |
 | 2026-02-19 | TN-011 | Added runtime Agent Card import/verify/store for `openclaw.agentCard.v1`, including `agentRef=sha256(agentPubKey)` binding checks, dual signature verification (`agentSig` + `ownerSig`), trusted-owner policy, and status/list workflows | `plugin-openclaw/src/agent-cards.js`, `plugin-openclaw/index.js`, `plugin-openclaw/src/store.js`, `plugin-openclaw/openclaw.plugin.json`, `plugin-openclaw/config.example.json5`, `plugin-openclaw/README.md`, `plugin-openclaw/test/agent-cards.test.js`, `plugin-openclaw/test/agent-card-actions.test.js`, `plugin-openclaw/test/store.test.js`, `plugin-openclaw/testing/helpers.js` | Start TN-012 |
 | 2026-02-19 | TN-012 | Implemented trust management workflow actions (`trust`, `block`, `endorse`, `status`) with durable SQLite confirmation tickets and replay/expiry enforcement, plus status reads and trust-circle-filtered candidate visibility | `plugin-openclaw/src/trust-workflows.js`, `plugin-openclaw/index.js`, `plugin-openclaw/src/store.js`, `plugin-openclaw/openclaw.plugin.json`, `plugin-openclaw/config.example.json5`, `plugin-openclaw/README.md`, `plugin-openclaw/test/trust-workflows.test.js`, `plugin-openclaw/test/trust-workflow-actions.test.js`, `plugin-openclaw/test/store.test.js`, `plugin-openclaw/testing/helpers.js` | Commit TN-012 and start TN-013 |
+| 2026-02-19 | TN-012 follow-up | Migrated `plugin-openclaw` to TypeScript, removed legacy `plugin_stub`, added ESLint + typecheck workflow, and codified mandatory plugin validation commands in AGENTS | `plugin-openclaw/index.ts`, `plugin-openclaw/src/internal.ts`, `plugin-openclaw/src/store.ts`, `plugin-openclaw/eslint.config.js`, `plugin-openclaw/package.json`, `plugin-openclaw/tsconfig.json`, `plugin-openclaw/README.md`, `AGENTS.md` | Start TN-013 |
