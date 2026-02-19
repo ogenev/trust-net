@@ -26,13 +26,13 @@ The plugin uses OpenClaw lifecycle hooks:
 
 ## Files
 
-- `index.js`: production plugin runtime entrypoint
-- `src/ask-actions.js`: ASK ticket + action normalization utilities
+- `index.ts`: production plugin runtime entrypoint
+- `src/ask-actions.ts`: ASK ticket + action normalization utilities
 - `openclaw.plugin.json`: plugin manifest + config schema
 - `tool_map.example.json`: deterministic tool -> context mapping
 - `config.example.json5`: OpenClaw plugin config example
-- `test/integration.test.js`: runtime integration tests (mock server + mock trustnet CLI)
-- `test/ask-actions.test.js`: ASK action behavior tests
+- `test/integration.test.ts`: runtime integration tests (mock server + mock trustnet CLI)
+- `test/ask-actions.test.ts`: ASK action behavior tests
 
 ## Requirements
 
@@ -176,6 +176,8 @@ Confirmation model:
 
 ```bash
 cd plugin-openclaw
+npm run lint
+npm run typecheck
 npm test
 ```
 

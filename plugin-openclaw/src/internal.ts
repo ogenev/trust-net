@@ -201,7 +201,9 @@ export function loadToolMap(toolMapPath) {
       regex = new RegExp(pattern);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      throw new Error(`tool map entry ${index} has invalid pattern: ${message}`);
+      throw new Error(`tool map entry ${index} has invalid pattern: ${message}`, {
+        cause: error,
+      });
     }
 
     return {

@@ -101,7 +101,9 @@ function loadDatabaseSync() {
     return sqlite.DatabaseSync;
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
-    throw new Error(`node:sqlite is required for local trust store support (${reason})`);
+    throw new Error(`node:sqlite is required for local trust store support (${reason})`, {
+      cause: error,
+    });
   }
 }
 

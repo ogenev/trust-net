@@ -39,3 +39,14 @@ cargo check --workspace --all-features
 # Check documentation
 cargo docs --document-private-items 
 ```
+
+### Plugin Validation Rule
+
+After any code change under `plugin-openclaw/`, always run all of the following before handing off:
+
+```bash
+cd plugin-openclaw
+npm run lint
+npm run typecheck
+npm test
+```

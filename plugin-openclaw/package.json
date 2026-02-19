@@ -5,11 +5,23 @@
   "description": "TrustNet OpenClaw enforcement plugin (v0.7 local-first default, anchored compatibility path)",
   "type": "module",
   "scripts": {
-    "test": "node --test"
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "test": "tsx --test test/**/*.test.ts",
+    "typecheck": "tsc --project tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^22.18.10",
+    "eslint": "^10.0.0",
+    "globals": "^17.3.0",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.2",
+    "typescript-eslint": "^8.56.0"
   },
   "openclaw": {
     "extensions": [
-      "./index.js"
+      "./index.ts"
     ]
   }
 }
