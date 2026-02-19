@@ -37,6 +37,14 @@ import { decideLocalTrust } from "./src/decision-engine.js";
 import { buildLocalInteractionReceipt, shouldPersistReceiptForMapping } from "./src/local-receipt.js";
 import { openTrustStore } from "./src/store.js";
 import { filterCandidatesByTrustCircle, parseTrustCirclePolicy } from "./src/trust-circles.js";
+import {
+  AGENT_CARD_ACTION_IMPORT,
+  AGENT_CARD_ACTION_STATUS,
+  normalizeAgentCardAction,
+  parseAgentCardPolicy,
+  readAgentCardActionInput,
+  verifyAgentCard,
+} from "./src/agent-cards.js";
 
 const DIRECT_ALLOW_LEVEL = 2;
 const DIRECT_BLOCK_LEVEL = -2;
@@ -58,6 +66,45 @@ function readAskActionInput(event, ctx) {
     return ctx.trustnetAskAction;
   }
   return undefined;
+}
+
+function summarizeImportedAgent(agent, includeCard) {
+  if (!agent || typeof agent !== "object") {
+    return null;
+  }
+  const agentCard = agent.agentCard && typeof agent.agentCard === "object" ? agent.agentCard : null;
+  if (!agentCard) {
+    return null;
+  }
+  const metadata = agent.metadata && typeof agent.metadata === "object" ? agent.metadata : null;
+  const cardMetadata =
+    metadata &&
+    metadata.agentCard &&
+    typeof metadata.agentCard === "object" &&
+    !Array.isArray(metadata.agentCard)
+      ? metadata.agentCard
+      : null;
+  const status =
+    cardMetadata && typeof cardMetadata.verificationStatus === "string"
+      ? cardMetadata.verificationStatus
+      : "unknown";
+  const ownerTrusted = cardMetadata ? cardMetadata.ownerTrusted === true : false;
+
+  const summary = {
+    principalId: agent.principalId,
+    displayName: agent.displayName ?? null,
+    status,
+    ownerTrusted,
+    source: agent.source,
+    firstSeenAtU64: agent.firstSeenAt,
+    lastSeenAtU64: agent.lastSeenAt,
+    issuedAt: typeof agentCard?.issuedAt === "string" ? agentCard.issuedAt : null,
+    ownerPubKey: typeof agentCard?.ownerPubKey === "string" ? agentCard.ownerPubKey : null,
+  };
+  if (includeCard && agentCard) {
+    summary.agentCard = agentCard;
+  }
+  return summary;
 }
 
 function applyAskAction({
@@ -164,9 +211,11 @@ export default function registerTrustNetOpenClawPlugin(api) {
   let toolMapEntries;
   let trustStore;
   let trustCirclePolicy;
+  let agentCardPolicy;
   try {
     config = parseConfig(api);
     trustCirclePolicy = parseTrustCirclePolicy(api.pluginConfig);
+    agentCardPolicy = parseAgentCardPolicy(api.pluginConfig);
     toolMapEntries = loadToolMap(config.toolMapPath);
     trustStore = openTrustStore(config.trustStorePath);
     trustStore.upsertAgent({
@@ -195,9 +244,87 @@ export default function registerTrustNetOpenClawPlugin(api) {
   api.logger.debug?.(
     `trustnet-openclaw: trust circle preset=${trustCirclePolicy.default} active for local-lite decisions`,
   );
+  api.logger.debug?.(
+    `trustnet-openclaw: trusted owner keys configured=${agentCardPolicy.trustedOwnerPubKeys.length}`,
+  );
 
   api.on("before_tool_call", async (event, ctx) => {
     try {
+      const agentCardActionInput = readAgentCardActionInput(event, ctx);
+      if (agentCardActionInput !== undefined) {
+        const action = normalizeAgentCardAction(agentCardActionInput);
+        if (action.action === AGENT_CARD_ACTION_IMPORT) {
+          const verification = verifyAgentCard(action.card, agentCardPolicy);
+          const importedAtMs = Date.now();
+          trustStore.upsertAgent({
+            principalId: verification.principalId,
+            displayName: verification.card.displayName,
+            agentCard: verification.card,
+            metadata: {
+              agentCard: {
+                source: action.source,
+                importedAt: new Date(importedAtMs).toISOString(),
+                verificationStatus: verification.status,
+                ownerTrusted: verification.ownerTrusted,
+                ownerPubKey: verification.card.ownerPubKey,
+                unsignedPayloadHash: verification.unsignedPayloadHash,
+              },
+            },
+            source: `agent-card:${action.source}`,
+            seenAt: importedAtMs,
+          });
+          api.logger.info?.(
+            `trustnet-openclaw: imported Agent Card principal=${verification.principalId} status=${verification.status}`,
+          );
+          return {
+            block: true,
+            blockReason: "TrustNet AGENT CARD import handled",
+            trustnetAgentCard: {
+              type: "trustnet.agentCard.importResult.v1",
+              action: AGENT_CARD_ACTION_IMPORT,
+              principalId: verification.principalId,
+              displayName: verification.card.displayName,
+              status: verification.status,
+              ownerTrusted: verification.ownerTrusted,
+            },
+          };
+        }
+
+        if (action.action === AGENT_CARD_ACTION_STATUS) {
+          if (action.principalId) {
+            const agent = trustStore.getAgent({ principalId: action.principalId });
+            const summary = summarizeImportedAgent(agent, action.includeCard);
+            return {
+              block: true,
+              blockReason: "TrustNet AGENT CARD status handled",
+              trustnetAgentCard: {
+                type: "trustnet.agentCard.statusResult.v1",
+                action: AGENT_CARD_ACTION_STATUS,
+                principalId: action.principalId,
+                found: Boolean(summary),
+                agent: summary,
+              },
+            };
+          }
+
+          const agents = trustStore
+            .listAgents({ limit: action.limit })
+            .map((agent) => summarizeImportedAgent(agent, action.includeCard))
+            .filter(Boolean);
+          return {
+            block: true,
+            blockReason: "TrustNet AGENT CARD status handled",
+            trustnetAgentCard: {
+              type: "trustnet.agentCard.statusResult.v1",
+              action: AGENT_CARD_ACTION_STATUS,
+              found: agents.length > 0,
+              count: agents.length,
+              agents,
+            },
+          };
+        }
+      }
+
       const mapping = findToolMapping(toolMapEntries, event.toolName);
       if (!mapping) {
         if (config.unmappedDecision === DECISION_DENY) {
@@ -217,9 +344,6 @@ export default function registerTrustNetOpenClawPlugin(api) {
       trustStore.upsertAgent({
         principalId: targetPrincipalId,
         source: "runtime-session",
-        metadata: {
-          sessionKey: ctx.sessionKey ?? null,
-        },
       });
       let decision;
       let root;

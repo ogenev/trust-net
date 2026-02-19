@@ -107,6 +107,20 @@
           }
         }
       },
+      "agentCards": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "Agent Card verification policy for runtime imports.",
+        "properties": {
+          "trustedOwnerPubKeys": {
+            "type": "array",
+            "description": "Trusted Owner ed25519 public keys (base64 raw 32-byte keys). Imported cards signed by unknown owners are marked owner-unknown.",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
       "requestTimeoutMs": {
         "type": "number",
         "minimum": 1
@@ -181,6 +195,10 @@
     "trustCircles": {
       "label": "Trust Circles",
       "help": "Select onlyMe/myContacts/openclawVerified/custom and provide corresponding endorser lists for local-lite."
+    },
+    "agentCards": {
+      "label": "Agent Cards",
+      "help": "Configure trusted owner public keys used when verifying runtime Agent Card imports."
     },
     "failOpen": {
       "label": "Fail Open",

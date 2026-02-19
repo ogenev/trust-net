@@ -176,6 +176,7 @@ export function basePluginConfig({
   receiptOutDir,
   trustStorePath,
   trustCircles,
+  agentCards,
   failOpen,
   askMode,
   unmappedDecision,
@@ -203,6 +204,9 @@ export function basePluginConfig({
   };
   if (trustCircles && typeof trustCircles === "object") {
     config.trustCircles = trustCircles;
+  }
+  if (agentCards && typeof agentCards === "object") {
+    config.agentCards = agentCards;
   }
   if (typeof apiBaseUrl === "string" && apiBaseUrl.trim().length > 0) {
     config.apiBaseUrl = apiBaseUrl;

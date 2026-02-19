@@ -15,6 +15,7 @@ Current implementation status in this repo:
 - ASK action flow is implemented with ticketed retries and edge writes (`allow_once`, `allow_ttl`, `allow_always`, `block`) (`TN-007`)
 - receipt persistence now emits `trustnet.receipt.v1` local receipts with decision/why snapshots for high-risk mappings (`TN-008`)
 - Trust Circles policy primitive is implemented for local-lite (`onlyMe`, `myContacts`, `openclawVerified`, `custom`) (`TN-010`)
+- runtime Agent Card import/verify/store is implemented (`openclaw.agentCard.v1`, `trustnetAgentCardAction: import|status`) (`TN-011`)
 - `local-verifiable` keeps API decision/root compatibility flow plus anchored verification until sidecar work (`TN-013+`)
 
 The plugin uses OpenClaw lifecycle hooks:
@@ -84,6 +85,9 @@ Mode-based config snippet:
               "custom": ["0xCUSTOM_ENDORSER..."]
             }
           },
+          "agentCards": {
+            "trustedOwnerPubKeys": ["BASE64_OWNER_PUBKEY..."]
+          },
           "askMode": "block",
           "unmappedDecision": "deny",
           "failOpen": false
@@ -128,6 +132,24 @@ trustnet verify \
    - includes `argsHash`/`resultHash`, `decision`, `userApproved`, and decision/why snapshots
    - `local-verifiable` additionally runs `trustnet receipt` and embeds that output as optional verifiable metadata
 8. On `tool_result_persist`, plugin attaches receipt summary metadata to the transcript message.
+
+## Runtime Agent Card workflow (TN-011)
+
+Runtime actions are passed in hook payloads as `trustnetAgentCardAction`:
+
+- `import`: verify and store one `openclaw.agentCard.v1`
+- `status`: query one imported card (by `principalId`) or list imported cards
+
+Agent Card verification enforces:
+
+- `agentRef == sha256(agentPubKey)` (agent binding)
+- valid ed25519 `agentSig` over canonical unsigned card payload
+- valid ed25519 `ownerSig` over the same payload
+
+Owner trust policy:
+
+- if `ownerPubKey` is in `config.agentCards.trustedOwnerPubKeys` => status `verified`
+- otherwise => status `owner-unknown` (still cryptographically valid, but owner not trusted locally)
 
 ## Run tests
 

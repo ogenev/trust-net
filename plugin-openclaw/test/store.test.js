@@ -260,3 +260,53 @@ test("local trust store ignores expired TTL edges in reads", () => {
 
   store.close();
 });
+
+test("local trust store returns imported agent cards via getAgent/listAgents", () => {
+  const trustStorePath = makeTempDbPath();
+  const store = openTrustStore(trustStorePath);
+
+  store.upsertAgent({
+    principalId: "0xagent-a",
+    displayName: "Agent A",
+    source: "agent-card:import",
+    seenAt: 100,
+    agentCard: {
+      type: "openclaw.agentCard.v1",
+      agentRef: "0xagent-a",
+    },
+    metadata: {
+      agentCard: {
+        verificationStatus: "verified",
+      },
+    },
+  });
+  store.upsertAgent({
+    principalId: "0xagent-b",
+    displayName: "Agent B",
+    source: "agent-card:import",
+    seenAt: 200,
+    agentCard: {
+      type: "openclaw.agentCard.v1",
+      agentRef: "0xagent-b",
+    },
+    metadata: {
+      agentCard: {
+        verificationStatus: "owner-unknown",
+      },
+    },
+  });
+
+  const byPrincipal = store.getAgent({ principalId: "0xagent-a" });
+  assert.ok(byPrincipal);
+  assert.equal(byPrincipal.principalId, "0xagent-a");
+  assert.equal(byPrincipal.displayName, "Agent A");
+  assert.equal(byPrincipal.agentCard.type, "openclaw.agentCard.v1");
+  assert.equal(byPrincipal.metadata.agentCard.verificationStatus, "verified");
+
+  const listed = store.listAgents({ limit: 2 });
+  assert.equal(listed.length, 2);
+  assert.equal(listed[0].principalId, "0xagent-b");
+  assert.equal(listed[1].principalId, "0xagent-a");
+
+  store.close();
+});

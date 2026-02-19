@@ -30,6 +30,11 @@
               "custom": ["0xCUSTOM_ENDORSER..."]
             }
           },
+          "agentCards": {
+            // trusted owner ed25519 pubkeys (base64 raw 32-byte keys)
+            // cards signed by unknown owners are imported as owner-unknown
+            "trustedOwnerPubKeys": ["BASE64_OWNER_PUBKEY..."]
+          },
           "trustnetBinary": "trustnet", // optional
           "requestTimeoutMs": 5000,
           "verifyTimeoutMs": 15000,

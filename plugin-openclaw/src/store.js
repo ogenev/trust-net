@@ -38,6 +38,27 @@ function encodeJson(value) {
   return value === undefined ? null : JSON.stringify(value);
 }
 
+function decodeJson(value, fieldName) {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  try {
+    return JSON.parse(value);
+  } catch {
+    throw new Error(`${fieldName} contains invalid JSON`);
+  }
+}
+
+function normalizePositiveInteger(value, fieldName, fallback) {
+  if (value === undefined || value === null) {
+    return fallback;
+  }
+  if (!Number.isInteger(value) || value <= 0) {
+    throw new Error(`${fieldName} must be a positive integer when set`);
+  }
+  return value;
+}
+
 function readEdgeExpiryMs(evidenceRef) {
   if (typeof evidenceRef !== "string" || evidenceRef.trim().length === 0) {
     return undefined;
@@ -234,6 +255,50 @@ export function openTrustStore(trustStorePath) {
     ORDER BY de.target ASC
   `);
 
+  const selectAgentByPrincipalStatement = db.prepare(`
+    SELECT
+      principal_id,
+      display_name,
+      agent_card_json,
+      metadata_json,
+      source,
+      first_seen_at_u64,
+      last_seen_at_u64
+    FROM agents
+    WHERE principal_id = ?
+    LIMIT 1
+  `);
+
+  const selectAgentsStatement = db.prepare(`
+    SELECT
+      principal_id,
+      display_name,
+      agent_card_json,
+      metadata_json,
+      source,
+      first_seen_at_u64,
+      last_seen_at_u64
+    FROM agents
+    WHERE agent_card_json IS NOT NULL
+    ORDER BY last_seen_at_u64 DESC, principal_id ASC
+    LIMIT ?
+  `);
+
+  function mapAgentRow(row) {
+    if (!row) {
+      return undefined;
+    }
+    return {
+      principalId: row.principal_id,
+      displayName: row.display_name ?? null,
+      agentCard: decodeJson(row.agent_card_json, "agents.agent_card_json"),
+      metadata: decodeJson(row.metadata_json, "agents.metadata_json"),
+      source: row.source,
+      firstSeenAt: Number(row.first_seen_at_u64),
+      lastSeenAt: Number(row.last_seen_at_u64),
+    };
+  }
+
   return {
     path: resolvedPath,
     upsertEdgeLatest(edge) {
@@ -335,6 +400,19 @@ export function openTrustStore(trustStorePath) {
             typeof row.et_evidence_ref === "string" && row.et_evidence_ref.trim().length > 0,
         };
       });
+    },
+    getAgent(query) {
+      const input = query ?? {};
+      const row = selectAgentByPrincipalStatement.get(
+        ensureNonEmptyString(input.principalId, "query.principalId"),
+      );
+      return mapAgentRow(row);
+    },
+    listAgents(query) {
+      const input = query ?? {};
+      const limit = normalizePositiveInteger(input.limit, "query.limit", 20);
+      const rows = selectAgentsStatement.all(limit);
+      return rows.map((row) => mapAgentRow(row));
     },
     close() {
       db.close();
