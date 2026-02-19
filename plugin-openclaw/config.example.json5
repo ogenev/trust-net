@@ -35,6 +35,10 @@
             // cards signed by unknown owners are imported as owner-unknown
             "trustedOwnerPubKeys": ["BASE64_OWNER_PUBKEY..."]
           },
+          "trustWorkflows": {
+            // confirmation ticket TTL for trust/block/endorse workflow actions
+            "confirmationTtlSeconds": 300
+          },
           "trustnetBinary": "trustnet", // optional
           "requestTimeoutMs": 5000,
           "verifyTimeoutMs": 15000,

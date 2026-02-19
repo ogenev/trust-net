@@ -16,6 +16,7 @@ Current implementation status in this repo:
 - receipt persistence now emits `trustnet.receipt.v1` local receipts with decision/why snapshots for high-risk mappings (`TN-008`)
 - Trust Circles policy primitive is implemented for local-lite (`onlyMe`, `myContacts`, `openclawVerified`, `custom`) (`TN-010`)
 - runtime Agent Card import/verify/store is implemented (`openclaw.agentCard.v1`, `trustnetAgentCardAction: import|status`) (`TN-011`)
+- runtime trust management workflows are implemented (`trustnetTrustAction: trust|block|endorse|status|confirm|cancel`) with durable confirmation tickets (`TN-012`)
 - `local-verifiable` keeps API decision/root compatibility flow plus anchored verification until sidecar work (`TN-013+`)
 
 The plugin uses OpenClaw lifecycle hooks:
@@ -88,6 +89,9 @@ Mode-based config snippet:
           "agentCards": {
             "trustedOwnerPubKeys": ["BASE64_OWNER_PUBKEY..."]
           },
+          "trustWorkflows": {
+            "confirmationTtlSeconds": 300
+          },
           "askMode": "block",
           "unmappedDecision": "deny",
           "failOpen": false
@@ -150,6 +154,23 @@ Owner trust policy:
 
 - if `ownerPubKey` is in `config.agentCards.trustedOwnerPubKeys` => status `verified`
 - otherwise => status `owner-unknown` (still cryptographically valid, but owner not trusted locally)
+
+## Runtime trust management workflow (TN-012)
+
+Runtime trust actions are passed as `trustnetTrustAction`:
+
+- `trust`: request `D->target` positive edge write for a `contextId` (requires confirmation)
+- `block`: request `D->target=-2` veto edge for a `contextId` (requires confirmation)
+- `endorse`: request `D->endorser` positive edge write for a `contextId` (requires confirmation)
+- `status`: read direct trust edges (and optionally candidate endorsers for one context)
+- `confirm` / `cancel`: resolve a previously issued workflow ticket
+
+Confirmation model:
+
+- trust/block/endorse never write immediately
+- plugin emits `trustnet.trustWorkflow.prompt.v1` with a one-time `ticket`
+- host retries with `trustnetTrustAction.action = "confirm"` (or `"cancel"`)
+- tickets are persisted in SQLite `workflow_tickets` and are replay-safe/expiry-bounded
 
 ## Run tests
 

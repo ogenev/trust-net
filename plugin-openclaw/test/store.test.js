@@ -143,13 +143,13 @@ test("local trust store creates schema and enforces latest-wins edge updates", (
         SELECT name
         FROM sqlite_master
         WHERE type = 'table'
-          AND name IN ('edges_latest', 'receipts', 'agents')
+          AND name IN ('edges_latest', 'receipts', 'agents', 'workflow_tickets')
         ORDER BY name
       `,
     )
     .all()
     .map((row) => row.name);
-  assert.deepEqual(tables, ["agents", "edges_latest", "receipts"]);
+  assert.deepEqual(tables, ["agents", "edges_latest", "receipts", "workflow_tickets"]);
 
   const edge = db.prepare("SELECT level_i8, updated_at_u64, source FROM edges_latest").get();
   assert.equal(edge.level_i8, 2);
@@ -308,5 +308,53 @@ test("local trust store returns imported agent cards via getAgent/listAgents", (
   assert.equal(listed[0].principalId, "0xagent-b");
   assert.equal(listed[1].principalId, "0xagent-a");
 
+  store.close();
+});
+
+test("local trust store workflow tickets are durable, one-time, and expiry-aware", () => {
+  const trustStorePath = makeTempDbPath();
+  const store = openTrustStore(trustStorePath);
+
+  const nowMs = Date.now();
+  store.insertWorkflowTicket({
+    ticket: "ticket-active",
+    ticketType: "trustnet.trustWorkflow.mutation.v1",
+    payload: { kind: "trust", contextId: "0xcontext" },
+    source: "workflow:trust",
+    createdAt: nowMs,
+    expiresAt: nowMs + 60_000,
+  });
+
+  const consumed = store.consumeWorkflowTicket({
+    ticket: "ticket-active",
+    nowMs: nowMs + 1_000,
+  });
+  assert.ok(consumed);
+  assert.equal(consumed.ticket, "ticket-active");
+  assert.equal(consumed.ticketType, "trustnet.trustWorkflow.mutation.v1");
+  assert.equal(consumed.payload.kind, "trust");
+
+  const replay = store.consumeWorkflowTicket({
+    ticket: "ticket-active",
+    nowMs: nowMs + 2_000,
+  });
+  assert.equal(replay, undefined);
+
+  store.insertWorkflowTicket({
+    ticket: "ticket-expired",
+    ticketType: "trustnet.trustWorkflow.mutation.v1",
+    payload: { kind: "block", contextId: "0xcontext" },
+    source: "workflow:block",
+    createdAt: nowMs,
+    expiresAt: nowMs + 100,
+  });
+  const expired = store.consumeWorkflowTicket({
+    ticket: "ticket-expired",
+    nowMs: nowMs + 200,
+  });
+  assert.equal(expired, undefined);
+
+  const pruned = store.pruneExpiredWorkflowTickets({ nowMs: nowMs + 200 });
+  assert.equal(pruned, 1);
   store.close();
 });

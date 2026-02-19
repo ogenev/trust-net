@@ -177,6 +177,7 @@ export function basePluginConfig({
   trustStorePath,
   trustCircles,
   agentCards,
+  trustWorkflows,
   failOpen,
   askMode,
   unmappedDecision,
@@ -207,6 +208,9 @@ export function basePluginConfig({
   }
   if (agentCards && typeof agentCards === "object") {
     config.agentCards = agentCards;
+  }
+  if (trustWorkflows && typeof trustWorkflows === "object") {
+    config.trustWorkflows = trustWorkflows;
   }
   if (typeof apiBaseUrl === "string" && apiBaseUrl.trim().length > 0) {
     config.apiBaseUrl = apiBaseUrl;

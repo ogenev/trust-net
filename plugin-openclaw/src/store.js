@@ -7,6 +7,7 @@ const require = createRequire(import.meta.url);
 const MIN_TRUST_LEVEL = -2;
 const MAX_TRUST_LEVEL = 2;
 const VALID_DECISIONS = new Set(["allow", "ask", "deny"]);
+const DEFAULT_LIST_LIMIT = 20;
 
 function ensureNonEmptyString(value, fieldName) {
   if (typeof value !== "string" || value.trim().length === 0) {
@@ -160,6 +161,22 @@ function initializeSchema(db) {
 
     CREATE INDEX IF NOT EXISTS idx_agents_last_seen
     ON agents(last_seen_at_u64 DESC);
+
+    CREATE TABLE IF NOT EXISTS workflow_tickets (
+      ticket TEXT PRIMARY KEY,
+      ticket_type TEXT NOT NULL,
+      payload_json TEXT NOT NULL,
+      source TEXT NOT NULL,
+      created_at_u64 INTEGER NOT NULL,
+      expires_at_u64 INTEGER NOT NULL,
+      consumed_at_u64 INTEGER
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_workflow_tickets_expiry
+    ON workflow_tickets(expires_at_u64);
+
+    CREATE INDEX IF NOT EXISTS idx_workflow_tickets_consumed
+    ON workflow_tickets(consumed_at_u64);
   `);
 }
 
@@ -253,6 +270,74 @@ export function openTrustStore(trustStorePath) {
       AND de.level_i8 > 0
       AND de.target <> ?
     ORDER BY de.target ASC
+  `);
+
+  const insertWorkflowTicketStatement = db.prepare(`
+    INSERT INTO workflow_tickets (
+      ticket,
+      ticket_type,
+      payload_json,
+      source,
+      created_at_u64,
+      expires_at_u64,
+      consumed_at_u64
+    ) VALUES (?, ?, ?, ?, ?, ?, NULL)
+  `);
+
+  const selectWorkflowTicketStatement = db.prepare(`
+    SELECT
+      ticket,
+      ticket_type,
+      payload_json,
+      source,
+      created_at_u64,
+      expires_at_u64,
+      consumed_at_u64
+    FROM workflow_tickets
+    WHERE ticket = ?
+    LIMIT 1
+  `);
+
+  const consumeWorkflowTicketStatement = db.prepare(`
+    UPDATE workflow_tickets
+    SET consumed_at_u64 = ?
+    WHERE ticket = ?
+      AND consumed_at_u64 IS NULL
+  `);
+
+  const deleteExpiredWorkflowTicketsStatement = db.prepare(`
+    DELETE FROM workflow_tickets
+    WHERE expires_at_u64 <= ?
+      AND consumed_at_u64 IS NULL
+  `);
+
+  const selectDirectEdgesByRaterTargetStatement = db.prepare(`
+    SELECT
+      context_id,
+      level_i8,
+      updated_at_u64,
+      evidence_ref,
+      source
+    FROM edges_latest
+    WHERE rater = ?
+      AND target = ?
+    ORDER BY updated_at_u64 DESC, context_id ASC
+    LIMIT ?
+  `);
+
+  const selectDirectEdgesByRaterTargetContextStatement = db.prepare(`
+    SELECT
+      context_id,
+      level_i8,
+      updated_at_u64,
+      evidence_ref,
+      source
+    FROM edges_latest
+    WHERE rater = ?
+      AND target = ?
+      AND context_id = ?
+    ORDER BY updated_at_u64 DESC
+    LIMIT ?
   `);
 
   const selectAgentByPrincipalStatement = db.prepare(`
@@ -413,6 +498,84 @@ export function openTrustStore(trustStorePath) {
       const limit = normalizePositiveInteger(input.limit, "query.limit", 20);
       const rows = selectAgentsStatement.all(limit);
       return rows.map((row) => mapAgentRow(row));
+    },
+    insertWorkflowTicket(ticketRecord) {
+      const row = ticketRecord ?? {};
+      const createdAt = normalizeTimestamp(row.createdAt);
+      const expiresAt = normalizeTimestamp(row.expiresAt);
+      if (expiresAt <= createdAt) {
+        throw new Error("ticket.expiresAt must be greater than ticket.createdAt");
+      }
+      insertWorkflowTicketStatement.run(
+        ensureNonEmptyString(row.ticket, "ticket.ticket"),
+        ensureNonEmptyString(row.ticketType, "ticket.ticketType"),
+        JSON.stringify(row.payload ?? null),
+        ensureNonEmptyString(row.source ?? "workflow", "ticket.source"),
+        createdAt,
+        expiresAt,
+      );
+    },
+    consumeWorkflowTicket(ticketRef) {
+      const input = ticketRef ?? {};
+      const ticket = ensureNonEmptyString(input.ticket, "ticketRef.ticket");
+      const nowMs = normalizeTimestamp(input.nowMs);
+      const row = selectWorkflowTicketStatement.get(ticket);
+      if (!row || row.consumed_at_u64 !== null || Number(row.expires_at_u64) <= nowMs) {
+        return undefined;
+      }
+
+      const result = consumeWorkflowTicketStatement.run(nowMs, ticket);
+      if (!result || result.changes !== 1) {
+        return undefined;
+      }
+
+      return {
+        ticket: row.ticket,
+        ticketType: row.ticket_type,
+        payload: decodeJson(row.payload_json, "workflow_tickets.payload_json"),
+        source: row.source,
+        createdAt: Number(row.created_at_u64),
+        expiresAt: Number(row.expires_at_u64),
+        consumedAt: nowMs,
+      };
+    },
+    pruneExpiredWorkflowTickets(query) {
+      const input = query ?? {};
+      const nowMs = normalizeTimestamp(input.nowMs);
+      const result = deleteExpiredWorkflowTicketsStatement.run(nowMs);
+      return Number(result?.changes ?? 0);
+    },
+    listDirectEdges(query) {
+      const input = query ?? {};
+      const limit = normalizePositiveInteger(input.limit, "query.limit", DEFAULT_LIST_LIMIT);
+      const contextId =
+        input.contextId === undefined || input.contextId === null
+          ? undefined
+          : ensureNonEmptyString(input.contextId, "query.contextId").toLowerCase();
+      const rows =
+        contextId === undefined
+          ? selectDirectEdgesByRaterTargetStatement.all(
+              ensureNonEmptyString(input.rater, "query.rater"),
+              ensureNonEmptyString(input.target, "query.target"),
+              limit,
+            )
+          : selectDirectEdgesByRaterTargetContextStatement.all(
+              ensureNonEmptyString(input.rater, "query.rater"),
+              ensureNonEmptyString(input.target, "query.target"),
+              contextId,
+              limit,
+            );
+
+      const nowMs = Date.now();
+      return rows
+        .filter((row) => !isEdgeExpired(row.evidence_ref, nowMs))
+        .map((row) => ({
+          contextId: row.context_id,
+          level: Number(row.level_i8),
+          updatedAt: Number(row.updated_at_u64),
+          evidenceRef: row.evidence_ref ?? null,
+          source: row.source,
+        }));
     },
     close() {
       db.close();

@@ -45,6 +45,11 @@ import {
   readAgentCardActionInput,
   verifyAgentCard,
 } from "./src/agent-cards.js";
+import {
+  handleTrustWorkflowAction,
+  parseTrustWorkflowPolicy,
+  readTrustWorkflowActionInput,
+} from "./src/trust-workflows.js";
 
 const DIRECT_ALLOW_LEVEL = 2;
 const DIRECT_BLOCK_LEVEL = -2;
@@ -212,10 +217,12 @@ export default function registerTrustNetOpenClawPlugin(api) {
   let trustStore;
   let trustCirclePolicy;
   let agentCardPolicy;
+  let trustWorkflowPolicy;
   try {
     config = parseConfig(api);
     trustCirclePolicy = parseTrustCirclePolicy(api.pluginConfig);
     agentCardPolicy = parseAgentCardPolicy(api.pluginConfig);
+    trustWorkflowPolicy = parseTrustWorkflowPolicy(api.pluginConfig);
     toolMapEntries = loadToolMap(config.toolMapPath);
     trustStore = openTrustStore(config.trustStorePath);
     trustStore.upsertAgent({
@@ -247,9 +254,24 @@ export default function registerTrustNetOpenClawPlugin(api) {
   api.logger.debug?.(
     `trustnet-openclaw: trusted owner keys configured=${agentCardPolicy.trustedOwnerPubKeys.length}`,
   );
+  api.logger.debug?.(
+    `trustnet-openclaw: trust workflow confirmation ttl=${trustWorkflowPolicy.confirmationTtlSeconds}s`,
+  );
 
   api.on("before_tool_call", async (event, ctx) => {
     try {
+      const trustWorkflowActionInput = readTrustWorkflowActionInput(event, ctx);
+      const trustWorkflowResult = handleTrustWorkflowAction({
+        actionInput: trustWorkflowActionInput,
+        trustStore,
+        decider: config.decider,
+        trustWorkflowPolicy,
+        trustCirclePolicy,
+      });
+      if (trustWorkflowResult !== undefined) {
+        return trustWorkflowResult;
+      }
+
       const agentCardActionInput = readAgentCardActionInput(event, ctx);
       if (agentCardActionInput !== undefined) {
         const action = normalizeAgentCardAction(agentCardActionInput);

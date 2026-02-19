@@ -121,6 +121,19 @@
           }
         }
       },
+      "trustWorkflows": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "Trust management workflow controls for trust/block/endorse confirmations.",
+        "properties": {
+          "confirmationTtlSeconds": {
+            "type": "integer",
+            "minimum": 30,
+            "maximum": 86400,
+            "description": "How long trust workflow confirmation tickets remain valid."
+          }
+        }
+      },
       "requestTimeoutMs": {
         "type": "number",
         "minimum": 1
@@ -199,6 +212,10 @@
     "agentCards": {
       "label": "Agent Cards",
       "help": "Configure trusted owner public keys used when verifying runtime Agent Card imports."
+    },
+    "trustWorkflows": {
+      "label": "Trust Workflows",
+      "help": "Controls confirmation-ticket TTL for runtime trust/block/endorse workflow actions."
     },
     "failOpen": {
       "label": "Fail Open",
