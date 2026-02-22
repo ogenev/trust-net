@@ -39,7 +39,7 @@ TrustNet is split into separate services for better scalability:
 │   Serves HTTP API            │
 │   • GET /v1/root             │
 │   • GET /v1/contexts         │
-│   • GET /v1/decision         │
+│   • GET /v1/score            │
 │   • GET /v1/proof            │
 │   • POST /v1/ratings         │
 └───────────────────────────────┘
@@ -152,7 +152,7 @@ This indexer works alongside the TrustNet API service:
 
 - **trustnet-api** - HTTP API server (reads from same DB)
   - `GET /v1/root` - Get current graph root and epoch
-  - `GET /v1/decision?decider=<principalId>&target=<principalId>&contextId=<bytes32>` - Decision bundle with proofs
+  - `GET /v1/score/:decider/:target?contextTag=<tag>` - Score bundle with proofs
   - `GET /v1/contexts` - List canonical context IDs
   - `GET /v1/proof?key=<edgeKey>` - SMM proof by key
   - `POST /v1/ratings` - Append signed rating event (server mode)
@@ -177,12 +177,12 @@ RUST_LOG=trustnet_indexer=debug,tower_http=debug cargo run -- run
 cargo check -p trustnet-indexer
 ```
 
-## Implementation Status (v0.6)
+## Implementation Status (v1.1)
 
-- ✅ Chain ingestion for `EdgeRated`, ERC‑8004 `NewFeedback`, and `ResponseAppended`
+- ✅ Chain ingestion for `EdgeRated`, ERC‑8004 `NewFeedback`, `FeedbackRevoked`, and `ResponseAppended`
 - ✅ Latest-wins reduction with observed ordering
 - ✅ Sparse Merkle Map root building + publishing to RootRegistry
-- ✅ Root Manifest v0.6 fields with JCS hashing
+- ✅ Root Manifest v1.1 fields with JCS hashing
 - ✅ Optional verification of `trustnet.verification.v1` response payloads
 
 ## License

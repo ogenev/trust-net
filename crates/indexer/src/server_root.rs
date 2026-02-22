@@ -110,20 +110,13 @@ pub async fn build_server_root(input: &BuildServerRootInput) -> Result<BuildServ
         .await
         .context("Failed to fetch edges_latest")?;
 
-    edges.retain(|edge| edge.level.value() != 0);
     edges.retain(|edge| !edge_is_expired(edge, now_u64));
     edges.sort_by_key(|edge| compute_edge_key(&edge.rater, &edge.target, &edge.context_id));
 
     let mut builder = SmmBuilder::new();
     for edge in &edges {
         let key = compute_edge_key(&edge.rater, &edge.target, &edge.context_id);
-        let leaf_value = LeafValueV1 {
-            level: edge.level,
-            updated_at_u64: edge.updated_at_u64,
-            evidence_hash: edge.evidence_hash,
-        }
-        .encode()
-        .to_vec();
+        let leaf_value = LeafValueV1 { level: edge.level }.encode().to_vec();
         builder
             .insert(key, leaf_value)
             .context("Failed to insert edge into SMM builder")?;

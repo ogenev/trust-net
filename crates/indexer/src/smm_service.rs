@@ -132,10 +132,9 @@ impl PeriodicSmmBuilder {
             .await
             .context("Failed to fetch edges from storage")?;
 
-        // Apply v0.4 root-builder normalization:
+        // Apply v1.1 root-builder normalization:
         // - TTL pruning per context (manifested)
-        // - treat neutral edges (level 0) as absence
-        edges.retain(|e| e.level.value() != 0);
+        // - keep neutral edges (level 0) as explicit latest-effective values
         edges.retain(|e| !edge_is_expired(e, built_at_u64));
 
         if edges.is_empty() {
@@ -160,13 +159,9 @@ impl PeriodicSmmBuilder {
         let mut builder = SmmBuilder::new();
         for edge in &edges {
             let key = compute_edge_key(&edge.rater, &edge.target, &edge.context_id);
-            let leaf_value = trustnet_core::LeafValueV1 {
-                level: edge.level,
-                updated_at_u64: edge.updated_at_u64,
-                evidence_hash: edge.evidence_hash,
-            }
-            .encode()
-            .to_vec();
+            let leaf_value = trustnet_core::LeafValueV1 { level: edge.level }
+                .encode()
+                .to_vec();
             builder
                 .insert(key, leaf_value)
                 .context("Failed to insert edge into SMM builder")?;

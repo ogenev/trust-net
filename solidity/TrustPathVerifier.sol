@@ -3,17 +3,15 @@ pragma solidity ^0.8.26;
 
 /**
  * @title TrustPathVerifier
- * @notice TrustNet v0.6 on-chain verifier (optional for MVP).
+ * @notice TrustNet v1.1 on-chain verifier library.
  *
- * This library verifies uncompressed Sparse Merkle Map proofs (256 siblings)
- * and applies the v0.6 trust-to-act decision rule:
- * - Hard veto: `lDT == -2` => DENY
- * - Endorsements only contribute when both edges are positive:
- *   `base = min(lDE, lET)` where `lDE > 0 && lET > 0`
- * - Direct trust can override upwards: if `lDT > 0`, `score = max(base, lDT)`
+ * This library verifies compact Sparse Merkle Map proofs (bitmap + packed siblings)
+ * and applies the TrustNet v1.1 spec trust-to-act decision rule:
+ * - `lDEpos = max(lDE, 0)` (no sign-flip)
+ * - `path = lDEpos * lET`
+ * - `scoreNumerator = 2*lDT + path`
+ * - `score = clamp(scoreNumerator / 2, -2, +2)` (integer division toward zero)
  * - Thresholds map score => ALLOW / ASK / DENY
- * - Evidence gating (optional): if enabled, positive `lDT` or `lET` without evidence hash
- *   are treated as neutral (0). Hard veto still applies.
  *
  * Hashing (must match Rust `trustnet-core`):
  * - edgeKey = keccak256(raterPid32 || targetPid32 || contextId)
@@ -21,32 +19,31 @@ pragma solidity ^0.8.26;
  *   the address left-padded to 32 bytes.
  * - leafHash = keccak256(0x00 || edgeKey || leafValueBytes)
  * - internalHash = keccak256(0x01 || left || right)
+ * - emptyHash = keccak256(0x02)
  *
- * Leaf value encoding (v0.6) is 41 bytes:
- * - levelEnc (1 byte): uint8(level + 2) ∈ [0..4]
- * - updatedAtEnc (8 bytes): uint64 big-endian
- * - evidenceHash (32 bytes): bytes32 (zero if none)
+ * Leaf value encoding (v1.1) is 1 byte:
+ * - `V` (1 byte): uint8(level + 2) ∈ [0..4]
  */
 library TrustPathVerifier {
-    error InvalidSiblingsLength(uint256 got);
+    error InvalidPackedSiblings(uint256 consumed, uint256 provided);
     error InvalidLeafValueLength(uint256 expected, uint256 got);
     error InvalidLeafValueForNonMembership();
     error InvalidLevelEnc(uint8 levelEnc);
     error ProofVerificationFailed();
     error InvalidThresholds(int8 allow, int8 ask);
+    error InvalidEndorserProof();
 
-    /// Uncompressed Sparse Merkle Map proof.
+    /// Compact Sparse Merkle Map proof.
     struct SmmProof {
-        bool isMembership;
-        bytes leafValue;
-        bytes32[] siblings; // must be length 256, indexed by bit position 0..255 (MSB..LSB)
+        bool isAbsent;
+        bytes leafValue; // membership: one-byte V, absence: empty
+        bytes32 bitmap; // bit i = 1 => siblings[i] entry present (i from leaf upward)
+        bytes32[] siblings; // packed non-default siblings in ascending i order
     }
 
-    /// Decoded leaf value (v0.4 MVP).
+    /// Decoded leaf value (v1.1).
     struct LeafValueV1 {
         int8 level;
-        uint64 updatedAt;
-        bytes32 evidenceHash;
     }
 
     enum Decision {
@@ -77,12 +74,17 @@ library TrustPathVerifier {
         SmmProof proofET;
         int8 allowThreshold;
         int8 askThreshold;
-        bool requirePositiveEtEvidence;
-        bool requirePositiveDtEvidence;
     }
 
     function _defaultLeaf() private pure returns (LeafValueV1 memory) {
-        return LeafValueV1({level: 0, updatedAt: 0, evidenceHash: bytes32(0)});
+        return LeafValueV1({level: 0});
+    }
+
+    function _defaultHashes() private pure returns (bytes32[257] memory defaults) {
+        defaults[0] = computeEmptyHash();
+        for (uint256 i = 0; i < 256; i++) {
+            defaults[i + 1] = computeInternalHash(defaults[i], defaults[i]);
+        }
     }
 
     /// Convert an EVM address into a PrincipalId (left-padded to 32 bytes).
@@ -105,16 +107,21 @@ library TrustPathVerifier {
         return keccak256(abi.encodePacked(bytes1(0x01), left, right));
     }
 
+    /// Compute the sparse-tree empty-subtree base hash.
+    function computeEmptyHash() internal pure returns (bytes32) {
+        return keccak256(abi.encodePacked(bytes1(0x02)));
+    }
+
     function _getBit(bytes32 key, uint256 index) private pure returns (uint8) {
         uint8 b = uint8(key[index / 8]);
         uint8 bitIndex = uint8(7 - (index % 8));
         return (b >> bitIndex) & 1;
     }
 
-    /// Decode the v0.4 leaf value bytes (41 bytes).
+    /// Decode the v1.1 leaf value bytes (1 byte).
     function decodeLeafValueV1(bytes memory leafValue) internal pure returns (LeafValueV1 memory v) {
-        if (leafValue.length != 41) {
-            revert InvalidLeafValueLength(41, leafValue.length);
+        if (leafValue.length != 1) {
+            revert InvalidLeafValueLength(1, leafValue.length);
         }
 
         uint8 levelEnc = uint8(leafValue[0]);
@@ -122,29 +129,14 @@ library TrustPathVerifier {
             revert InvalidLevelEnc(levelEnc);
         }
         v.level = int8(int256(uint256(levelEnc))) - 2;
-
-        uint64 updatedAt;
-        bytes32 evidenceHash;
-        assembly {
-            // Load bytes[1..8] as big-endian u64.
-            updatedAt := shr(192, mload(add(leafValue, 33)))
-            // Load bytes[9..40] as bytes32.
-            evidenceHash := mload(add(leafValue, 41))
-        }
-        v.updatedAt = updatedAt;
-        v.evidenceHash = evidenceHash;
     }
 
     /// Verify a single proof against a root, returning a decoded leaf value.
     ///
     /// For non-membership proofs, `leafValue` must be empty and the returned leaf value is neutral.
     function verifyProof(bytes32 root, bytes32 edgeKey, SmmProof memory proof) internal pure returns (LeafValueV1 memory leaf) {
-        if (proof.siblings.length != 256) {
-            revert InvalidSiblingsLength(proof.siblings.length);
-        }
-
         bytes32 h;
-        if (proof.isMembership) {
+        if (!proof.isAbsent) {
             leaf = decodeLeafValueV1(proof.leafValue);
             h = computeLeafHash(edgeKey, proof.leafValue);
         } else {
@@ -152,18 +144,38 @@ library TrustPathVerifier {
                 revert InvalidLeafValueForNonMembership();
             }
             leaf = _defaultLeaf();
-            h = bytes32(0);
+            h = computeEmptyHash();
         }
 
-        // Walk from depth 255..0, with siblings indexed by bit position.
-        for (uint256 depth = 256; depth > 0; depth--) {
-            uint256 d = depth - 1;
-            bytes32 sibling = proof.siblings[d];
-            if (_getBit(edgeKey, d) == 0) {
+        bytes32[257] memory defaults = _defaultHashes();
+        uint256 bitmap = uint256(proof.bitmap);
+        uint256 packedIndex = 0;
+
+        // i=0 is leaf-adjacent sibling, i=255 is top-most sibling.
+        for (uint256 i = 0; i < 256; i++) {
+            bytes32 sibling;
+            if (((bitmap >> i) & 1) == 1) {
+                if (packedIndex >= proof.siblings.length) {
+                    revert InvalidPackedSiblings(packedIndex + 1, proof.siblings.length);
+                }
+                sibling = proof.siblings[packedIndex];
+                unchecked {
+                    packedIndex++;
+                }
+            } else {
+                sibling = defaults[i];
+            }
+
+            uint256 depth = 255 - i;
+            if (_getBit(edgeKey, depth) == 0) {
                 h = computeInternalHash(h, sibling);
             } else {
                 h = computeInternalHash(sibling, h);
             }
+        }
+
+        if (packedIndex != proof.siblings.length) {
+            revert InvalidPackedSiblings(packedIndex, proof.siblings.length);
         }
 
         if (h != root) {
@@ -171,44 +183,20 @@ library TrustPathVerifier {
         }
     }
 
-    /// Compute v0.6 base score from decoded levels (no evidence gating).
+    /// Compute TrustNet v1.1 spec score from decoded levels (no evidence gating).
     function computeScore(int8 lDT, int8 lDE, int8 lET) internal pure returns (int8) {
-        if (lDT == -2) {
+        int16 lDEpos = lDE > 0 ? int16(lDE) : int16(0);
+        int16 path = lDEpos * int16(lET);
+        int16 numerator = int16(2) * int16(lDT) + path;
+        int16 raw = numerator / 2;
+
+        if (raw > 2) {
+            return 2;
+        }
+        if (raw < -2) {
             return -2;
         }
-
-        int8 base = 0;
-        if (lDE > 0 && lET > 0) {
-            base = (lDE < lET) ? lDE : lET;
-        }
-
-        if (lDT > 0) {
-            return (base > lDT) ? base : lDT;
-        }
-
-        return base;
-    }
-
-    /// Compute v0.6 score with evidence gating for positive edges.
-    function computeScoreWithEvidence(
-        LeafValueV1 memory dt,
-        LeafValueV1 memory de,
-        LeafValueV1 memory et,
-        bool requirePositiveEtEvidence,
-        bool requirePositiveDtEvidence
-    ) internal pure returns (int8) {
-        int8 lDT = dt.level;
-        int8 lDE = de.level;
-        int8 lET = et.level;
-
-        if (requirePositiveEtEvidence && lET > 0 && et.evidenceHash == bytes32(0)) {
-            lET = 0;
-        }
-        if (requirePositiveDtEvidence && lDT > 0 && dt.evidenceHash == bytes32(0)) {
-            lDT = 0;
-        }
-
-        return computeScore(lDT, lDE, lET);
+        return int8(raw);
     }
 
     /// Map score + thresholds to a decision.
@@ -235,19 +223,16 @@ library TrustPathVerifier {
         LeafValueV1 memory de = _defaultLeaf();
         LeafValueV1 memory et = _defaultLeaf();
         if (req.endorser != address(0)) {
+            if (req.proofDE.isAbsent || req.proofET.isAbsent) {
+                revert InvalidEndorserProof();
+            }
             bytes32 keyDE = computeEdgeKey(req.decider, req.endorser, req.contextId);
             bytes32 keyET = computeEdgeKey(req.endorser, req.target, req.contextId);
             de = verifyProof(req.graphRoot, keyDE, req.proofDE);
             et = verifyProof(req.graphRoot, keyET, req.proofET);
         }
 
-        int8 score = computeScoreWithEvidence(
-            dt,
-            de,
-            et,
-            req.requirePositiveEtEvidence,
-            req.requirePositiveDtEvidence
-        );
+        int8 score = computeScore(dt.level, de.level, et.level);
         Decision d = decide(score, req.allowThreshold, req.askThreshold);
 
         result = DecisionResult({

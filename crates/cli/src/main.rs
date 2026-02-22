@@ -17,13 +17,13 @@ enum Command {
     Root(cmd::root::RootArgs),
     /// Sign a trustnet.rating.v1 payload.
     Rate(cmd::rate::RateArgs),
-    /// Verify a DecisionBundle against a Root bundle.
+    /// Verify a ScoreBundle against a Root bundle.
     Verify(cmd::verify::VerifyArgs),
     /// Create and sign an ActionReceipt bundle.
     Receipt(cmd::verify::ReceiptArgs),
     /// Verify a signed ActionReceipt bundle.
     VerifyReceipt(cmd::verify::VerifyReceiptArgs),
-    /// Print deterministic v0.6 hashing vectors as JSON.
+    /// Print deterministic v1.1 hashing vectors as JSON.
     Vectors,
 }
 

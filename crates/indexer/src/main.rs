@@ -225,6 +225,7 @@ async fn run_indexer(config_path: &str) -> Result<()> {
             trust_graph: config.contracts.trust_graph,
             erc8004_reputation: config.contracts.erc8004_reputation,
             erc8004_identity: config.contracts.erc8004_identity,
+            erc8004_validation: config.contracts.erc8004_validation,
             root_registry: config.contracts.root_registry,
             start_block: config.sync.start_block,
             confirmations: config.sync.confirmations,
@@ -416,13 +417,9 @@ async fn publish_root_manual(config_path: &str) -> Result<()> {
                 &edge.target,
                 &edge.context_id,
             );
-            let leaf_value = trustnet_core::LeafValueV1 {
-                level: edge.level,
-                updated_at_u64: edge.updated_at_u64,
-                evidence_hash: edge.evidence_hash,
-            }
-            .encode()
-            .to_vec();
+            let leaf_value = trustnet_core::LeafValueV1 { level: edge.level }
+                .encode()
+                .to_vec();
             builder.insert(key, leaf_value)?;
         }
         let smm = builder.build();
@@ -452,6 +449,7 @@ async fn publish_root_manual(config_path: &str) -> Result<()> {
                 trust_graph: config.contracts.trust_graph,
                 erc8004_reputation: config.contracts.erc8004_reputation,
                 erc8004_identity: config.contracts.erc8004_identity,
+                erc8004_validation: config.contracts.erc8004_validation,
                 root_registry: config.contracts.root_registry,
                 start_block: config.sync.start_block,
                 confirmations: config.sync.confirmations,
@@ -501,6 +499,7 @@ async fn publish_root_manual(config_path: &str) -> Result<()> {
                 trust_graph: config.contracts.trust_graph,
                 erc8004_reputation: config.contracts.erc8004_reputation,
                 erc8004_identity: config.contracts.erc8004_identity,
+                erc8004_validation: config.contracts.erc8004_validation,
                 root_registry: config.contracts.root_registry,
                 start_block: config.sync.start_block,
                 confirmations: config.sync.confirmations,

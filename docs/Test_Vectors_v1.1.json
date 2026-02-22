@@ -1,0 +1,32 @@
+{
+  "edgeKey": "0x7a253683065f5bc2096352fce22aa15c695155c8627d638b8b578654de4ea42b",
+  "graphRoot": "0x548a78cbfe433fdaed4c771a23551074b5cd358e335bb97ee57f764e86991c2c",
+  "hashes": {
+    "contextRegistryHash": "0x36b2b195cd05e461b5a55b4abc8125fd32bfde67c05baa0872ff14843d0e6f5e",
+    "smmHashEmpty": "0xf2ee15ea639b73fa3db9b34a245bdfa015c260c598b211bf05a1ecc4b3e3b4f2",
+    "tagTrustnetV1": "0x3539b20dd2af81ad9c3c5953baeb60770eead262c1eee5a537a4b54c199e1215"
+  },
+  "leafHash": "0xa468f1d368111fc5229652fea7d85aaf88665beba7961878c2f493961f7151ea",
+  "leafValueBytes": "0x04",
+  "leafValueV1": {
+    "V": 4,
+    "level": 2
+  },
+  "membershipProof": {
+    "bitmap": "0x0000000000000000000000000000000000000000000000000000000000000000",
+    "edgeKey": "0x7a253683065f5bc2096352fce22aa15c695155c8627d638b8b578654de4ea42b",
+    "isAbsent": false,
+    "leaf": {
+      "K": "0x7a253683065f5bc2096352fce22aa15c695155c8627d638b8b578654de4ea42b",
+      "V": 4
+    },
+    "siblings": []
+  },
+  "principalId": {
+    "raterAddress": "0x0000000000000000000000000000000000000001",
+    "raterPrincipalId": "0x0000000000000000000000000000000000000000000000000000000000000001",
+    "targetAddress": "0x0000000000000000000000000000000000000002",
+    "targetPrincipalId": "0x0000000000000000000000000000000000000000000000000000000000000002"
+  },
+  "version": "trustnet-v1.1"
+}

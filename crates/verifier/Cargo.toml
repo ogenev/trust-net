@@ -3,7 +3,7 @@ name = "trustnet-verifier"
 version = "0.1.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
-description = "Offline verifier and gateway utilities for TrustNet (Spec v0.6)"
+description = "Offline verifier and gateway utilities for TrustNet (Spec v1.1)"
 
 [dependencies]
 trustnet-core = { path = "../core" }

@@ -10,13 +10,56 @@ import "../TrustPathVerifier.sol";
 contract TrustPathVerifierTest is Test {
     using stdJson for string;
 
+    function _callDecide(int8 score, int8 allowThreshold, int8 askThreshold)
+        external
+        pure
+        returns (TrustPathVerifier.Decision)
+    {
+        return TrustPathVerifier.decide(score, allowThreshold, askThreshold);
+    }
+
+    function _callVerifyAndDecide(TrustPathVerifier.DecisionRequest memory req)
+        external
+        view
+        returns (TrustPathVerifier.DecisionResult memory)
+    {
+        return TrustPathVerifier.verifyAndDecide(req);
+    }
+
     function _vectorsPath() private view returns (string memory) {
         // Foundry projectRoot() is the `solidity/` folder; vectors live in `../docs/`.
-        return string.concat(vm.projectRoot(), "/../docs/Test_Vectors_v0.7.json");
+        return string.concat(vm.projectRoot(), "/../docs/Test_Vectors_v1.1.json");
     }
 
     function _loadVectors() private view returns (string memory json) {
         json = vm.readFile(_vectorsPath());
+    }
+
+    function _readMembershipProof(string memory json, string memory prefix)
+        private
+        view
+        returns (bytes32 edgeKey, TrustPathVerifier.SmmProof memory proof)
+    {
+        edgeKey = json.readBytes32(string.concat(prefix, ".edgeKey"));
+        uint8 v = uint8(json.readUint(string.concat(prefix, ".leaf.V")));
+        bytes32 bitmap = json.readBytes32(string.concat(prefix, ".bitmap"));
+        bytes32[] memory siblings = json.readBytes32Array(string.concat(prefix, ".siblings"));
+
+        proof = TrustPathVerifier.SmmProof({
+            isAbsent: false,
+            leafValue: abi.encodePacked(bytes1(v)),
+            bitmap: bitmap,
+            siblings: siblings
+        });
+    }
+
+    function _absentProof() private pure returns (TrustPathVerifier.SmmProof memory proof) {
+        proof = TrustPathVerifier.SmmProof({
+            isAbsent: true,
+            leafValue: bytes(""),
+            bitmap: bytes32(0),
+            siblings: new bytes32[](0)
+        });
     }
 
     function test_ComputeEdgeKey_MatchesRustVectors() public view {
@@ -26,7 +69,7 @@ contract TrustPathVerifierTest is Test {
         address target = json.readAddress(".principalId.targetAddress");
         bytes32 expected = json.readBytes32(".edgeKey");
 
-        bytes32 got = TrustPathVerifier.computeEdgeKey(rater, target, TrustNetContexts.GLOBAL);
+        bytes32 got = TrustPathVerifier.computeEdgeKey(rater, target, TrustNetContexts.CODE_EXEC);
         assertEq(got, expected, "edgeKey mismatch (PrincipalId hashing)");
     }
 
@@ -44,22 +87,13 @@ contract TrustPathVerifierTest is Test {
         string memory json = _loadVectors();
 
         bytes32 graphRoot = json.readBytes32(".graphRoot");
-        bytes32 edgeKey = json.readBytes32(".membershipProof.edgeKey");
-        bytes memory leafValue = json.readBytes(".membershipProof.leafValueBytes");
-        bytes32[] memory siblings = json.readBytes32Array(".membershipProof.siblings");
-
-        TrustPathVerifier.SmmProof memory proof = TrustPathVerifier.SmmProof({
-            isMembership: true,
-            leafValue: leafValue,
-            siblings: siblings
-        });
+        (bytes32 edgeKey, TrustPathVerifier.SmmProof memory proof) =
+            _readMembershipProof(json, ".membershipProof");
 
         TrustPathVerifier.LeafValueV1 memory decoded =
             TrustPathVerifier.verifyProof(graphRoot, edgeKey, proof);
 
         assertEq(decoded.level, 2, "decoded level");
-        assertEq(decoded.updatedAt, uint64(123), "decoded updatedAt");
-        assertEq(decoded.evidenceHash, bytes32(0), "decoded evidenceHash");
     }
 
     function test_VerifyAndDecide_DirectAllow() public view {
@@ -68,26 +102,14 @@ contract TrustPathVerifierTest is Test {
         address rater = json.readAddress(".principalId.raterAddress");
         address target = json.readAddress(".principalId.targetAddress");
         bytes32 graphRoot = json.readBytes32(".graphRoot");
-        bytes32 edgeKey = json.readBytes32(".membershipProof.edgeKey");
-        bytes memory leafValue = json.readBytes(".membershipProof.leafValueBytes");
-        bytes32[] memory siblings = json.readBytes32Array(".membershipProof.siblings");
-
-        TrustPathVerifier.SmmProof memory dt = TrustPathVerifier.SmmProof({
-            isMembership: true,
-            leafValue: leafValue,
-            siblings: siblings
-        });
+        (, TrustPathVerifier.SmmProof memory dt) = _readMembershipProof(json, ".membershipProof");
 
         // DE/ET ignored when endorser == address(0).
-        TrustPathVerifier.SmmProof memory empty = TrustPathVerifier.SmmProof({
-            isMembership: false,
-            leafValue: bytes(""),
-            siblings: new bytes32[](0)
-        });
+        TrustPathVerifier.SmmProof memory empty = _absentProof();
 
         TrustPathVerifier.DecisionRequest memory req = TrustPathVerifier.DecisionRequest({
             graphRoot: graphRoot,
-            contextId: TrustNetContexts.GLOBAL,
+            contextId: TrustNetContexts.CODE_EXEC,
             decider: rater,
             target: target,
             endorser: address(0),
@@ -95,9 +117,7 @@ contract TrustPathVerifierTest is Test {
             proofDE: empty,
             proofET: empty,
             allowThreshold: 2,
-            askThreshold: 1,
-            requirePositiveEtEvidence: false,
-            requirePositiveDtEvidence: false
+            askThreshold: 1
         });
 
         TrustPathVerifier.DecisionResult memory result = TrustPathVerifier.verifyAndDecide(req);
@@ -109,55 +129,50 @@ contract TrustPathVerifierTest is Test {
         assertEq(result.edgeET.level, 0, "why ET");
     }
 
-    function test_ComputeScore_VetoAlwaysDenies() public pure {
-        assertEq(TrustPathVerifier.computeScore(-2, 2, 2), int8(-2));
+    function test_ComputeScore_DirectNegativeCanBeOffset() public pure {
+        assertEq(TrustPathVerifier.computeScore(-2, 2, 2), int8(0));
         assertEq(TrustPathVerifier.computeScore(-2, 0, 0), int8(-2));
     }
 
     function test_ComputeScore_EndorsementsOnlyPositive() public pure {
-        // Positive 2-hop contributes.
+        // Positive 2-hop contributes with path=lDE*lET.
         assertEq(TrustPathVerifier.computeScore(0, 2, 1), int8(1));
-        // Negative does not propagate through endorsers.
-        assertEq(TrustPathVerifier.computeScore(0, -2, 2), int8(0));
-        assertEq(TrustPathVerifier.computeScore(0, 2, -1), int8(0));
+        // No-sign-flip: negative lDE is clamped to 0 before multiplication.
+        assertEq(TrustPathVerifier.computeScore(0, -2, -2), int8(0));
     }
 
-    function test_ComputeScore_DirectOverridesUpwards() public pure {
-        assertEq(TrustPathVerifier.computeScore(2, 2, 1), int8(2));
-        assertEq(TrustPathVerifier.computeScore(1, 2, 2), int8(2));
-    }
-
-    function test_ComputeScoreWithEvidence_GatesMissingEvidence() public pure {
-        TrustPathVerifier.LeafValueV1 memory dt = TrustPathVerifier.LeafValueV1({
-            level: 1,
-            updatedAt: 0,
-            evidenceHash: bytes32(0)
-        });
-        TrustPathVerifier.LeafValueV1 memory de = TrustPathVerifier.LeafValueV1({
-            level: 2,
-            updatedAt: 0,
-            evidenceHash: bytes32(0)
-        });
-        TrustPathVerifier.LeafValueV1 memory et = TrustPathVerifier.LeafValueV1({
-            level: 2,
-            updatedAt: 0,
-            evidenceHash: bytes32(0)
-        });
-
-        int8 score = TrustPathVerifier.computeScoreWithEvidence(dt, de, et, true, true);
-        assertEq(score, int8(0), "gated score");
-
-        TrustPathVerifier.LeafValueV1 memory etEvidence = TrustPathVerifier.LeafValueV1({
-            level: 2,
-            updatedAt: 0,
-            evidenceHash: bytes32(uint256(1))
-        });
-        score = TrustPathVerifier.computeScoreWithEvidence(dt, de, etEvidence, true, false);
-        assertEq(score, int8(2), "score with et evidence");
+    function test_ComputeScore_ClampsToRange() public pure {
+        // numerator = 2*2 + 2*2 = 8 -> score=4 -> clamp to +2
+        assertEq(TrustPathVerifier.computeScore(2, 2, 2), int8(2));
     }
 
     function test_Decide_InvalidThresholdsReverts() public {
         vm.expectRevert(abi.encodeWithSelector(TrustPathVerifier.InvalidThresholds.selector, int8(1), int8(2)));
-        TrustPathVerifier.decide(0, 1, 2);
+        this._callDecide(0, 1, 2);
+    }
+
+    function test_VerifyAndDecide_RevertsWhenEndorserProofsAreNonMembership() public {
+        string memory json = _loadVectors();
+        address decider = json.readAddress(".principalId.raterAddress");
+        address target = json.readAddress(".principalId.targetAddress");
+        bytes32 graphRoot = json.readBytes32(".graphRoot");
+        (, TrustPathVerifier.SmmProof memory dt) = _readMembershipProof(json, ".membershipProof");
+        TrustPathVerifier.SmmProof memory empty = _absentProof();
+
+        TrustPathVerifier.DecisionRequest memory req = TrustPathVerifier.DecisionRequest({
+            graphRoot: graphRoot,
+            contextId: TrustNetContexts.CODE_EXEC,
+            decider: decider,
+            target: target,
+            endorser: address(0x1234),
+            proofDT: dt,
+            proofDE: empty,
+            proofET: empty,
+            allowThreshold: 2,
+            askThreshold: 1
+        });
+
+        vm.expectRevert(TrustPathVerifier.InvalidEndorserProof.selector);
+        this._callVerifyAndDecide(req);
     }
 }

@@ -26,9 +26,6 @@ contract TrustNetPaymentsGuardModule {
     int8 public immutable allowThreshold;
     int8 public immutable askThreshold;
 
-    bool public immutable requirePositiveEtEvidence;
-    bool public immutable requirePositiveDtEvidence;
-
     uint256 public immutable maxPaymentAmountWei;
     uint256 public immutable maxRootAgeSeconds;
 
@@ -87,8 +84,6 @@ contract TrustNetPaymentsGuardModule {
         bytes32 _contextId,
         int8 _allowThreshold,
         int8 _askThreshold,
-        bool _requirePositiveEtEvidence,
-        bool _requirePositiveDtEvidence,
         uint256 _maxPaymentAmountWei,
         uint256 _maxRootAgeSeconds
     ) {
@@ -109,9 +104,6 @@ contract TrustNetPaymentsGuardModule {
 
         allowThreshold = _allowThreshold;
         askThreshold = _askThreshold;
-
-        requirePositiveEtEvidence = _requirePositiveEtEvidence;
-        requirePositiveDtEvidence = _requirePositiveDtEvidence;
 
         maxPaymentAmountWei = _maxPaymentAmountWei;
         maxRootAgeSeconds = _maxRootAgeSeconds;
@@ -175,9 +167,7 @@ contract TrustNetPaymentsGuardModule {
             proofDE: req.proofDE,
             proofET: req.proofET,
             allowThreshold: allowThreshold,
-            askThreshold: askThreshold,
-            requirePositiveEtEvidence: requirePositiveEtEvidence,
-            requirePositiveDtEvidence: requirePositiveDtEvidence
+            askThreshold: askThreshold
         });
 
         TrustPathVerifier.DecisionResult memory result = TrustPathVerifier.verifyAndDecide(decisionReq);

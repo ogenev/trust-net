@@ -16,7 +16,7 @@ contract MockErc8004IdentityRegistry {
 
 /// @notice Minimal ERC-8004 reputation harness for emitting events used by indexer ingestion.
 contract MockErc8004Reputation {
-    string internal constant CONTEXT_TAG = "trustnet:ctx:agent-collab:code-exec:v1";
+    string internal constant CONTEXT_TAG = "trustnet:ctx:code-exec:v1";
     string internal constant TRUSTNET_TAG = "trustnet:v1";
     string internal constant TRUSTNET_ENDPOINT = "trustnet";
 
@@ -41,6 +41,12 @@ contract MockErc8004Reputation {
         address indexed responder,
         string responseURI,
         bytes32 responseHash
+    );
+
+    event FeedbackRevoked(
+        uint256 indexed agentId,
+        address indexed clientAddress,
+        uint64 feedbackIndex
     );
 
     function emitTrustnetFeedback(
@@ -81,5 +87,13 @@ contract MockErc8004Reputation {
             "",
             responseHash
         );
+    }
+
+    function emitFeedbackRevoked(
+        uint256 agentId,
+        address clientAddress,
+        uint64 feedbackIndex
+    ) external {
+        emit FeedbackRevoked(agentId, clientAddress, feedbackIndex);
     }
 }

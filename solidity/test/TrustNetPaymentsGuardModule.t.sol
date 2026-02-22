@@ -35,8 +35,6 @@ contract TrustNetPaymentsGuardModuleTest is Test {
             TrustNetContexts.PAYMENTS,
             2,
             1,
-            false,
-            false,
             MAX_PAYMENT,
             MAX_ROOT_AGE
         );
@@ -47,9 +45,7 @@ contract TrustNetPaymentsGuardModuleTest is Test {
             decider,
             target,
             TrustNetContexts.PAYMENTS,
-            2,
-            123,
-            bytes32(0)
+            2
         );
 
         _publishRoot(BASE_EPOCH, root);
@@ -72,8 +68,6 @@ contract TrustNetPaymentsGuardModuleTest is Test {
             TrustNetContexts.PAYMENTS,
             1,
             2,
-            false,
-            false,
             MAX_PAYMENT,
             MAX_ROOT_AGE
         );
@@ -84,9 +78,7 @@ contract TrustNetPaymentsGuardModuleTest is Test {
             decider,
             target,
             TrustNetContexts.PAYMENTS,
-            2,
-            123,
-            bytes32(0)
+            2
         );
 
         bytes32 opId = keccak256("op-allow-1");
@@ -112,9 +104,7 @@ contract TrustNetPaymentsGuardModuleTest is Test {
             decider,
             target,
             TrustNetContexts.PAYMENTS,
-            2,
-            123,
-            bytes32(0)
+            2
         );
 
         bytes32 opId = keccak256("op-replay-1");
@@ -141,9 +131,7 @@ contract TrustNetPaymentsGuardModuleTest is Test {
             decider,
             target,
             TrustNetContexts.PAYMENTS,
-            2,
-            123,
-            bytes32(0)
+            2
         );
 
         uint256 tooHigh = MAX_PAYMENT + 1;
@@ -167,9 +155,7 @@ contract TrustNetPaymentsGuardModuleTest is Test {
             decider,
             target,
             TrustNetContexts.PAYMENTS,
-            2,
-            123,
-            bytes32(0)
+            2
         );
 
         uint256 deadline = block.timestamp - 1;
@@ -193,9 +179,7 @@ contract TrustNetPaymentsGuardModuleTest is Test {
             decider,
             target,
             TrustNetContexts.PAYMENTS,
-            2,
-            123,
-            bytes32(0)
+            2
         );
 
         uint256 missingEpoch = 99;
@@ -219,9 +203,7 @@ contract TrustNetPaymentsGuardModuleTest is Test {
             decider,
             target,
             TrustNetContexts.PAYMENTS,
-            2,
-            123,
-            bytes32(0)
+            2
         );
 
         vm.warp(block.timestamp + MAX_ROOT_AGE + 1);
@@ -253,9 +235,7 @@ contract TrustNetPaymentsGuardModuleTest is Test {
             decider,
             target,
             TrustNetContexts.PAYMENTS,
-            1,
-            456,
-            bytes32(0)
+            1
         );
 
         _publishRoot(askEpoch, askRoot);
@@ -281,9 +261,7 @@ contract TrustNetPaymentsGuardModuleTest is Test {
             decider,
             target,
             TrustNetContexts.PAYMENTS,
-            0,
-            789,
-            bytes32(0)
+            0
         );
 
         _publishRoot(denyEpoch, denyRoot);
@@ -362,34 +340,42 @@ contract TrustNetPaymentsGuardModuleTest is Test {
 
     function _emptyProof() internal pure returns (TrustPathVerifier.SmmProof memory) {
         return TrustPathVerifier.SmmProof({
-            isMembership: false,
+            isAbsent: true,
             leafValue: bytes(""),
+            bitmap: bytes32(0),
             siblings: new bytes32[](0)
         });
+    }
+
+    function _defaultHashes() internal pure returns (bytes32[] memory defaults) {
+        defaults = new bytes32[](257);
+        defaults[0] = TrustPathVerifier.computeEmptyHash();
+        for (uint256 i = 0; i < 256; i++) {
+            defaults[i + 1] = TrustPathVerifier.computeInternalHash(defaults[i], defaults[i]);
+        }
     }
 
     function _buildMembershipProof(
         address rater,
         address proofTarget,
         bytes32 proofContext,
-        int8 level,
-        uint64 updatedAt,
-        bytes32 evidenceHash
+        int8 level
     )
         internal
         pure
         returns (TrustPathVerifier.SmmProof memory proof, bytes32 root)
     {
-        bytes memory leafValue = _encodeLeafValue(level, updatedAt, evidenceHash);
-        bytes32[] memory siblings = new bytes32[](256);
+        bytes memory leafValue = _encodeLeafValue(level);
+        bytes32[] memory siblings = new bytes32[](0);
+        bytes32[] memory defaults = _defaultHashes();
 
         bytes32 edgeKey = TrustPathVerifier.computeEdgeKey(rater, proofTarget, proofContext);
 
         bytes32 h = TrustPathVerifier.computeLeafHash(edgeKey, leafValue);
-        for (uint256 depth = 256; depth > 0; depth--) {
-            uint256 d = depth - 1;
-            bytes32 sibling = siblings[d];
-            if (_getBit(edgeKey, d) == 0) {
+        for (uint256 i = 0; i < 256; i++) {
+            bytes32 sibling = defaults[i];
+            uint256 depth = 255 - i;
+            if (_getBit(edgeKey, depth) == 0) {
                 h = TrustPathVerifier.computeInternalHash(h, sibling);
             } else {
                 h = TrustPathVerifier.computeInternalHash(sibling, h);
@@ -397,21 +383,18 @@ contract TrustNetPaymentsGuardModuleTest is Test {
         }
 
         proof = TrustPathVerifier.SmmProof({
-            isMembership: true,
+            isAbsent: false,
             leafValue: leafValue,
+            bitmap: bytes32(0),
             siblings: siblings
         });
         root = h;
     }
 
-    function _encodeLeafValue(int8 level, uint64 updatedAt, bytes32 evidenceHash)
-        internal
-        pure
-        returns (bytes memory)
-    {
+    function _encodeLeafValue(int8 level) internal pure returns (bytes memory) {
         require(level >= -2 && level <= 2, "level out of range");
         uint8 levelEnc = uint8(uint256(int256(level + 2)));
-        return abi.encodePacked(bytes1(levelEnc), bytes8(updatedAt), evidenceHash);
+        return abi.encodePacked(bytes1(levelEnc));
     }
 
     function _getBit(bytes32 key, uint256 index) internal pure returns (uint8) {

@@ -1,4 +1,4 @@
-//! Edge storage operations (TrustNet spec v0.6).
+//! Edge storage operations (TrustNet spec v1.1).
 
 use super::{EdgeRecord, EdgeSource, Storage};
 use alloy::primitives::B256;

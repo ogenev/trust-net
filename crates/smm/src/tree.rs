@@ -35,7 +35,7 @@ impl Smm {
     ///
     /// - Membership: `is_membership=true` and includes `leaf_value`.
     /// - Non-membership: `is_membership=false` and `leaf_value` is empty; the leaf hash is the
-    ///   empty leaf hash (bytes32(0)).
+    ///   empty leaf hash (`keccak256(0x02)`).
     pub fn prove(&self, key: B256) -> Result<SmmProof> {
         let mut siblings = Vec::with_capacity(256);
         let (leaf_value, is_membership) =

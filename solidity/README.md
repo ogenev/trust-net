@@ -1,16 +1,16 @@
 # TrustNet Smart Contracts
 
-Smart contracts for the TrustNet reputation layer (Spec v0.7).
+Smart contracts for the TrustNet reputation layer (v1.1).
 
 ## Overview
 
-TrustNet provides verifiable, explainable trust-to-act decisions for AI agents using:
+TrustNet provides verifiable, explainable trust-to-act scoring for AI agents using:
 - **Decider-relative** trust scoring (no global reputation)
-- **Context-isolated** ratings (payments, code-exec, writes, messaging)
+- **Context-isolated** ratings (global, payments, code-exec, writes, defi-exec)
 - **2-hop proofs** with Sparse Merkle Maps
-- **Explainable** decisions showing which edges contributed
+- **Explainable** score bundles showing which edges contributed
 
-See `docs/TrustNet_Spec_v0.7.md` for the current specification.
+See `docs/TRUSTNET_v1.1.md` for the current specification.
 
 ---
 
@@ -89,7 +89,7 @@ TrustNetContexts.GLOBAL       // General trust
 TrustNetContexts.PAYMENTS     // Payment capabilities
 TrustNetContexts.CODE_EXEC    // Code execution
 TrustNetContexts.WRITES       // Data write access
-TrustNetContexts.MESSAGING    // Messaging/notification operations
+TrustNetContexts.DEFI_EXEC    // DeFi execution operations
 
 // Custom contexts
 bytes32 customCtx = TrustNetContexts.computeContextId("api-access", "v1");
@@ -203,7 +203,7 @@ GLOBAL     = 0x430faa5635b6f437d8b5a2d66333fe4fbcf75602232a76b67e94fd4a3275169b
 PAYMENTS   = 0x195c31d552212fd148934033b94b89c00b603e2b73e757a2b7684b4cc9602147
 CODE_EXEC  = 0x5efe84ba1b51e4f09cf7666eca4d0685fcccf1ee1f5c051bfd1b40c537b4565b
 WRITES     = 0xa4d767d43a1aa6ce314b2c1df834966b812e18b0b99fcce9faf1591c0a6f2674
-MESSAGING  = 0x9a61a0d65a04cee1ab884471f6d8f2b07d58922715c5a822f2a3caaf7e587841
+DEFI_EXEC  = 0x3372ad16565f09e46bfdcd8668e8ddb764599c1e6088d92a088c17ecb464ad65
 ```
 
 ---
@@ -218,24 +218,22 @@ Off-chain indexers can ingest both:
 When processing ERC-8004 feedback:
 ```solidity
 // Only ingest if tagged for TrustNet
-if (endpoint == "trustnet" && tag2 == "trustnet:v1") {
-    // Parse tag1 as either:
-    // - canonical context string (hash to contextId), or
-    // - 0x-bytes32 hex (direct contextId)
+if (tag2 == "trustnet:v1") {
+    // Parse tag1 as canonical context string (hash to contextId)
     // Map score (0-100) to level (-2 to +2)
-    // Use client as rater, agentWallet as target
+    // Use client as rater, agentWallet as target (fallback to internal AgentKey if wallet absent)
 }
 ```
 
-Quantization mapping (spec v0.6 default buckets):
+Quantization mapping (v1.1 buckets):
 - `80-100` → `+2`
 - `60-79`  → `+1`
 - `40-59`  → `0`
 - `20-39`  → `-1`
 - `0-19`   → `-2`
 
-**Notes (v0.6):**
-- `tag1`, `tag2`, and `endpoint` are **strings**. Do not hash them for comparison.
+**Notes (TrustNet v1.1 spec-aligned ingestion):**
+- `tag1`, `tag2`, and `endpoint` are **strings**, and `tag2` must be the literal `trustnet:v1`.
 - If an ERC‑8004 identity registry is configured, resolve `agentId → agentWallet` at block height.
 - `ResponseAppended` events should be ingested as verification stamps; the on-chain contracts here do not enforce this.
 
@@ -308,5 +306,5 @@ MIT - see [LICENSE](../LICENSE) for details.
 ## References
 
 - [ERC-8004 Specification](https://eips.ethereum.org/EIPS/eip-8004)
-- Spec v0.7: `docs/TrustNet_Spec_v0.7.md`
+- Spec v1.1: `docs/TRUSTNET_v1.1.md`
 - [Sparse Merkle Trees](https://docs.iden3.io/publications/pdfs/Merkle-Tree.pdf)

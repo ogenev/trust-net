@@ -25,7 +25,7 @@ INDEXER_LOG="${ARTIFACT_DIR}/indexer.log"
 PUBLISH_LOG="${ARTIFACT_DIR}/publish.log"
 REPORT_JSON="${ARTIFACT_DIR}/report.json"
 ROOT_JSON="${ARTIFACT_DIR}/root.json"
-DECISION_JSON="${ARTIFACT_DIR}/decision.json"
+SCORE_JSON="${ARTIFACT_DIR}/score.json"
 INDEXER_CONFIG="${ARTIFACT_DIR}/indexer.base-sepolia.toml"
 
 DB_FILE="${TRUSTNET_DB_FILE:-${ARTIFACT_DIR}/trustnet-base-sepolia.db}"
@@ -210,20 +210,19 @@ if ((EPOCH2 <= EPOCH1)); then
 fi
 cross_check_epoch_against_chain "${EPOCH2}"
 
-echo "Fetching root + decision from API"
+echo "Fetching root + score from API"
 curl -fsS "http://127.0.0.1:${API_PORT}/v1/root" >"${ROOT_JSON}"
-CONTEXT_ID="$(cast keccak "${CONTEXT_LABEL}")"
 
-decision_attempts=0
+score_attempts=0
 while true; do
-  code="$(curl -sS -o "${DECISION_JSON}" -w "%{http_code}" \
-    "http://127.0.0.1:${API_PORT}/v1/decision?decider=${DECIDER_ADDR}&target=${TARGET_ADDR}&contextId=${CONTEXT_ID}")"
+  code="$(curl -sS -o "${SCORE_JSON}" -w "%{http_code}" \
+    "http://127.0.0.1:${API_PORT}/v1/score/${DECIDER_ADDR}/${TARGET_ADDR}?contextTag=${CONTEXT_LABEL}")"
   if [[ "${code}" == "200" ]]; then
     break
   fi
-  decision_attempts=$((decision_attempts + 1))
-  if ((decision_attempts > 90)); then
-    echo "timed out waiting for decision endpoint to return 200" >&2
+  score_attempts=$((score_attempts + 1))
+  if ((score_attempts > 90)); then
+    echo "timed out waiting for score endpoint to return 200" >&2
     exit 1
   fi
   sleep 1
@@ -256,10 +255,10 @@ if [[ "${ONCHAIN_MANIFEST_URI}" != "${ROOT_MANIFEST_URI}" ]]; then
   exit 1
 fi
 
-echo "Running anchored decision verification"
+echo "Running anchored score verification"
 cargo run -q -p trustnet-cli -- verify \
   --root "${ROOT_JSON}" \
-  --bundle "${DECISION_JSON}" \
+  --bundle "${SCORE_JSON}" \
   --publisher "${PUBLISHER_ADDR}" \
   --rpc-url "${RPC_URL}" \
   --root-registry "${ROOT_REGISTRY}" \
@@ -269,12 +268,12 @@ jq -e \
   --arg expected_endorser_hex "$(lower_hex "${ENDORSER_ADDR#0x}")" \
   --arg expected_root "$(lower_hex "${ROOT_GRAPH}")" \
   --argjson expected_epoch "${ROOT_EPOCH}" \
-  '.decision == "allow"
-    and .endorser != null
-    and (.endorser | ascii_downcase | endswith($expected_endorser_hex))
-    and (.graphRoot | ascii_downcase) == $expected_root
+  '.score >= 1
+    and .proof.endorser != null
+    and (.proof.endorser | ascii_downcase | endswith($expected_endorser_hex))
+    and (.proof.graphRoot | ascii_downcase) == $expected_root
     and .epoch == $expected_epoch' \
-  "${DECISION_JSON}" >/dev/null
+  "${SCORE_JSON}" >/dev/null
 
 FEEDBACK_RAW_COUNT="$(sqlite3 "${DB_FILE}" "SELECT COUNT(*) FROM feedback_raw;" | tr -d '[:space:]')"
 RESPONSES_RAW_COUNT="$(sqlite3 "${DB_FILE}" "SELECT COUNT(*) FROM feedback_responses_raw;" | tr -d '[:space:]')"
@@ -317,7 +316,7 @@ cat >"${REPORT_JSON}" <<EOF
   },
   "checks": {
     "apiRootCrossCheckedWithChain": true,
-    "decisionBundleAnchoredVerify": true,
+    "scoreBundleAnchoredVerify": true,
     "indexerCrashRecoveryCatchup": true
   },
   "ingestionCounts": {
@@ -327,7 +326,7 @@ cat >"${REPORT_JSON}" <<EOF
   },
   "artifacts": {
     "rootJson": "${ROOT_JSON}",
-    "decisionJson": "${DECISION_JSON}",
+    "scoreJson": "${SCORE_JSON}",
     "apiLog": "${API_LOG}",
     "indexerLog": "${INDEXER_LOG}",
     "publishLog": "${PUBLISH_LOG}"

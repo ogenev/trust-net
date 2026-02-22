@@ -1,12 +1,11 @@
-# TrustNet Architecture (Spec v0.7 target)
+# TrustNet Architecture (Spec v1.1 target)
 
 ## Overview
 
 TrustNet uses a **modular architecture** with separate binaries for chain ingestion and HTTP serving.
 
-This repo is upgrading to match:
-- Spec: `docs/TrustNet_Spec_v0.7.md`
-- Upgrade plan: `docs/Upgrade_Plan_v0.6.md`
+This repo targets:
+- Spec: `docs/TRUSTNET_v1.1.md`
 
 ```
 ┌──────────────────────────────┐
@@ -17,7 +16,7 @@ This repo is upgrading to match:
                │ SQLite (shared; dev)
                │
 ┌──────────────▼───────────────┐
-│  trustnet-api                │  ← HTTP API server (v0.6 roots + decision bundles)
+│  trustnet-api                │  ← HTTP API server (roots + score bundles)
 │  (reads DB; server mode may write) │
 └──────────────────────────────┘
 
@@ -32,8 +31,9 @@ This repo is upgrading to match:
 **Responsibilities:**
 - Poll Ethereum RPC for new blocks
 - Ingest `EdgeRated` events from TrustGraph contract (TrustNet-native)
-- Ingest ERC‑8004 feedback events (guarded by `endpoint == "trustnet"` and `tag2 == "trustnet:v1"`) and map deterministically to TrustNet edges
-- Parse `tag1` as context string or bytes32 hex, and quantize `(value, valueDecimals)` into TrustNet levels
+- Ingest ERC‑8004 feedback events (guarded by `tag2 == "trustnet:v1"`) and map deterministically to TrustNet edges
+- Parse canonical `tag1` context strings and quantize `(value, valueDecimals)` into TrustNet levels
+- Ingest `FeedbackRevoked` and recompute effective latest edges
 - Resolve `agentId → agentWallet` using the identity registry (if configured)
 - Ingest `ResponseAppended` into `feedback_responses_raw`
 - Optionally verify `responseURI` payloads (`trustnet.verification.v1`) and persist verified stamps in `feedback_verified`
@@ -61,20 +61,20 @@ This repo is upgrading to match:
 
 ### 2. trustnet-api (HTTP API Server)
 
-**Purpose:** serve authenticated roots/manifests and verifiable decision bundles.
+**Purpose:** serve authenticated roots/manifests and verifiable score bundles.
 
 **Responsibilities:**
 - Serve `GET /v1/root` (epoch + `graphRoot` + `manifestHash` + publisher signature)
-- Serve `GET /v1/decision` returning a `DecisionBundleV1` with deterministic endorser selection, DE/ET/DT proofs, and “why” edges + constraints + optional `evidenceVerified` hints
+- Serve `GET /v1/score/:decider/:target?contextTag=...` returning `{ score, epoch, why, proof }` with deterministic endorser selection and DE/ET/DT proofs
 - Apply evidence gating when configured, using verified stamps in `feedback_verified` if present
 - (Server mode) accept `POST /v1/ratings` to append signed `trustnet.rating.v1` to `edges_raw`
 
 **Storage:** Reads from SQLite (server mode additionally writes)
 
-**API Endpoints (v0.6):**
+**API Endpoints (v1.1):**
 - `GET /v1/root`
 - `GET /v1/contexts`
-- `GET /v1/decision?decider=<principalId>&target=<principalId>&contextId=<bytes32>`
+- `GET /v1/score/:decider/:target?contextTag=<tag>`
 - `GET /v1/proof?key=<edgeKey>` (debug)
 - `POST /v1/ratings` (server mode)
 
@@ -93,7 +93,7 @@ This repo is upgrading to match:
 ```
 Ethereum (Sepolia)
     │
-    │ Events: EdgeRated + ERC‑8004 NewFeedback + ResponseAppended
+    │ Events: EdgeRated + ERC‑8004 NewFeedback + FeedbackRevoked + ResponseAppended
     │
     ▼
 ┌───────────────────┐
@@ -119,7 +119,7 @@ Ethereum (Sepolia)
     (edges_raw, edges_latest, feedback_raw, feedback_responses_raw, feedback_verified, epochs, sync_state)
 ```
 
-### Server mode (private log → decision bundles)
+### Server mode (private log → score bundles)
 
 ```
 Client/Gateway
@@ -141,12 +141,12 @@ Client/Gateway
     SQLite Database
 ```
 
-### Decision query flow (offline-verifiable)
+### Score query flow (offline-verifiable)
 
 ```
 Client (HTTP)
     │
-    │ GET /v1/decision?decider=...&target=...&contextId=...
+    │ GET /v1/score/:decider/:target?contextTag=...
     │
     ▼
 ┌───────────────────┐
@@ -232,7 +232,7 @@ cargo run -- --database-url sqlite://../../trustnet.db --port 3000
 
 ## Shared Database Schema
 
-Chain and server modes use separate databases (enforced by `deployment_mode`). The v0.6 schema includes append-only raw tables plus reduced latest tables and verification stamps:
+Chain and server modes use separate databases (enforced by `deployment_mode`). The schema includes append-only raw tables plus reduced latest tables and verification stamps:
 
 ```sql
 CREATE TABLE edges_raw (...);
@@ -278,6 +278,6 @@ Add zero-knowledge proving:
 | Service | Purpose | Reads DB | Writes DB | HTTP |
 |---------|---------|----------|-----------|------|
 | **indexer** | Event ingestion | ✅ | ✅ | ❌ |
-| **server** | Roots + decision bundles | ✅ | ✅* | ✅ |
+| **server** | Roots + score bundles | ✅ | ✅* | ✅ |
 
 \* Writes DB in server mode (private log ingestion and/or root building).

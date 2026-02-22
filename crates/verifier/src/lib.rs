@@ -1,9 +1,9 @@
-//! TrustNet offline verifier (Spec v0.6).
+//! TrustNet offline verifier (v1.1 spec).
 //!
 //! Verifies:
 //! - root authenticity via publisher signature (server mode)
 //! - Sparse Merkle proofs for DT / DE / ET edges
-//! - score + decision consistency with v0.6 evidence gating
+//! - score consistency with TrustNet v1.1 rule
 
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
@@ -34,7 +34,8 @@ fn parse_bitmap_256(s: &str) -> anyhow::Result<[u8; 32]> {
 }
 
 fn bitmap_bit_is_set(bitmap: &[u8; 32], idx: usize) -> bool {
-    (bitmap[idx / 8] & (1 << (7 - (idx % 8)))) != 0
+    let byte_index = 31 - (idx / 8);
+    (bitmap[byte_index] & (1 << (idx % 8))) != 0
 }
 
 fn smm_default_hashes() -> [B256; 257] {
@@ -64,22 +65,37 @@ pub struct LeafValueJson {
     pub updated_at: u64,
     #[serde(rename = "evidenceHash")]
     pub evidence_hash: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub event: Option<serde_json::Value>,
     #[serde(
-        rename = "evidenceVerified",
+        rename = "feedbackURI",
         default,
         skip_serializing_if = "Option::is_none"
     )]
-    pub evidence_verified: Option<bool>,
+    pub feedback_uri: Option<String>,
+    #[serde(
+        rename = "feedbackHash",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub feedback_hash: Option<String>,
 }
 
 impl LeafValueJson {
     pub fn to_leaf_value_v1(&self) -> anyhow::Result<LeafValueV1> {
         Ok(LeafValueV1 {
             level: Level::new(self.level)?,
-            updated_at_u64: self.updated_at,
-            evidence_hash: parse_b256(&self.evidence_hash)?,
         })
     }
+}
+
+/// Canonical JSON proof format.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProofLeafJson {
+    #[serde(rename = "K")]
+    pub k: String,
+    #[serde(rename = "V")]
+    pub v: u8,
 }
 
 /// Canonical JSON proof format.
@@ -93,53 +109,39 @@ pub struct SmmProofV1Json {
     pub context_id: Option<String>,
     pub rater: Option<String>,
     pub target: Option<String>,
-    #[serde(rename = "isMembership")]
-    pub is_membership: bool,
-    #[serde(rename = "leafValue")]
-    pub leaf_value: Option<LeafValueJson>,
+    pub leaf: Option<ProofLeafJson>,
+    #[serde(rename = "isAbsent")]
+    pub is_absent: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bitmap: Option<String>,
     pub siblings: Vec<String>,
     pub format: String,
 }
 
-/// Decision bundle response (Spec v0.4 shape).
+/// Score proof payload from `/v1/score`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DecisionBundleV1Json {
-    #[serde(rename = "type")]
-    pub ty: String,
-    pub epoch: u64,
+pub struct ScoreProofV1Json {
     #[serde(rename = "graphRoot")]
     pub graph_root: String,
     #[serde(rename = "manifestHash")]
     pub manifest_hash: String,
     pub decider: String,
     pub target: String,
+    #[serde(rename = "contextTag")]
+    pub context_tag: String,
     #[serde(rename = "contextId")]
     pub context_id: String,
-    pub decision: String,
-    pub score: i8,
-    pub thresholds: ThresholdsJson,
     pub endorser: Option<String>,
-    pub why: WhyJson,
-    pub constraints: ConstraintsJson,
     pub proofs: ProofsJson,
 }
 
+/// Score response shape returned by `/v1/score/:decider/:target`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ThresholdsJson {
-    pub allow: i8,
-    pub ask: i8,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ConstraintsJson {
-    #[serde(rename = "ttlSeconds")]
-    pub ttl_seconds: u64,
-    #[serde(rename = "requireEvidenceForPositiveET")]
-    pub require_evidence_for_positive_et: bool,
-    #[serde(rename = "requireEvidenceForPositiveDT")]
-    pub require_evidence_for_positive_dt: bool,
+pub struct ScoreBundleV1Json {
+    pub score: i8,
+    pub epoch: u64,
+    pub why: WhyJson,
+    pub proof: ScoreProofV1Json,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -166,7 +168,7 @@ pub struct ProofsJson {
 ///
 /// This is a self-contained audit artifact that includes:
 /// - the root bundle
-/// - the decision bundle (including proofs)
+/// - the score bundle (including proofs)
 /// - tool call hashes
 /// - an optional receipt signature
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -181,8 +183,8 @@ pub struct ActionReceiptUnsignedV1 {
     #[serde(rename = "resultHash")]
     pub result_hash: String,
     pub root: serde_json::Value,
-    #[serde(rename = "decisionBundle")]
-    pub decision_bundle: serde_json::Value,
+    #[serde(rename = "scoreBundle")]
+    pub score_bundle: serde_json::Value,
     #[serde(rename = "policyManifestHash", skip_serializing_if = "Option::is_none")]
     pub policy_manifest_hash: Option<String>,
 }
@@ -243,6 +245,7 @@ fn verify_smm_proof_against_root(
         proof.ty
     );
     let edge_key = parse_b256(&proof.edge_key)?;
+    let is_membership = !proof.is_absent;
     let siblings: Vec<B256> = match proof.format.as_str() {
         "uncompressed" => {
             anyhow::ensure!(
@@ -263,17 +266,18 @@ fn verify_smm_proof_against_root(
             let bitmap = parse_bitmap_256(bitmap_hex)?;
             let default_hashes = smm_default_hashes();
             let mut packed_iter = proof.siblings.iter();
-            let mut expanded = Vec::with_capacity(256);
+            let mut expanded = vec![B256::ZERO; 256];
 
             for i in 0..256 {
-                if bitmap_bit_is_set(&bitmap, i) {
+                let sibling = if bitmap_bit_is_set(&bitmap, i) {
                     let packed = packed_iter.next().with_context(|| {
                         format!("bitmap set bit {} but packed sibling missing", i)
                     })?;
-                    expanded.push(parse_b256(packed)?);
+                    parse_b256(packed)?
                 } else {
-                    expanded.push(default_hashes[255 - i]);
-                }
+                    default_hashes[i]
+                };
+                expanded[255 - i] = sibling;
             }
 
             anyhow::ensure!(
@@ -285,14 +289,18 @@ fn verify_smm_proof_against_root(
         other => anyhow::bail!("unsupported proof format: {}", other),
     };
 
-    let leaf_value = if proof.is_membership {
-        let lv = proof
-            .leaf_value
+    let leaf_value = if is_membership {
+        let leaf = proof
+            .leaf
             .as_ref()
-            .context("membership proof missing leafValue")?
-            .to_leaf_value_v1()?;
-        lv.encode().to_vec()
+            .context("membership proof missing leaf")?;
+        let leaf_key = parse_b256(&leaf.k)?;
+        anyhow::ensure!(leaf_key == edge_key, "leaf.K does not match proof.edgeKey");
+        let level =
+            Level::from_smm_value(leaf.v).map_err(|e| anyhow::anyhow!("invalid leaf.V: {}", e))?;
+        LeafValueV1 { level }.encode().to_vec()
     } else {
+        anyhow::ensure!(proof.leaf.is_none(), "absence proof must not include leaf");
         Vec::new()
     };
 
@@ -300,7 +308,7 @@ fn verify_smm_proof_against_root(
         key: edge_key,
         leaf_value: leaf_value.clone(),
         siblings,
-        is_membership: proof.is_membership,
+        is_membership,
     };
 
     anyhow::ensure!(
@@ -309,7 +317,7 @@ fn verify_smm_proof_against_root(
         proof.edge_key
     );
 
-    if proof.is_membership {
+    if is_membership {
         LeafValueV1::decode(&leaf_value)
             .map_err(|e| anyhow::anyhow!("invalid leafValue encoding: {}", e))
     } else {
@@ -345,11 +353,6 @@ fn verify_edge_key_binding(proof: &SmmProofV1Json) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn evidence_is_verified(edge: &LeafValueJson, leaf: &LeafValueV1) -> bool {
-    edge.evidence_verified
-        .unwrap_or_else(|| leaf.evidence_hash != B256::ZERO)
-}
-
 fn verify_manifest_hash(root: &RootResponseV1) -> anyhow::Result<()> {
     let Some(manifest) = root.manifest.as_ref() else {
         return Ok(());
@@ -368,20 +371,22 @@ fn verify_manifest_hash(root: &RootResponseV1) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Verify a decision bundle against a root response (server/chain mode).
-pub fn verify_decision_bundle(
+fn score_v1_1(level_dt: Level, level_de: Level, level_et: Level) -> i8 {
+    let l_dt = i16::from(level_dt.value());
+    let l_de_pos = i16::from(level_de.value().max(0));
+    let l_et = i16::from(level_et.value());
+    let numerator = (2 * l_dt) + (l_de_pos * l_et);
+    (numerator / 2).clamp(-2, 2) as i8
+}
+
+/// Verify a `/v1/score` payload against a `/v1/root` response.
+pub fn verify_score_bundle(
     root: &RootResponseV1,
-    bundle: &DecisionBundleV1Json,
+    bundle: &ScoreBundleV1Json,
     expected_publisher: Option<trustnet_core::Address>,
 ) -> anyhow::Result<()> {
-    let recovered = verify_root_signature(root, expected_publisher)?;
+    let _recovered = verify_root_signature(root, expected_publisher)?;
     verify_manifest_hash(root)?;
-
-    anyhow::ensure!(
-        bundle.ty == "trustnet.decisionBundle.v1",
-        "decision bundle type mismatch: {}",
-        bundle.ty
-    );
 
     // Bind bundle to root.
     anyhow::ensure!(
@@ -390,21 +395,27 @@ pub fn verify_decision_bundle(
         bundle.epoch,
         root.epoch
     );
-    anyhow::ensure!(bundle.graph_root == root.graph_root, "graphRoot mismatch");
+    anyhow::ensure!(
+        bundle.proof.graph_root == root.graph_root,
+        "graphRoot mismatch"
+    );
     if let Some(root_mh) = root.manifest_hash.as_deref() {
-        anyhow::ensure!(bundle.manifest_hash == root_mh, "manifestHash mismatch");
+        anyhow::ensure!(
+            bundle.proof.manifest_hash == root_mh,
+            "manifestHash mismatch"
+        );
     }
 
-    let graph_root = parse_b256(&bundle.graph_root)?;
+    let graph_root = parse_b256(&bundle.proof.graph_root)?;
 
     // Verify proofs and edgeKey bindings (when proof includes rater/target/contextId).
-    verify_edge_key_binding(&bundle.proofs.dt)?;
-    let dt = verify_smm_proof_against_root(&bundle.proofs.dt, &graph_root)?;
+    verify_edge_key_binding(&bundle.proof.proofs.dt)?;
+    let dt = verify_smm_proof_against_root(&bundle.proof.proofs.dt, &graph_root)?;
 
     let (de, et, endorser) = match (
-        bundle.endorser.as_deref(),
-        &bundle.proofs.de,
-        &bundle.proofs.et,
+        bundle.proof.endorser.as_deref(),
+        &bundle.proof.proofs.de,
+        &bundle.proof.proofs.et,
     ) {
         (Some(endorser), Some(de), Some(et)) => {
             verify_edge_key_binding(de)?;
@@ -438,69 +449,23 @@ pub fn verify_decision_bundle(
     anyhow::ensure!(why_de == de, "why.edgeDE does not match DE proof leafValue");
     anyhow::ensure!(why_et == et, "why.edgeET does not match ET proof leafValue");
 
-    // Verify score + decision consistency (v0.6 evidence gating).
-    let thresholds =
-        trustnet_engine::Thresholds::new(bundle.thresholds.allow, bundle.thresholds.ask)
-            .map_err(|e| anyhow::anyhow!("invalid thresholds: {}", e))?;
-
-    let evidence_policy = trustnet_engine::EvidencePolicy {
-        require_positive_et_evidence: bundle.constraints.require_evidence_for_positive_et,
-        require_positive_dt_evidence: bundle.constraints.require_evidence_for_positive_dt,
-    };
-    let dt_has_evidence = evidence_is_verified(&bundle.why.edge_dt, &dt);
-    let candidates = endorser
-        .map(|endorser| {
-            vec![trustnet_engine::CandidateEvidence {
-                endorser,
-                level_de: de.level,
-                level_et: et.level,
-                et_has_evidence: evidence_is_verified(&bundle.why.edge_et, &et),
-            }]
-        })
-        .unwrap_or_default();
-
-    let result = trustnet_engine::decide_with_evidence(
-        thresholds,
-        evidence_policy,
-        dt.level,
-        dt_has_evidence,
-        &candidates,
-    );
-
+    // Verify score consistency with TrustNet v1.1 formula.
+    let computed_score = score_v1_1(dt.level, de.level, et.level);
     anyhow::ensure!(
-        result.score == bundle.score,
+        computed_score == bundle.score,
         "score mismatch (computed={}, bundle={})",
-        result.score,
+        computed_score,
         bundle.score
     );
-    anyhow::ensure!(
-        result.decision.as_str() == bundle.decision,
-        "decision mismatch (computed={}, bundle={})",
-        result.decision.as_str(),
-        bundle.decision
-    );
 
-    let bundle_endorser = bundle.endorser.as_deref();
-    match (endorser, result.endorser) {
-        (Some(parsed), Some(computed)) => {
-            anyhow::ensure!(
-                parsed == computed,
-                "endorser mismatch (bundle={}, computed=0x{})",
-                bundle_endorser.unwrap_or("<missing>"),
-                hex::encode(computed.as_bytes())
-            );
-        }
-        (Some(_), None) => {
-            anyhow::bail!("endorser present but decision does not select it");
-        }
-        (None, Some(_)) => {
-            anyhow::bail!("decision selected an endorser but bundle.endorser is missing");
-        }
-        (None, None) => {}
+    if endorser.is_some() {
+        let baseline = score_v1_1(dt.level, Level::neutral(), Level::neutral());
+        anyhow::ensure!(
+            computed_score > baseline,
+            "endorser present but does not improve score over direct edge"
+        );
     }
 
-    // If we reached here, everything verifies.
-    let _ = recovered;
     Ok(())
 }
 
@@ -531,19 +496,18 @@ pub fn sign_action_receipt_v1(
     })
 }
 
-/// Verify an action receipt's EIP-191 signature and embedded decision bundle.
+/// Verify an action receipt's EIP-191 signature and embedded score bundle.
 pub fn verify_action_receipt_v1(
     receipt: &ActionReceiptV1,
     expected_publisher: Option<trustnet_core::Address>,
     expected_signer: Option<trustnet_core::Address>,
 ) -> anyhow::Result<trustnet_core::Address> {
-    // Verify embedded decision bundle (root sig + merkle proofs + score/decision).
+    // Verify embedded score bundle (root sig + merkle proofs + score).
     let root: RootResponseV1 =
         serde_json::from_value(receipt.unsigned.root.clone()).context("invalid receipt.root")?;
-    let bundle: DecisionBundleV1Json =
-        serde_json::from_value(receipt.unsigned.decision_bundle.clone())
-            .context("invalid receipt.decisionBundle")?;
-    verify_decision_bundle(&root, &bundle, expected_publisher)?;
+    let bundle: ScoreBundleV1Json = serde_json::from_value(receipt.unsigned.score_bundle.clone())
+        .context("invalid receipt.scoreBundle")?;
+    verify_score_bundle(&root, &bundle, expected_publisher)?;
 
     // Verify receipt signature.
     let canonical = serde_jcs::to_vec(&receipt.unsigned)?;
@@ -578,8 +542,8 @@ pub fn verify_action_receipt_v1(
     Ok(recovered)
 }
 
-/// Generate a small v0.6 vector bundle for cross-language hashing verification.
-pub fn generate_vectors_v0_6() -> serde_json::Value {
+/// Generate a small v1.1 vector bundle for cross-language hashing verification.
+pub fn generate_vectors_v1_1() -> serde_json::Value {
     use trustnet_core::hashing::{compute_leaf_hash, keccak256};
     use trustnet_smm::SmmBuilder;
 
@@ -594,13 +558,11 @@ pub fn generate_vectors_v0_6() -> serde_json::Value {
 
     let rater_pid = PrincipalId::from_evm_address(rater_addr);
     let target_pid = PrincipalId::from_evm_address(target_addr);
-    let context = ContextId::from(trustnet_core::CTX_AGENT_COLLAB_CODE_EXEC);
+    let context = ContextId::from(trustnet_core::CTX_CODE_EXEC);
 
     let edge_key = compute_edge_key(&rater_pid, &target_pid, &context);
     let leaf_v = LeafValueV1 {
         level: Level::strong_positive(),
-        updated_at_u64: 123,
-        evidence_hash: B256::ZERO,
     };
     let leaf_bytes = leaf_v.encode().to_vec();
     let leaf_hash = compute_leaf_hash(&edge_key, &leaf_bytes);
@@ -613,9 +575,30 @@ pub fn generate_vectors_v0_6() -> serde_json::Value {
     let smm = builder.build();
     let root = smm.root();
     let proof = smm.prove(edge_key).expect("prove");
+    let default_hashes = SmmBuilder::new().build().default_hashes().to_owned();
+
+    let mut bitmap = [0u8; 32];
+    let mut packed_siblings = Vec::new();
+    for (i, default_sibling) in default_hashes.iter().enumerate().take(256) {
+        let depth = 255 - i;
+        let sibling = proof.siblings[depth];
+        if sibling != *default_sibling {
+            let byte_index = 31 - (i / 8);
+            bitmap[byte_index] |= 1 << (i % 8);
+            packed_siblings.push(format!("0x{}", hex::encode(sibling.as_slice())));
+        }
+    }
+
+    let context_strings: Vec<&str> = trustnet_core::CANONICAL_CONTEXTS_V1
+        .iter()
+        .map(|(name, _)| *name)
+        .collect();
+    let context_registry_hash = keccak256(
+        &serde_jcs::to_vec(&context_strings).expect("JCS serialization for context registry hash"),
+    );
 
     serde_json::json!({
-        "specVersion": "trustnet-spec-0.6",
+        "version": "trustnet-v1.1",
         "principalId": {
             "raterAddress": format!("0x{}", hex::encode(rater_addr.as_slice())),
             "raterPrincipalId": format!("0x{}", hex::encode(rater_pid.as_bytes())),
@@ -625,26 +608,35 @@ pub fn generate_vectors_v0_6() -> serde_json::Value {
         "edgeKey": format!("0x{}", hex::encode(edge_key.as_slice())),
         "leafValueV1": {
             "level": leaf_v.level.value(),
-            "updatedAt": leaf_v.updated_at_u64,
-            "evidenceHash": format!("0x{}", hex::encode(leaf_v.evidence_hash.as_slice()))
+            "V": leaf_v.encode()[0]
         },
         "leafValueBytes": format!("0x{}", hex::encode(&leaf_bytes)),
         "leafHash": format!("0x{}", hex::encode(leaf_hash.as_slice())),
         "graphRoot": format!("0x{}", hex::encode(root.as_slice())),
         "membershipProof": {
             "edgeKey": format!("0x{}", hex::encode(proof.key.as_slice())),
-            "isMembership": proof.is_membership,
-            "leafValueBytes": format!("0x{}", hex::encode(&proof.leaf_value)),
-            "siblings": proof.siblings.iter().map(|s| format!("0x{}", hex::encode(s.as_slice()))).collect::<Vec<_>>()
+            "leaf": {
+                "K": format!("0x{}", hex::encode(proof.key.as_slice())),
+                "V": leaf_v.encode()[0]
+            },
+            "isAbsent": false,
+            "bitmap": format!("0x{}", hex::encode(bitmap)),
+            "siblings": packed_siblings
         },
         "hashes": {
             "tagTrustnetV1": format!("0x{}", hex::encode(trustnet_core::TAG_TRUSTNET_V1.as_slice())),
-            "contextRegistryHash": format!("0x{}", hex::encode(keccak256(br#"[\"trustnet:ctx:agent-collab:messaging:v1\",\"trustnet:ctx:agent-collab:files:read:v1\",\"trustnet:ctx:agent-collab:files:write:v1\",\"trustnet:ctx:agent-collab:code-exec:v1\",\"trustnet:ctx:agent-collab:delegation:v1\",\"trustnet:ctx:agent-collab:data-share:v1\"]"#).as_slice()))
+            "contextRegistryHash": format!("0x{}", hex::encode(context_registry_hash.as_slice())),
+            "smmHashEmpty": format!("0x{}", hex::encode(trustnet_core::hashing::compute_empty_hash().as_slice()))
         }
     })
 }
 
-/// Backwards-compatible alias for older vector consumers.
+/// Deprecated alias for older callers.
+pub fn generate_vectors_v0_6() -> serde_json::Value {
+    generate_vectors_v1_1()
+}
+
+/// Deprecated alias for older callers.
 pub fn generate_vectors_v0_4() -> serde_json::Value {
-    generate_vectors_v0_6()
+    generate_vectors_v1_1()
 }

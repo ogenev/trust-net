@@ -7,66 +7,57 @@ import "../TrustNetContexts.sol";
 contract TrustNetContextsTest is Test {
     function test_CanonicalContextIds() public {
         assertEq(
-            TrustNetContexts.AGENT_COLLAB_MESSAGING,
-            keccak256(abi.encodePacked("trustnet:ctx:agent-collab:messaging:v1"))
+            TrustNetContexts.GLOBAL,
+            keccak256(abi.encodePacked("trustnet:ctx:global:v1"))
         );
         assertEq(
-            TrustNetContexts.AGENT_COLLAB_FILES_READ,
-            keccak256(abi.encodePacked("trustnet:ctx:agent-collab:files:read:v1"))
+            TrustNetContexts.PAYMENTS,
+            keccak256(abi.encodePacked("trustnet:ctx:payments:v1"))
         );
         assertEq(
-            TrustNetContexts.AGENT_COLLAB_FILES_WRITE,
-            keccak256(abi.encodePacked("trustnet:ctx:agent-collab:files:write:v1"))
+            TrustNetContexts.CODE_EXEC,
+            keccak256(abi.encodePacked("trustnet:ctx:code-exec:v1"))
         );
         assertEq(
-            TrustNetContexts.AGENT_COLLAB_CODE_EXEC,
-            keccak256(abi.encodePacked("trustnet:ctx:agent-collab:code-exec:v1"))
+            TrustNetContexts.WRITES,
+            keccak256(abi.encodePacked("trustnet:ctx:writes:v1"))
         );
         assertEq(
-            TrustNetContexts.AGENT_COLLAB_DELEGATION,
-            keccak256(abi.encodePacked("trustnet:ctx:agent-collab:delegation:v1"))
-        );
-        assertEq(
-            TrustNetContexts.AGENT_COLLAB_DATA_SHARE,
-            keccak256(abi.encodePacked("trustnet:ctx:agent-collab:data-share:v1"))
+            TrustNetContexts.DEFI_EXEC,
+            keccak256(abi.encodePacked("trustnet:ctx:defi-exec:v1"))
         );
     }
 
     function test_CanonicalContextValues() public {
         assertEq(
-            TrustNetContexts.AGENT_COLLAB_MESSAGING,
-            0x04b03219e64c6472e5872ec762574f95cad7503f96392e00dae2bbbeaddd8158
+            TrustNetContexts.GLOBAL,
+            0x430faa5635b6f437d8b5a2d66333fe4fbcf75602232a76b67e94fd4a3275169b
         );
         assertEq(
-            TrustNetContexts.AGENT_COLLAB_FILES_READ,
-            0xc1fec36e15bcd80ff1f0c7d817e26b6a558c5f027fb0e2af1fcef6755e6c04aa
+            TrustNetContexts.PAYMENTS,
+            0x195c31d552212fd148934033b94b89c00b603e2b73e757a2b7684b4cc9602147
         );
         assertEq(
-            TrustNetContexts.AGENT_COLLAB_FILES_WRITE,
-            0x129283efa53ecd8ee862e64bbe6ca301c1f52167c643b55aafa8a668874769cf
+            TrustNetContexts.CODE_EXEC,
+            0x5efe84ba1b51e4f09cf7666eca4d0685fcccf1ee1f5c051bfd1b40c537b4565b
         );
         assertEq(
-            TrustNetContexts.AGENT_COLLAB_CODE_EXEC,
-            0x88329f80681e8980157f3ce652efd4fd18edf3c55202d5fb4f4da8a23e2d6971
+            TrustNetContexts.WRITES,
+            0xa4d767d43a1aa6ce314b2c1df834966b812e18b0b99fcce9faf1591c0a6f2674
         );
         assertEq(
-            TrustNetContexts.AGENT_COLLAB_DELEGATION,
-            0xc6664c53c5aa763dbc7a4925c548e6600ce8d337698eb2faed7c9d348c3055d2
-        );
-        assertEq(
-            TrustNetContexts.AGENT_COLLAB_DATA_SHARE,
-            0xc217daac2c1b96669c55300178ca750feaf0eceffc89d9878cd3a5518d3ad33c
+            TrustNetContexts.DEFI_EXEC,
+            0x3372ad16565f09e46bfdcd8668e8ddb764599c1e6088d92a088c17ecb464ad65
         );
     }
 
     function test_CanonicalContextsAreUnique() public {
-        bytes32[] memory contexts = new bytes32[](6);
-        contexts[0] = TrustNetContexts.AGENT_COLLAB_MESSAGING;
-        contexts[1] = TrustNetContexts.AGENT_COLLAB_FILES_READ;
-        contexts[2] = TrustNetContexts.AGENT_COLLAB_FILES_WRITE;
-        contexts[3] = TrustNetContexts.AGENT_COLLAB_CODE_EXEC;
-        contexts[4] = TrustNetContexts.AGENT_COLLAB_DELEGATION;
-        contexts[5] = TrustNetContexts.AGENT_COLLAB_DATA_SHARE;
+        bytes32[] memory contexts = new bytes32[](5);
+        contexts[0] = TrustNetContexts.GLOBAL;
+        contexts[1] = TrustNetContexts.PAYMENTS;
+        contexts[2] = TrustNetContexts.CODE_EXEC;
+        contexts[3] = TrustNetContexts.WRITES;
+        contexts[4] = TrustNetContexts.DEFI_EXEC;
 
         for (uint256 i = 0; i < contexts.length; i++) {
             for (uint256 j = i + 1; j < contexts.length; j++) {
@@ -75,44 +66,26 @@ contract TrustNetContextsTest is Test {
         }
     }
 
-    function test_AliasSymbolsMapToCanonical() public {
-        assertEq(TrustNetContexts.MESSAGING, TrustNetContexts.AGENT_COLLAB_MESSAGING);
-        assertEq(TrustNetContexts.FILES_READ, TrustNetContexts.AGENT_COLLAB_FILES_READ);
-        assertEq(TrustNetContexts.FILES_WRITE, TrustNetContexts.AGENT_COLLAB_FILES_WRITE);
-        assertEq(TrustNetContexts.CODE_EXEC, TrustNetContexts.AGENT_COLLAB_CODE_EXEC);
-        assertEq(TrustNetContexts.DELEGATION, TrustNetContexts.AGENT_COLLAB_DELEGATION);
-        assertEq(TrustNetContexts.DATA_SHARE, TrustNetContexts.AGENT_COLLAB_DATA_SHARE);
-
-        // Legacy symbol names map to canonical v0.7 IDs (never v0.6 IDs).
-        assertEq(TrustNetContexts.GLOBAL, TrustNetContexts.AGENT_COLLAB_DATA_SHARE);
-        assertEq(TrustNetContexts.PAYMENTS, TrustNetContexts.AGENT_COLLAB_DELEGATION);
-        assertEq(TrustNetContexts.WRITES, TrustNetContexts.AGENT_COLLAB_FILES_WRITE);
-    }
-
     function test_ComputeContextId_MatchesCanonical() public {
         assertEq(
-            TrustNetContexts.computeContextId("agent-collab:messaging", "v1"),
-            TrustNetContexts.AGENT_COLLAB_MESSAGING
+            TrustNetContexts.computeContextId("global", "v1"),
+            TrustNetContexts.GLOBAL
         );
         assertEq(
-            TrustNetContexts.computeContextId("agent-collab:files:read", "v1"),
-            TrustNetContexts.AGENT_COLLAB_FILES_READ
+            TrustNetContexts.computeContextId("payments", "v1"),
+            TrustNetContexts.PAYMENTS
         );
         assertEq(
-            TrustNetContexts.computeContextId("agent-collab:files:write", "v1"),
-            TrustNetContexts.AGENT_COLLAB_FILES_WRITE
+            TrustNetContexts.computeContextId("code-exec", "v1"),
+            TrustNetContexts.CODE_EXEC
         );
         assertEq(
-            TrustNetContexts.computeContextId("agent-collab:code-exec", "v1"),
-            TrustNetContexts.AGENT_COLLAB_CODE_EXEC
+            TrustNetContexts.computeContextId("writes", "v1"),
+            TrustNetContexts.WRITES
         );
         assertEq(
-            TrustNetContexts.computeContextId("agent-collab:delegation", "v1"),
-            TrustNetContexts.AGENT_COLLAB_DELEGATION
-        );
-        assertEq(
-            TrustNetContexts.computeContextId("agent-collab:data-share", "v1"),
-            TrustNetContexts.AGENT_COLLAB_DATA_SHARE
+            TrustNetContexts.computeContextId("defi-exec", "v1"),
+            TrustNetContexts.DEFI_EXEC
         );
     }
 
@@ -124,66 +97,61 @@ contract TrustNetContextsTest is Test {
     }
 
     function test_IsCanonical_TrueForCanonicalContexts() public {
-        assertTrue(TrustNetContexts.isCanonical(TrustNetContexts.AGENT_COLLAB_MESSAGING));
-        assertTrue(TrustNetContexts.isCanonical(TrustNetContexts.AGENT_COLLAB_FILES_READ));
-        assertTrue(TrustNetContexts.isCanonical(TrustNetContexts.AGENT_COLLAB_FILES_WRITE));
-        assertTrue(TrustNetContexts.isCanonical(TrustNetContexts.AGENT_COLLAB_CODE_EXEC));
-        assertTrue(TrustNetContexts.isCanonical(TrustNetContexts.AGENT_COLLAB_DELEGATION));
-        assertTrue(TrustNetContexts.isCanonical(TrustNetContexts.AGENT_COLLAB_DATA_SHARE));
+        assertTrue(TrustNetContexts.isCanonical(TrustNetContexts.GLOBAL));
+        assertTrue(TrustNetContexts.isCanonical(TrustNetContexts.PAYMENTS));
+        assertTrue(TrustNetContexts.isCanonical(TrustNetContexts.CODE_EXEC));
+        assertTrue(TrustNetContexts.isCanonical(TrustNetContexts.WRITES));
+        assertTrue(TrustNetContexts.isCanonical(TrustNetContexts.DEFI_EXEC));
     }
 
-    function test_IsCanonical_FalseForLegacyV06ContextIds() public {
+    function test_IsCanonical_FalseForLegacyAgentCollabContextIds() public {
         assertFalse(
             TrustNetContexts.isCanonical(
-                keccak256(abi.encodePacked("trustnet:ctx:global:v1"))
+                keccak256(abi.encodePacked("trustnet:ctx:agent-collab:messaging:v1"))
             )
         );
         assertFalse(
             TrustNetContexts.isCanonical(
-                keccak256(abi.encodePacked("trustnet:ctx:payments:v1"))
+                keccak256(abi.encodePacked("trustnet:ctx:agent-collab:files:read:v1"))
             )
         );
         assertFalse(
             TrustNetContexts.isCanonical(
-                keccak256(abi.encodePacked("trustnet:ctx:code-exec:v1"))
+                keccak256(abi.encodePacked("trustnet:ctx:agent-collab:files:write:v1"))
             )
         );
         assertFalse(
             TrustNetContexts.isCanonical(
-                keccak256(abi.encodePacked("trustnet:ctx:writes:v1"))
+                keccak256(abi.encodePacked("trustnet:ctx:agent-collab:code-exec:v1"))
             )
         );
         assertFalse(
             TrustNetContexts.isCanonical(
-                keccak256(abi.encodePacked("trustnet:ctx:messaging:v1"))
+                keccak256(abi.encodePacked("trustnet:ctx:agent-collab:data-share:v1"))
             )
         );
     }
 
     function test_GetContextName_CanonicalContexts() public {
         assertEq(
-            TrustNetContexts.getContextName(TrustNetContexts.AGENT_COLLAB_MESSAGING),
-            "agent-collab:messaging"
+            TrustNetContexts.getContextName(TrustNetContexts.GLOBAL),
+            "global"
         );
         assertEq(
-            TrustNetContexts.getContextName(TrustNetContexts.AGENT_COLLAB_FILES_READ),
-            "agent-collab:files:read"
+            TrustNetContexts.getContextName(TrustNetContexts.PAYMENTS),
+            "payments"
         );
         assertEq(
-            TrustNetContexts.getContextName(TrustNetContexts.AGENT_COLLAB_FILES_WRITE),
-            "agent-collab:files:write"
+            TrustNetContexts.getContextName(TrustNetContexts.CODE_EXEC),
+            "code-exec"
         );
         assertEq(
-            TrustNetContexts.getContextName(TrustNetContexts.AGENT_COLLAB_CODE_EXEC),
-            "agent-collab:code-exec"
+            TrustNetContexts.getContextName(TrustNetContexts.WRITES),
+            "writes"
         );
         assertEq(
-            TrustNetContexts.getContextName(TrustNetContexts.AGENT_COLLAB_DELEGATION),
-            "agent-collab:delegation"
-        );
-        assertEq(
-            TrustNetContexts.getContextName(TrustNetContexts.AGENT_COLLAB_DATA_SHARE),
-            "agent-collab:data-share"
+            TrustNetContexts.getContextName(TrustNetContexts.DEFI_EXEC),
+            "defi-exec"
         );
     }
 

@@ -16,7 +16,7 @@ pub use alloy_primitives::B256 as Bytes32;
 ///
 /// A 32-byte identifier used in TrustNet hashing, indexing, and proofs.
 ///
-/// v0.4 encoding rules (see spec §6.1):
+/// Encoding rules (v1.1):
 /// - EVM address: left-pad 20 bytes to 32 bytes (12 zero bytes + 20 address bytes)
 /// - Local identity (agentRef): already 32 bytes (typically sha256(agentPublicKey))
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -140,7 +140,7 @@ impl FromStr for PrincipalId {
 ///
 /// A 32-byte identifier for a stable agent identity that can outlive key rotation.
 ///
-/// v0.6 encoding rules (see spec §6.1.2):
+/// v1.1 encoding rules:
 /// - ERC-8004 subject: keccak256(abi.encodePacked(uint256(chainId), address(identityRegistry), uint256(agentId))).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -264,25 +264,18 @@ impl Level {
     }
 }
 
-/// Leaf value encoding (v0.4 MVP): `levelEnc || updatedAtEnc || evidenceHash`.
+/// Leaf value encoding (TrustNet v1.1 spec): `V`.
 ///
-/// - `levelEnc`: `uint8` where `levelEnc = level + 2` (maps -2..+2 → 0..4)
-/// - `updatedAtEnc`: `uint64` big-endian unix seconds (or other monotonic-ish time)
-/// - `evidenceHash`: `bytes32` (zero if none)
-pub const LEAF_VALUE_V1_LEN: usize = 41;
+/// - `V`: `uint8` where `V = level + 2` (maps `-2..+2 -> 0..4`)
+pub const LEAF_VALUE_V1_LEN: usize = 1;
 
-/// Decoded leaf value for Sparse Merkle Map leaves (TrustNet v0.4 MVP).
+/// Decoded leaf value for Sparse Merkle Map leaves (TrustNet v1.1).
 ///
-/// This is the structured representation of the 41-byte encoding committed under each leaf:
-/// `levelEnc || updatedAtEnc || evidenceHash`.
+/// This is the structured representation of the one-byte encoding committed under each leaf.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LeafValueV1 {
     /// Trust level committed in the leaf.
     pub level: Level,
-    /// Unix timestamp (seconds) committed in the leaf (big-endian encoding).
-    pub updated_at_u64: u64,
-    /// Evidence hash committed in the leaf (`0x00..00` if none).
-    pub evidence_hash: B256,
 }
 
 impl LeafValueV1 {
@@ -290,21 +283,17 @@ impl LeafValueV1 {
     pub const fn default_neutral() -> Self {
         Self {
             level: Level::neutral(),
-            updated_at_u64: 0,
-            evidence_hash: B256::ZERO,
         }
     }
 
-    /// Encode this leaf value into the canonical 41-byte wire/commitment format.
+    /// Encode this leaf value into the canonical one-byte wire/commitment format.
     pub fn encode(&self) -> [u8; LEAF_VALUE_V1_LEN] {
         let mut out = [0u8; LEAF_VALUE_V1_LEN];
         out[0] = self.level.to_smm_value();
-        out[1..9].copy_from_slice(&self.updated_at_u64.to_be_bytes());
-        out[9..].copy_from_slice(self.evidence_hash.as_ref());
         out
     }
 
-    /// Decode a 41-byte leaf value from the canonical v0.4 encoding.
+    /// Decode a one-byte leaf value from the canonical v1.1 encoding.
     pub fn decode(bytes: &[u8]) -> Result<Self, CoreError> {
         if bytes.len() != LEAF_VALUE_V1_LEN {
             return Err(CoreError::InvalidLeafValueLength {
@@ -314,14 +303,8 @@ impl LeafValueV1 {
         }
 
         let level = Level::from_smm_value(bytes[0])?;
-        let updated_at_u64 = u64::from_be_bytes(bytes[1..9].try_into().expect("slice length"));
-        let evidence_hash = B256::from_slice(&bytes[9..]);
 
-        Ok(Self {
-            level,
-            updated_at_u64,
-            evidence_hash,
-        })
+        Ok(Self { level })
     }
 }
 

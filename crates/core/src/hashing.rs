@@ -42,13 +42,13 @@ pub fn keccak256(data: &[u8]) -> B256 {
 /// # Example
 ///
 /// ```
-/// use trustnet_core::{ContextId, CTX_AGENT_COLLAB_CODE_EXEC};
+/// use trustnet_core::{ContextId, CTX_CODE_EXEC};
 /// use trustnet_core::hashing::compute_edge_key;
 /// use alloy_primitives::Address;
 ///
 /// let rater = trustnet_core::PrincipalId::from_evm_address(Address::from([0x11; 20]));
 /// let target = trustnet_core::PrincipalId::from_evm_address(Address::from([0x22; 20]));
-/// let context = ContextId::from(CTX_AGENT_COLLAB_CODE_EXEC);
+/// let context = ContextId::from(CTX_CODE_EXEC);
 ///
 /// let key = compute_edge_key(&rater, &target, &context);
 /// ```
@@ -160,9 +160,17 @@ pub fn compute_internal_hash(left: &B256, right: &B256) -> B256 {
     keccak256(&data)
 }
 
+/// Compute the empty-subtree base hash for the sparse Merkle tree.
+///
+/// Whitepaper v1.1 defines:
+/// `H_empty = keccak256(0x02)`.
+pub fn compute_empty_hash() -> B256 {
+    keccak256(&[crate::constants::SMM_EMPTY_PREFIX])
+}
+
 /// Compute the digest that a root publisher signs for server-mode root authenticity.
 ///
-/// v0.4 spec: `publisherSig` is a signature over `epoch || graphRoot || manifestHash`.
+/// TrustNet v1.1: `publisherSig` is a signature over `epoch || graphRoot || manifestHash`.
 ///
 /// This function computes:
 /// `keccak256( epoch_u64_be || graphRoot_bytes32 || manifestHash_bytes32 )`.
@@ -204,8 +212,8 @@ mod tests {
         assert_eq!(keccak256(input), TAG_TRUSTNET_V1);
 
         // Verify a trustnet context hash
-        let input = b"trustnet:ctx:agent-collab:code-exec:v1";
-        assert_eq!(keccak256(input), CTX_AGENT_COLLAB_CODE_EXEC);
+        let input = b"trustnet:ctx:code-exec:v1";
+        assert_eq!(keccak256(input), CTX_CODE_EXEC);
     }
 
     #[test]
@@ -216,7 +224,7 @@ mod tests {
         let target = PrincipalId::from_evm_address(Address::from(hex!(
             "2222222222222222222222222222222222222222"
         )));
-        let context = ContextId::from(CTX_AGENT_COLLAB_FILES_WRITE);
+        let context = ContextId::from(CTX_WRITES);
 
         let key = compute_edge_key(&rater, &target, &context);
 
@@ -424,6 +432,13 @@ mod tests {
     }
 
     #[test]
+    fn test_compute_empty_hash() {
+        let expected = keccak256(&[SMM_EMPTY_PREFIX]);
+        assert_eq!(compute_empty_hash(), expected);
+        assert_ne!(compute_empty_hash(), B256::ZERO);
+    }
+
+    #[test]
     fn test_edge_key_matches_solidity() {
         // This test should match the exact computation in Solidity
         // We'll use the same test vectors as in the Solidity tests
@@ -433,7 +448,7 @@ mod tests {
         let target = PrincipalId::from_evm_address(Address::from(hex!(
             "0000000000000000000000000000000000000002"
         )));
-        let context = ContextId::from(CTX_AGENT_COLLAB_CODE_EXEC);
+        let context = ContextId::from(CTX_CODE_EXEC);
 
         let key = compute_edge_key(&rater, &target, &context);
 

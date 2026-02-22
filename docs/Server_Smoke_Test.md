@@ -1,12 +1,12 @@
 # Server-Mode Smoke Test (Local, No Chain, True 2-Hop)
 
-> v0.7 note: Local-first (L0) is the default TrustNet profile. This guide is maintained for optional server/shared-mode compatibility validation.
+> v1.1 note: This guide validates server-mode score proof generation without chain anchoring.
 
-This guide validates a real 2-hop decision path in server mode:
+This guide validates a real 2-hop score path in server mode:
 
 1. ingest `D -> E` and `E -> T` signed ratings (`POST /v1/ratings`)
 2. build and insert a root epoch (`trustnet root`)
-3. fetch decision bundle for `(D, T)` (`GET /v1/decision`)
+3. fetch score bundle for `(D, T)` (`GET /v1/score/:decider/:target?contextTag=...`)
 4. verify cryptographically (`trustnet verify`)
 
 By default, this walkthrough uses `trustnet:ctx:code-exec:v1` to match the initial OpenClaw-focused MVP.
@@ -64,7 +64,6 @@ PAYLOAD_ET=$(cargo run -q -p trustnet-cli -- rate \
   --compact)
 
 ENDORSER=$(echo "$PAYLOAD_ET" | sed -E 's/.*"rater":"([^"]+)".*/\1/')
-CTX=$(echo "$PAYLOAD_ET" | sed -E 's/.*"contextId":"([^"]+)".*/\1/')
 
 PAYLOAD_DE=$(cargo run -q -p trustnet-cli -- rate \
   --private-key "$PK_D" \
@@ -78,7 +77,6 @@ DECIDER=$(echo "$PAYLOAD_DE" | sed -E 's/.*"rater":"([^"]+)".*/\1/')
 echo "DECIDER=$DECIDER"
 echo "ENDORSER=$ENDORSER"
 echo "TARGET=$TARGET"
-echo "CTX=$CTX"
 ```
 
 ## 4. Post both ratings
@@ -116,26 +114,26 @@ Expected output shape:
 Inserted epoch 1 (root=0x...)
 ```
 
-## 6. Fetch root and decision bundles
+## 6. Fetch root and score bundles
 
 ```bash
 curl -sS http://localhost:8080/v1/root > /tmp/root.json
 
-curl -sS "http://localhost:8080/v1/decision?decider=$DECIDER&target=$TARGET&contextId=$CTX" \
-  > /tmp/decision.json
+curl -sS "http://localhost:8080/v1/score/$DECIDER/$TARGET?contextTag=$CONTEXT" \
+  > /tmp/score.json
 ```
 
-In a successful 2-hop run, `/tmp/decision.json` should include:
+In a successful 2-hop run, `/tmp/score.json` should include:
 
-- non-null `endorser` (equal to `$ENDORSER`)
-- non-null `proofs.de` and `proofs.et`
-- `decision: "allow"` (with default thresholds and both levels at `+2`)
+- non-null `proof.endorser` (equal to `$ENDORSER`)
+- non-null `proof.proofs.DE` and `proof.proofs.ET`
+- `score >= 1` (with both edges at `+2`, score is `+2`)
 
-## 7. Verify decision against root
+## 7. Verify score against root
 
 ```bash
 cargo run -q -p trustnet-cli -- verify \
-  --root /tmp/root.json --bundle /tmp/decision.json
+  --root /tmp/root.json --bundle /tmp/score.json
 ```
 
 Expected output:
@@ -152,10 +150,10 @@ OK
 - Error: `deployment_mode mismatch: expected 'server', got 'chain'`
   - Use a fresh DB file for server-mode smoke tests.
 
-- `GET /v1/decision` returns `No epochs published`
+- `GET /v1/score/...` returns `No epochs published`
   - Run `cargo run -p trustnet-cli -- root --database-url "$DB_URL" --publisher-key "$PK_D"` after posting ratings.
 
-- `endorser` is `null` or decision is not 2-hop
+- `proof.endorser` is `null` or score is not 2-hop-derived
   - Confirm you posted both edges: positive `D -> E` and positive `E -> T`.
-  - Confirm both edges use the same `contextId` and same DB file.
-  - Confirm decision query is exactly `decider=$DECIDER&target=$TARGET`.
+  - Confirm both edges use the same context and same DB file.
+  - Confirm score query is exactly `/v1/score/$DECIDER/$TARGET?contextTag=$CONTEXT`.

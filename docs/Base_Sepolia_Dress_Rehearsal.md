@@ -1,13 +1,13 @@
 # Base Sepolia Dress Rehearsal (Public ERC-8004 Traffic, MVP A0+)
 
-> v0.7 note: Local-first (L0) is the default TrustNet profile. This rehearsal is for optional anchored chain compatibility and release-readiness checks.
+> v1.1 note: This rehearsal validates the ERC-8004 + anchored score-proof release path.
 
 This runbook validates release readiness for the initial MVP profile on Base Sepolia using real traffic on official ERC-8004 contracts:
 
 1. Register/reuse public ERC-8004 agents on official IdentityRegistry.
 2. Submit public `giveFeedback` and `appendResponse` transactions on official ReputationRegistry.
 3. Ingest chain events, publish multiple roots, and cross-check against RootRegistry.
-4. Verify decision bundle with anchored CLI verification.
+4. Verify score bundle with anchored CLI verification.
 5. Exercise indexer crash/restart catch-up.
 
 No mock ERC-8004 contracts are used in this flow.
@@ -72,7 +72,7 @@ Key outputs:
 
 - `report.json`
 - `root.json`
-- `decision.json`
+- `score.json`
 - `api.log`
 - `indexer.log`
 - `publish.log`

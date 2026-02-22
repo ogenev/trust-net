@@ -1,9 +1,9 @@
-//! Database query helpers for the TrustNet API (Spec v0.4).
+//! Database query helpers for the TrustNet API (spec v1.1).
 
 use sqlx::SqlitePool;
 use trustnet_core::Address;
 
-/// Latest epoch record (v0.4 fields are optional for legacy epochs).
+/// Latest epoch record.
 #[derive(Debug, sqlx::FromRow)]
 pub struct DbEpoch {
     /// Epoch number.
@@ -41,6 +41,29 @@ pub struct DbEdgeLatest {
     pub evidence_hash: Vec<u8>,
 }
 
+/// Detailed edge row for explainability metadata.
+#[derive(Debug, sqlx::FromRow)]
+pub struct DbEdgeLatestDetail {
+    /// Trust level as i8 stored in an i32 column.
+    pub level_i8: i32,
+    /// Unix timestamp (seconds) for when this edge was observed/updated.
+    pub updated_at_u64: i64,
+    /// Evidence hash bytes (32 bytes).
+    pub evidence_hash: Vec<u8>,
+    /// Optional evidence URI.
+    pub evidence_uri: Option<String>,
+    /// Source string (`trust_graph` | `erc8004` | `private_log`).
+    pub source: String,
+    /// Chain coordinates (nullable in server mode).
+    pub block_number: Option<i64>,
+    /// Transaction index within the block.
+    pub tx_index: Option<i64>,
+    /// Log index within the transaction.
+    pub log_index: Option<i64>,
+    /// Transaction hash bytes (32 bytes).
+    pub tx_hash: Option<Vec<u8>>,
+}
+
 /// Get the latest published epoch.
 pub async fn get_latest_epoch(pool: &SqlitePool) -> anyhow::Result<Option<DbEpoch>> {
     let epoch = sqlx::query_as::<_, DbEpoch>(
@@ -65,7 +88,7 @@ pub async fn get_latest_epoch(pool: &SqlitePool) -> anyhow::Result<Option<DbEpoc
     Ok(epoch)
 }
 
-/// Fetch all latest-wins edges (v0.4 schema) for SMM reconstruction.
+/// Fetch all latest-wins edges for SMM reconstruction.
 pub async fn get_all_edges_latest(pool: &SqlitePool) -> anyhow::Result<Vec<DbEdgeLatest>> {
     let rows = sqlx::query_as::<_, DbEdgeLatest>(
         r#"
@@ -83,6 +106,41 @@ pub async fn get_all_edges_latest(pool: &SqlitePool) -> anyhow::Result<Vec<DbEdg
     .await?;
 
     Ok(rows)
+}
+
+/// Fetch one latest-wins edge with explainability metadata.
+pub async fn get_edge_latest_detail(
+    pool: &SqlitePool,
+    rater_pid: &[u8],
+    target_pid: &[u8],
+    context_id: &[u8],
+) -> anyhow::Result<Option<DbEdgeLatestDetail>> {
+    let row = sqlx::query_as::<_, DbEdgeLatestDetail>(
+        r#"
+        SELECT
+            level_i8,
+            updated_at_u64,
+            evidence_hash,
+            evidence_uri,
+            source,
+            block_number,
+            tx_index,
+            log_index,
+            tx_hash
+        FROM edges_latest
+        WHERE rater_pid = ?
+          AND target_pid = ?
+          AND context_id = ?
+        LIMIT 1
+        "#,
+    )
+    .bind(rater_pid)
+    .bind(target_pid)
+    .bind(context_id)
+    .fetch_optional(pool)
+    .await?;
+
+    Ok(row)
 }
 
 /// Candidate endorsers `E` for a 2-hop decision `(D -> E -> T)` in a given context.
@@ -105,8 +163,6 @@ pub async fn get_candidate_endorsers(
           AND e2.target_pid = ?
           AND e1.context_id = ?
           AND e2.context_id = ?
-          AND e1.level_i8 > 0
-          AND e2.level_i8 > 0
         ORDER BY endorser_pid ASC
         "#,
     )

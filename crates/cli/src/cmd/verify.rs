@@ -20,7 +20,7 @@ pub struct VerifyArgs {
     /// Path to /v1/root JSON
     #[arg(long)]
     root: PathBuf,
-    /// Path to /v1/decision JSON
+    /// Path to /v1/score JSON
     #[arg(long)]
     bundle: PathBuf,
     /// Expected publisher EVM address (0x...)
@@ -42,7 +42,7 @@ pub struct ReceiptArgs {
     /// Path to /v1/root JSON
     #[arg(long)]
     root: PathBuf,
-    /// Path to /v1/decision JSON
+    /// Path to /v1/score JSON
     #[arg(long)]
     bundle: PathBuf,
     /// Expected publisher EVM address (0x...)
@@ -137,7 +137,7 @@ fn resolve_chain_anchor_epoch(
 
 async fn verify_root_anchor_onchain(
     root: &trustnet_verifier::RootResponseV1,
-    bundle: &trustnet_verifier::DecisionBundleV1Json,
+    bundle: &trustnet_verifier::ScoreBundleV1Json,
     rpc_url: &str,
     root_registry: &str,
     epoch_override: Option<u64>,
@@ -220,7 +220,7 @@ async fn verify_root_anchor_onchain(
 
 pub async fn run_verify(args: VerifyArgs) -> anyhow::Result<()> {
     let root: trustnet_verifier::RootResponseV1 = read_json(&args.root)?;
-    let bundle: trustnet_verifier::DecisionBundleV1Json = read_json(&args.bundle)?;
+    let bundle: trustnet_verifier::ScoreBundleV1Json = read_json(&args.bundle)?;
 
     let publisher_addr = match args.publisher {
         Some(s) => Some(s.parse::<trustnet_core::Address>()?),
@@ -231,7 +231,7 @@ pub async fn run_verify(args: VerifyArgs) -> anyhow::Result<()> {
         verify_root_anchor_onchain(&root, &bundle, rpc_url, root_registry, args.epoch).await?;
     }
 
-    trustnet_verifier::verify_decision_bundle(&root, &bundle, publisher_addr)?;
+    trustnet_verifier::verify_score_bundle(&root, &bundle, publisher_addr)?;
     println!("OK");
     Ok(())
 }
@@ -247,14 +247,14 @@ pub fn run_receipt(args: ReceiptArgs) -> anyhow::Result<()> {
 
     let root_parsed: trustnet_verifier::RootResponseV1 =
         serde_json::from_value(root_value.clone())?;
-    let bundle_parsed: trustnet_verifier::DecisionBundleV1Json =
+    let bundle_parsed: trustnet_verifier::ScoreBundleV1Json =
         serde_json::from_value(bundle_value.clone())?;
 
     let publisher_addr = match args.publisher {
         Some(s) => Some(s.parse::<trustnet_core::Address>()?),
         None => None,
     };
-    trustnet_verifier::verify_decision_bundle(&root_parsed, &bundle_parsed, publisher_addr)?;
+    trustnet_verifier::verify_score_bundle(&root_parsed, &bundle_parsed, publisher_addr)?;
 
     let args_hash = keccak256_jcs_file(&args.args)?;
     let result_hash = match (args.result, args.error) {
@@ -274,7 +274,7 @@ pub fn run_receipt(args: ReceiptArgs) -> anyhow::Result<()> {
         args_hash,
         result_hash,
         root: root_value,
-        decision_bundle: bundle_value,
+        score_bundle: bundle_value,
         policy_manifest_hash: args.policy_manifest_hash,
     };
 
@@ -316,7 +316,7 @@ pub fn run_verify_receipt(args: VerifyReceiptArgs) -> anyhow::Result<()> {
 }
 
 pub fn run_vectors() -> anyhow::Result<()> {
-    let vectors = trustnet_verifier::generate_vectors_v0_6();
+    let vectors = trustnet_verifier::generate_vectors_v1_1();
     println!("{}", serde_json::to_string_pretty(&vectors)?);
     Ok(())
 }

@@ -150,7 +150,7 @@ mod tests {
         let payload = json!({
             "type": "trustnet.verification.v1",
             "status": "verified",
-            "context": "trustnet:ctx:agent-collab:code-exec:v1",
+            "context": "trustnet:ctx:code-exec:v1",
             "receipt": {"type": "escrowJob", "chainId": 1, "contract": "0xabc", "jobId": "1"},
             "createdAt": "2026-02-04T00:00:00Z"
         });

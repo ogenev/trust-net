@@ -128,6 +128,7 @@ impl SyncEngine {
                 ChainEvent::TrustGraph(ev) => (ev.block_number, ev.tx_index, ev.log_index),
                 ChainEvent::Erc8004(ev) => (ev.block_number, ev.tx_index, ev.log_index),
                 ChainEvent::Erc8004Response(ev) => (ev.block_number, ev.tx_index, ev.log_index),
+                ChainEvent::Erc8004Revoked(ev) => (ev.block_number, ev.tx_index, ev.log_index),
             };
 
             let updated_at_u64 = match ts_cache.get(&block_number).copied() {
@@ -278,6 +279,43 @@ impl SyncEngine {
                         }
                     }
                 }
+                ChainEvent::Erc8004Revoked(ev) => {
+                    let revocation = ev.to_feedback_revocation_record(
+                        self.chain_id,
+                        self.erc8004_reputation,
+                        observed_at_u64,
+                    );
+
+                    if let Err(e) = self
+                        .storage
+                        .append_feedback_revocation_raw(&revocation)
+                        .await
+                    {
+                        warn!("Failed to append feedback_revocations_raw: {}", e);
+                    }
+
+                    match self
+                        .storage
+                        .apply_feedback_revocation(
+                            revocation.chain_id,
+                            &revocation.agent_id,
+                            &revocation.client_address,
+                            &revocation.feedback_index,
+                        )
+                        .await
+                    {
+                        Ok(updated_keys) => {
+                            if updated_keys > 0 {
+                                processed += 1;
+                            } else {
+                                skipped += 1;
+                            }
+                        }
+                        Err(e) => {
+                            warn!("Failed to apply feedback revocation: {}", e);
+                        }
+                    }
+                }
             }
         }
 
@@ -328,6 +366,7 @@ impl SyncEngine {
                     ChainEvent::TrustGraph(ev) => (ev.block_number, ev.tx_index, ev.log_index),
                     ChainEvent::Erc8004(ev) => (ev.block_number, ev.tx_index, ev.log_index),
                     ChainEvent::Erc8004Response(ev) => (ev.block_number, ev.tx_index, ev.log_index),
+                    ChainEvent::Erc8004Revoked(ev) => (ev.block_number, ev.tx_index, ev.log_index),
                 };
 
                 let observed_at_u64 =
@@ -446,6 +485,34 @@ impl SyncEngine {
                                     }
                                 }
                             }
+                        }
+                    }
+                    ChainEvent::Erc8004Revoked(ev) => {
+                        let revocation = ev.to_feedback_revocation_record(
+                            self.chain_id,
+                            self.erc8004_reputation,
+                            observed_at_u64,
+                        );
+
+                        if let Err(e) = self
+                            .storage
+                            .append_feedback_revocation_raw(&revocation)
+                            .await
+                        {
+                            warn!("Failed to append feedback_revocations_raw: {}", e);
+                        }
+
+                        if let Err(e) = self
+                            .storage
+                            .apply_feedback_revocation(
+                                revocation.chain_id,
+                                &revocation.agent_id,
+                                &revocation.client_address,
+                                &revocation.feedback_index,
+                            )
+                            .await
+                        {
+                            warn!("Failed to apply feedback revocation: {}", e);
                         }
                     }
                 }

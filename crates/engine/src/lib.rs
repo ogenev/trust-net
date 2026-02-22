@@ -1,9 +1,10 @@
-//! TrustNet decision engine (Spec v0.4).
+//! TrustNet decision engine (v1.1 spec).
 //!
-//! This crate implements the deterministic trust-to-act rule from the spec:
-//! - Hard veto: `lDT == -2` => DENY
-//! - Endorser path contributes only for positive edges: `min(lDE, lET)` where `lDE>0 && lET>0`
-//! - Direct trust can override upwards: if `lDT > 0`, `score = max(base, lDT)`
+//! Deterministic scoring:
+//! - `lDEpos = max(lDE, 0)` (no-sign-flip guard)
+//! - `path = lDEpos * lET`
+//! - `scoreNumerator = 2*lDT + path`
+//! - `score = clamp(scoreNumerator / 2, -2, +2)`
 //! - Thresholds map score => ALLOW / ASK / DENY
 
 use trustnet_core::types::{Level, PrincipalId};
@@ -97,7 +98,7 @@ pub struct DecisionResult {
     pub decision: Decision,
     /// Final score.
     pub score: i8,
-    /// Selected endorser (if a positive 2-hop path was used).
+    /// Selected endorser (if a 2-hop path improved score numerator).
     pub endorser: Option<PrincipalId>,
     /// Selected `D -> E` level (neutral if none).
     pub level_de: Level,
@@ -107,53 +108,44 @@ pub struct DecisionResult {
     pub level_dt: Level,
 }
 
-/// Compute the TrustNet v0.4 score + decision.
+fn clamp_score_from_numerator(numerator: i16) -> i8 {
+    (numerator / 2).clamp(-2, 2) as i8
+}
+
+fn score_numerator(level_dt: Level, level_de: Level, level_et: Level) -> i16 {
+    let l_dt = i16::from(level_dt.value());
+    let l_de_pos = i16::from(level_de.value().max(0));
+    let l_et = i16::from(level_et.value());
+    (2 * l_dt) + (l_de_pos * l_et)
+}
+
+/// Compute the TrustNet v1.1 spec score + decision.
 ///
 /// - Missing edges must be represented as `Level::neutral()`.
-/// - Candidates are filtered to those with `level_de > 0 && level_et > 0`.
 pub fn decide(thresholds: Thresholds, level_dt: Level, candidates: &[Candidate]) -> DecisionResult {
-    // Hard veto.
-    if level_dt.value() == -2 {
-        return DecisionResult {
-            decision: Decision::Deny,
-            score: -2,
-            endorser: None,
-            level_de: Level::neutral(),
-            level_et: Level::neutral(),
-            level_dt,
-        };
-    }
+    // Baseline path is "no endorser" => level_de=0, level_et=0, path=0.
+    let mut best_numerator = score_numerator(level_dt, Level::neutral(), Level::neutral());
+    let mut best_candidate: Option<Candidate> = None;
 
-    // Pick best endorser E maximizing min(lDE, lET), tie-break by PrincipalId bytes (lexicographic).
-    let mut best: Option<(i8, Candidate)> = None;
+    // Pick best endorser E maximizing scoreNumerator, tie-break by PrincipalId bytes
+    // (lexicographic ascending).
     for candidate in candidates {
-        if candidate.level_de.value() <= 0 || candidate.level_et.value() <= 0 {
+        let candidate_numerator = score_numerator(level_dt, candidate.level_de, candidate.level_et);
+        if candidate_numerator > best_numerator {
+            best_numerator = candidate_numerator;
+            best_candidate = Some(*candidate);
             continue;
         }
-        let score = candidate.level_de.value().min(candidate.level_et.value());
-        best = match best {
-            None => Some((score, *candidate)),
-            Some((best_score, best_candidate)) => {
-                if score > best_score {
-                    Some((score, *candidate))
-                } else if score < best_score {
-                    Some((best_score, best_candidate))
-                } else if candidate.endorser.as_bytes() < best_candidate.endorser.as_bytes() {
-                    Some((score, *candidate))
-                } else {
-                    Some((best_score, best_candidate))
+        if candidate_numerator == best_numerator {
+            if let Some(current) = best_candidate {
+                if candidate.endorser.as_bytes() < current.endorser.as_bytes() {
+                    best_candidate = Some(*candidate);
                 }
             }
-        };
+        }
     }
 
-    let base = best.map(|(score, _)| score).unwrap_or(0);
-
-    let score = if level_dt.value() > 0 {
-        base.max(level_dt.value())
-    } else {
-        base
-    };
+    let score = clamp_score_from_numerator(best_numerator);
 
     let decision = if score >= thresholds.allow {
         Decision::Allow
@@ -163,8 +155,8 @@ pub fn decide(thresholds: Thresholds, level_dt: Level, candidates: &[Candidate])
         Decision::Deny
     };
 
-    let (endorser, level_de, level_et) = best
-        .map(|(_, c)| (Some(c.endorser), c.level_de, c.level_et))
+    let (endorser, level_de, level_et) = best_candidate
+        .map(|c| (Some(c.endorser), c.level_de, c.level_et))
         .unwrap_or((None, Level::neutral(), Level::neutral()));
 
     DecisionResult {
@@ -182,7 +174,6 @@ pub fn decide(thresholds: Thresholds, level_dt: Level, candidates: &[Candidate])
 /// Evidence gating applies only to **positive** edges:
 /// - If `require_positive_et_evidence` is true and `lET > 0` without evidence, treat `lET := 0`.
 /// - If `require_positive_dt_evidence` is true and `lDT > 0` without evidence, treat `lDT := 0`.
-/// - Hard veto (`lDT == -2`) still applies regardless of evidence.
 pub fn decide_with_evidence(
     thresholds: Thresholds,
     evidence_policy: EvidencePolicy,
@@ -230,7 +221,7 @@ mod tests {
     }
 
     #[test]
-    fn veto_always_denies() {
+    fn direct_negative_is_not_hard_veto_in_v1_1() {
         let candidates = [Candidate {
             endorser: PrincipalId::from([0x01; 32]),
             level_de: Level::strong_positive(),
@@ -239,22 +230,22 @@ mod tests {
 
         let result = decide(thresholds(), Level::strong_negative(), &candidates);
         assert_eq!(result.decision, Decision::Deny);
-        assert_eq!(result.score, -2);
-        assert!(result.endorser.is_none());
+        assert_eq!(result.score, 0);
+        assert_eq!(result.endorser, Some(PrincipalId::from([0x01; 32])));
     }
 
     #[test]
-    fn endorsements_never_propagate_negative() {
+    fn no_sign_flip_when_decider_distrusts_endorser() {
         let candidates = [
             Candidate {
                 endorser: PrincipalId::from([0x01; 32]),
-                level_de: Level::negative(),
+                level_de: Level::strong_negative(),
                 level_et: Level::strong_positive(),
             },
             Candidate {
                 endorser: PrincipalId::from([0x02; 32]),
                 level_de: Level::strong_positive(),
-                level_et: Level::negative(),
+                level_et: Level::strong_negative(),
             },
         ];
 
@@ -270,12 +261,12 @@ mod tests {
             Candidate {
                 endorser: PrincipalId::from([0x02; 32]),
                 level_de: Level::strong_positive(),
-                level_et: Level::positive(), // min = 1
+                level_et: Level::positive(), // numerator = 2
             },
             Candidate {
                 endorser: PrincipalId::from([0x01; 32]),
                 level_de: Level::positive(),
-                level_et: Level::strong_positive(), // min = 1
+                level_et: Level::strong_positive(), // numerator = 2
             },
         ];
 
@@ -320,5 +311,19 @@ mod tests {
         let result = decide_with_evidence(thresholds(), policy, Level::positive(), true, &[]);
         assert_eq!(result.decision, Decision::Ask);
         assert_eq!(result.score, 1);
+    }
+
+    #[test]
+    fn score_clamps_to_range() {
+        let candidates = [Candidate {
+            endorser: PrincipalId::from([0x01; 32]),
+            level_de: Level::strong_positive(),
+            level_et: Level::strong_positive(),
+        }];
+
+        // Numerator = 2*2 + 2*2 = 8 -> score=4 -> clamp to +2
+        let result = decide(thresholds(), Level::strong_positive(), &candidates);
+        assert_eq!(result.score, 2);
+        assert_eq!(result.decision, Decision::Allow);
     }
 }

@@ -9,8 +9,8 @@ use alloy::transports::http::{Client, Http};
 use anyhow::{Context, Result};
 
 use super::events::{
-    EdgeRated, EdgeRatedEvent, NewFeedback, NewFeedbackEvent, ResponseAppended,
-    ResponseAppendedEvent,
+    EdgeRated, EdgeRatedEvent, FeedbackRevoked, FeedbackRevokedEvent, NewFeedback,
+    NewFeedbackEvent, ResponseAppended, ResponseAppendedEvent,
 };
 
 sol! {
@@ -40,6 +40,8 @@ pub enum ChainEvent {
     Erc8004(NewFeedbackEvent),
     /// ERC-8004 ResponseAppended event.
     Erc8004Response(ResponseAppendedEvent),
+    /// ERC-8004 FeedbackRevoked event.
+    Erc8004Revoked(FeedbackRevokedEvent),
 }
 
 impl RpcProvider {
@@ -92,14 +94,22 @@ impl RpcProvider {
             .from_block(from_block)
             .to_block(to_block);
 
-        let (logs_trust_graph, logs_erc8004, logs_erc8004_responses): (
+        let filter_erc8004_revocations = Filter::new()
+            .address(self.erc8004_address)
+            .event_signature(FeedbackRevoked::SIGNATURE_HASH)
+            .from_block(from_block)
+            .to_block(to_block);
+
+        let (logs_trust_graph, logs_erc8004, logs_erc8004_responses, logs_erc8004_revocations): (
+            Vec<Log>,
             Vec<Log>,
             Vec<Log>,
             Vec<Log>,
         ) = tokio::try_join!(
             self.provider.get_logs(&filter_trust_graph),
             self.provider.get_logs(&filter_erc8004),
-            self.provider.get_logs(&filter_erc8004_responses)
+            self.provider.get_logs(&filter_erc8004_responses),
+            self.provider.get_logs(&filter_erc8004_revocations)
         )
         .context("Failed to fetch logs from RPC")?;
 
@@ -126,11 +136,19 @@ impl RpcProvider {
             }
         }
 
+        for log in &logs_erc8004_revocations {
+            match FeedbackRevokedEvent::from_log(log) {
+                Ok(event) => events.push(ChainEvent::Erc8004Revoked(event)),
+                Err(e) => tracing::warn!("Failed to parse FeedbackRevoked event: {}", e),
+            }
+        }
+
         // Sort by block coordinates for stable processing.
         events.sort_by_key(|e| match e {
             ChainEvent::TrustGraph(ev) => (ev.block_number, ev.tx_index, ev.log_index),
             ChainEvent::Erc8004(ev) => (ev.block_number, ev.tx_index, ev.log_index),
             ChainEvent::Erc8004Response(ev) => (ev.block_number, ev.tx_index, ev.log_index),
+            ChainEvent::Erc8004Revoked(ev) => (ev.block_number, ev.tx_index, ev.log_index),
         });
 
         Ok(events)

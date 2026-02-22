@@ -1,4 +1,4 @@
-//! Sparse Merkle Map cache for proof generation (Spec v0.4).
+//! Sparse Merkle Map cache for proof generation (spec v1.1).
 
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -12,7 +12,7 @@ use trustnet_smm::{Smm, SmmBuilder};
 pub struct SnapshotLeaf {
     /// Sparse Merkle Map key (edgeKey).
     pub key: trustnet_core::B256,
-    /// Leaf value bytes (v0.4 encoding).
+    /// Leaf value bytes (v1.1 encoding).
     #[serde(with = "serde_bytes")]
     pub leaf_value: Vec<u8>,
 }

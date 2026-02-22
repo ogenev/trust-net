@@ -102,6 +102,31 @@ pub struct FeedbackRecord {
     pub tx_hash: Option<B256>,
 }
 
+/// ERC-8004 feedback revocation record (raw ingestion).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FeedbackRevocationRecord {
+    /// Chain id.
+    pub chain_id: u64,
+    /// ERC-8004 Reputation contract address.
+    pub erc8004_reputation: Address,
+    /// Agent id (uint256).
+    pub agent_id: U256,
+    /// Client address.
+    pub client_address: Address,
+    /// Feedback index (uint256).
+    pub feedback_index: U256,
+    /// Observed ordering key.
+    pub observed_at_u64: u64,
+    /// Block number.
+    pub block_number: Option<u64>,
+    /// Transaction index.
+    pub tx_index: Option<u64>,
+    /// Log index.
+    pub log_index: Option<u64>,
+    /// Transaction hash.
+    pub tx_hash: Option<B256>,
+}
+
 /// ERC-8004 response record (public verification stamp).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FeedbackResponseRecord {
@@ -217,7 +242,7 @@ pub struct EpochRecord {
 
     /// Canonical Root Manifest JSON (RFC 8785 JCS), when available.
     ///
-    /// v0.4 uses this for reproducible root recomputation.
+    /// v1.1 uses this for reproducible root recomputation.
     pub manifest_json: Option<String>,
 
     /// Public URI for the manifest anchored on-chain, when available.
@@ -228,7 +253,7 @@ pub struct EpochRecord {
 
     /// Root publisher signature (server-mode authenticity), when available.
     ///
-    /// v0.4: signature over `epoch || graphRoot || manifestHash` (see spec §10.5 / §16.2).
+    /// v1.1: signature over `epoch || graphRoot || manifestHash`.
     pub publisher_sig: Option<Vec<u8>>,
 
     /// Unix timestamp (seconds) when the root was built (not necessarily published), when available.

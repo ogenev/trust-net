@@ -36,15 +36,11 @@ fn action_receipt_roundtrip_verifies() -> anyhow::Result<()> {
 
     let decider = PrincipalId::from_evm_address(decider_addr);
     let target = PrincipalId::from_evm_address(target_addr);
-    let context_id = ContextId::from(trustnet_core::CTX_AGENT_COLLAB_CODE_EXEC);
+    let context_id = ContextId::from(trustnet_core::CTX_CODE_EXEC);
 
     // Build a tiny SMM with only DT present (direct allow).
     let dt_level = Level::strong_positive();
-    let dt_leaf = LeafValueV1 {
-        level: dt_level,
-        updated_at_u64: 123,
-        evidence_hash: B256::ZERO,
-    };
+    let dt_leaf = LeafValueV1 { level: dt_level };
     let dt_key = compute_edge_key(&decider, &target, &context_id);
     let dt_leaf_bytes = dt_leaf.encode().to_vec();
 
@@ -58,10 +54,13 @@ fn action_receipt_roundtrip_verifies() -> anyhow::Result<()> {
     let default_hashes = SmmBuilder::new().build().default_hashes().to_owned();
     let mut bitmap = [0u8; 32];
     let mut packed_siblings = Vec::new();
-    for (i, sibling) in dt_proof.siblings.iter().enumerate() {
-        if *sibling != default_hashes[255 - i] {
-            bitmap[i / 8] |= 1 << (7 - (i % 8));
-            packed_siblings.push(hex_b256(sibling));
+    for i in 0..256 {
+        let depth = 255 - i;
+        let sibling = dt_proof.siblings[depth];
+        if sibling != default_hashes[i] {
+            let byte_index = 31 - (i / 8);
+            bitmap[byte_index] |= 1 << (i % 8);
+            packed_siblings.push(hex_b256(&sibling));
         }
     }
 
@@ -85,59 +84,58 @@ fn action_receipt_roundtrip_verifies() -> anyhow::Result<()> {
         context_id: Some(hex_b256(context_id.inner())),
         rater: Some(hex_32(decider.as_bytes())),
         target: Some(hex_32(target.as_bytes())),
-        is_membership: true,
-        leaf_value: Some(trustnet_verifier::LeafValueJson {
-            level: dt_leaf.level.value(),
-            updated_at: dt_leaf.updated_at_u64,
-            evidence_hash: hex_b256(&dt_leaf.evidence_hash),
-            evidence_verified: None,
+        leaf: Some(trustnet_verifier::ProofLeafJson {
+            k: hex_b256(&dt_proof.key),
+            v: dt_leaf.level.to_smm_value(),
         }),
+        is_absent: false,
         bitmap: Some(format!("0x{}", hex::encode(bitmap))),
         siblings: packed_siblings,
         format: "bitmap".to_string(),
     };
 
-    let decision_json = trustnet_verifier::DecisionBundleV1Json {
-        ty: "trustnet.decisionBundle.v1".to_string(),
-        epoch,
-        graph_root: hex_b256(&graph_root),
-        manifest_hash: hex_b256(&manifest_hash),
-        decider: hex_32(decider.as_bytes()),
-        target: hex_32(target.as_bytes()),
-        context_id: hex_b256(context_id.inner()),
-        decision: "allow".to_string(),
+    let score_json = trustnet_verifier::ScoreBundleV1Json {
         score: 2,
-        thresholds: trustnet_verifier::ThresholdsJson { allow: 2, ask: 1 },
-        endorser: None,
+        epoch,
         why: trustnet_verifier::WhyJson {
             edge_de: trustnet_verifier::LeafValueJson {
                 level: 0,
                 updated_at: 0,
                 evidence_hash: hex_b256(&B256::ZERO),
-                evidence_verified: None,
+                event: None,
+                feedback_uri: None,
+                feedback_hash: None,
             },
             edge_et: trustnet_verifier::LeafValueJson {
                 level: 0,
                 updated_at: 0,
                 evidence_hash: hex_b256(&B256::ZERO),
-                evidence_verified: None,
+                event: None,
+                feedback_uri: None,
+                feedback_hash: None,
             },
             edge_dt: trustnet_verifier::LeafValueJson {
                 level: dt_leaf.level.value(),
-                updated_at: dt_leaf.updated_at_u64,
-                evidence_hash: hex_b256(&dt_leaf.evidence_hash),
-                evidence_verified: None,
+                updated_at: 0,
+                evidence_hash: hex_b256(&B256::ZERO),
+                event: None,
+                feedback_uri: None,
+                feedback_hash: None,
             },
         },
-        constraints: trustnet_verifier::ConstraintsJson {
-            ttl_seconds: 3600,
-            require_evidence_for_positive_et: false,
-            require_evidence_for_positive_dt: false,
-        },
-        proofs: trustnet_verifier::ProofsJson {
-            de: None,
-            et: None,
-            dt: dt_proof_json,
+        proof: trustnet_verifier::ScoreProofV1Json {
+            graph_root: hex_b256(&graph_root),
+            manifest_hash: hex_b256(&manifest_hash),
+            decider: hex_32(decider.as_bytes()),
+            target: hex_32(target.as_bytes()),
+            context_tag: trustnet_core::CTX_STR_CODE_EXEC.to_string(),
+            context_id: hex_b256(context_id.inner()),
+            endorser: None,
+            proofs: trustnet_verifier::ProofsJson {
+                de: None,
+                et: None,
+                dt: dt_proof_json,
+            },
         },
     };
 
@@ -149,7 +147,7 @@ fn action_receipt_roundtrip_verifies() -> anyhow::Result<()> {
         args_hash: hex_b256(&keccak256(b"args")),
         result_hash: hex_b256(&keccak256(b"result")),
         root: root_json,
-        decision_bundle: serde_json::to_value(&decision_json)?,
+        score_bundle: serde_json::to_value(&score_json)?,
         policy_manifest_hash: None,
     };
 

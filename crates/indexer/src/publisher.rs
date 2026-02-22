@@ -389,7 +389,7 @@ impl EventDrivenPublisher {
             (smm_state.root, smm_state.edge_count, None)
         };
 
-        // Build root manifest + signature (v0.4 server-mode authenticity).
+        // Build root manifest + signature (v1.1 authenticity envelope).
         //
         // For chain-mode roots we still generate a manifest and signature. Gateways can verify the
         // signature, the on-chain anchor, or both.
@@ -456,7 +456,7 @@ impl EventDrivenPublisher {
         // Call RootRegistry.publishRoot(newRoot, epoch)
         let manifest_hash_value = manifest_hash.ok_or_else(|| {
             anyhow::anyhow!(
-                "Cannot publish epoch {}: missing manifestHash (v0.4 required)",
+                "Cannot publish epoch {}: missing manifestHash (v1.1 required)",
                 epoch_num
             )
         })?;

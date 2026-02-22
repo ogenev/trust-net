@@ -62,6 +62,10 @@ pub struct ContractsConfig {
     /// ERC-8004 Identity contract address (optional, for agentWallet lookup)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub erc8004_identity: Option<Address>,
+
+    /// ERC-8004 Validation contract address (optional, not required for MVP ingestion)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub erc8004_validation: Option<Address>,
 }
 
 /// Database configuration.

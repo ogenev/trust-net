@@ -140,7 +140,7 @@ DB_FILE="${TMP_DIR}/trustnet-chain-smoke.db"
 DB_URL="sqlite://${DB_FILE}"
 INDEXER_CONFIG="${TMP_DIR}/indexer.toml"
 ROOT_JSON="${TMP_DIR}/root.json"
-DECISION_JSON="${TMP_DIR}/decision.json"
+SCORE_JSON="${TMP_DIR}/score.json"
 MANIFEST_DIR="${TMP_DIR}/manifests"
 
 echo "Starting anvil on ${RPC_URL}"
@@ -256,19 +256,19 @@ API_PID="$!"
 
 wait_for_http "http://127.0.0.1:${API_PORT}/v1/contexts"
 
-CONTEXT_ID="$(cast keccak "trustnet:ctx:code-exec:v1")"
+CONTEXT_TAG="trustnet:ctx:code-exec:v1"
 curl -fsS "http://127.0.0.1:${API_PORT}/v1/root" >"${ROOT_JSON}"
 
-decision_attempts=0
+score_attempts=0
 while true; do
-  code="$(curl -sS -o "${DECISION_JSON}" -w "%{http_code}" \
-    "http://127.0.0.1:${API_PORT}/v1/decision?decider=${DECIDER_ADDR}&target=${TARGET_ADDR}&contextId=${CONTEXT_ID}")"
+  code="$(curl -sS -o "${SCORE_JSON}" -w "%{http_code}" \
+    "http://127.0.0.1:${API_PORT}/v1/score/${DECIDER_ADDR}/${TARGET_ADDR}?contextTag=${CONTEXT_TAG}")"
   if [[ "${code}" == "200" ]]; then
     break
   fi
-  decision_attempts=$((decision_attempts + 1))
-  if ((decision_attempts > 30)); then
-    echo "timed out waiting for decision endpoint to return 200" >&2
+  score_attempts=$((score_attempts + 1))
+  if ((score_attempts > 30)); then
+    echo "timed out waiting for score endpoint to return 200" >&2
     exit 1
   fi
   sleep 1
@@ -278,7 +278,7 @@ echo "Verifying bundle cryptographically"
 ROOT_EPOCH="$(jq -r '.epoch' "${ROOT_JSON}")"
 cargo run -q -p trustnet-cli -- verify \
   --root "${ROOT_JSON}" \
-  --bundle "${DECISION_JSON}" \
+  --bundle "${SCORE_JSON}" \
   --publisher "${PUBLISHER_ADDR}" \
   --rpc-url "${RPC_URL}" \
   --root-registry "${ROOT_REGISTRY}" \
@@ -322,12 +322,12 @@ jq -e \
   --arg expected_endorser_hex "$(lower_hex "${ENDORSER_ADDR#0x}")" \
   --arg expected_root "$(lower_hex "${ROOT_GRAPH}")" \
   --argjson expected_epoch "${ROOT_EPOCH}" \
-  '.decision == "allow"
-    and .endorser != null
-    and (.endorser | ascii_downcase | endswith($expected_endorser_hex))
-    and (.graphRoot | ascii_downcase) == $expected_root
+  '.score >= 1
+    and .proof.endorser != null
+    and (.proof.endorser | ascii_downcase | endswith($expected_endorser_hex))
+    and (.proof.graphRoot | ascii_downcase) == $expected_root
     and .epoch == $expected_epoch' \
-  "${DECISION_JSON}" >/dev/null
+  "${SCORE_JSON}" >/dev/null
 
 echo
 echo "Chain-mode smoke test passed."

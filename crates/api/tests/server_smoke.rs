@@ -13,7 +13,7 @@ use trustnet_indexer::{
     server_root::{build_server_root, BuildServerRootInput},
     storage::{DeploymentMode, Storage},
 };
-use trustnet_verifier::{DecisionBundleV1Json, RootResponseV1};
+use trustnet_verifier::{RootResponseV1, ScoreBundleV1Json};
 
 #[derive(Debug, Serialize)]
 struct RatingEventV1 {
@@ -174,16 +174,12 @@ async fn server_mode_true_two_hop_smoke_flow_is_verifiable() {
     let pk_decider = [0x11u8; 32];
     let pk_endorser = [0x22u8; 32];
     let target = "0x3333333333333333333333333333333333333333";
-    let context = "trustnet:ctx:agent-collab:code-exec:v1";
+    let context = "trustnet:ctx:code-exec:v1";
 
     let payload_et = build_signed_rating_event(pk_endorser, target, context, 2);
     let endorser = payload_et["rater"]
         .as_str()
         .expect("endorser rater")
-        .to_string();
-    let context_id = payload_et["contextId"]
-        .as_str()
-        .expect("context id")
         .to_string();
 
     let payload_de = build_signed_rating_event(pk_decider, &endorser, context, 2);
@@ -232,32 +228,29 @@ async fn server_mode_true_two_hop_smoke_flow_is_verifiable() {
         .to_bytes();
     let root: RootResponseV1 = serde_json::from_slice(&root_body).expect("parse root response");
 
-    let decision_uri = format!(
-        "/v1/decision?decider={}&target={}&contextId={}",
-        decider, target, context_id
-    );
-    let decision_response = app
+    let score_uri = format!("/v1/score/{}/{}?contextTag={}", decider, target, context);
+    let score_response = app
         .clone()
         .oneshot(
             Request::builder()
-                .uri(decision_uri)
+                .uri(score_uri)
                 .body(Body::empty())
-                .expect("decision request"),
+                .expect("score request"),
         )
         .await
-        .expect("GET /v1/decision should succeed");
-    assert_eq!(decision_response.status(), StatusCode::OK);
-    let decision_body = decision_response
+        .expect("GET /v1/score should succeed");
+    assert_eq!(score_response.status(), StatusCode::OK);
+    let score_body = score_response
         .into_body()
         .collect()
         .await
-        .expect("decision body")
+        .expect("score body")
         .to_bytes();
-    let decision_json: serde_json::Value =
-        serde_json::from_slice(&decision_body).expect("parse decision response");
+    let score_json: serde_json::Value =
+        serde_json::from_slice(&score_body).expect("parse score response");
 
-    assert_eq!(decision_json["decision"], "allow");
-    let selected_endorser = decision_json["endorser"]
+    assert_eq!(score_json["score"], 2);
+    let selected_endorser = score_json["proof"]["endorser"]
         .as_str()
         .expect("selected endorser");
     let selected_endorser_pid = selected_endorser
@@ -267,12 +260,11 @@ async fn server_mode_true_two_hop_smoke_flow_is_verifiable() {
         .parse::<PrincipalId>()
         .expect("expected endorser pid");
     assert_eq!(selected_endorser_pid, expected_endorser_pid);
-    assert!(decision_json["proofs"]["DE"].is_object());
-    assert!(decision_json["proofs"]["ET"].is_object());
+    assert!(score_json["proof"]["proofs"]["DE"].is_object());
+    assert!(score_json["proof"]["proofs"]["ET"].is_object());
 
-    let bundle: DecisionBundleV1Json =
-        serde_json::from_value(decision_json).expect("decision bundle parse");
+    let bundle: ScoreBundleV1Json = serde_json::from_value(score_json).expect("score bundle parse");
     let publisher = decider.parse::<Address>().expect("publisher parse");
-    trustnet_verifier::verify_decision_bundle(&root, &bundle, Some(publisher))
-        .expect("verify decision bundle");
+    trustnet_verifier::verify_score_bundle(&root, &bundle, Some(publisher))
+        .expect("verify score bundle");
 }

@@ -9,10 +9,11 @@ use crate::tree::Smm;
 
 /// Build default subtree hashes for heights 0..=256.
 ///
-/// - `defaults[0]` is the empty leaf hash (bytes32(0)).
+/// - `defaults[0]` is the empty leaf hash `keccak256(0x02)`.
 /// - `defaults[h+1] = keccak256(0x01 || defaults[h] || defaults[h])`.
 pub(crate) fn build_default_hashes() -> [B256; 257] {
     let mut defaults = [B256::ZERO; 257];
+    defaults[0] = trustnet_core::hashing::compute_empty_hash();
     for height in 0..256 {
         defaults[height + 1] =
             trustnet_core::hashing::compute_internal_hash(&defaults[height], &defaults[height]);

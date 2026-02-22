@@ -16,7 +16,7 @@ pub struct SmmProof {
     #[serde(with = "serde_bytes")]
     pub leaf_value: Vec<u8>,
 
-    /// Sibling hashes along the path from leaf to root.
+    /// Sibling hashes indexed by tree depth (root=0 ... leaf-parent=255).
     ///
     /// For a 256-bit key space, this contains exactly 256 siblings.
     pub siblings: Vec<B256>,
@@ -57,7 +57,7 @@ impl SmmProof {
         let mut hash = if self.is_membership {
             compute_leaf_hash(&self.key, &self.leaf_value)
         } else {
-            B256::ZERO
+            trustnet_core::hashing::compute_empty_hash()
         };
 
         // Walk from depth 255..0.
