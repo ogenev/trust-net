@@ -87,3 +87,4 @@ ENV/
 # Test artifacts
 test-results/
 *.test.log
+/scripts/base_sepolia_release.env
