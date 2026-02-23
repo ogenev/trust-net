@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.26;
+pragma solidity 0.8.34;
 
-import "./RootRegistry.sol";
-import "./TrustPathVerifier.sol";
+import {RootRegistry} from "./RootRegistry.sol";
+import {TrustPathVerifier} from "./TrustPathVerifier.sol";
 
 /**
  * @title TrustNetPaymentsGuardModule
@@ -16,18 +16,18 @@ import "./TrustPathVerifier.sol";
  *   replay protection, and max payment amount.
  */
 contract TrustNetPaymentsGuardModule {
-    RootRegistry public immutable rootRegistry;
+    RootRegistry private immutable ROOT_REGISTRY;
 
     address public owner;
     address public decider;
 
-    bytes32 public immutable contextId;
+    bytes32 private immutable CONTEXT_ID;
 
-    int8 public immutable allowThreshold;
-    int8 public immutable askThreshold;
+    int8 private immutable ALLOW_THRESHOLD;
+    int8 private immutable ASK_THRESHOLD;
 
-    uint256 public immutable maxPaymentAmountWei;
-    uint256 public immutable maxRootAgeSeconds;
+    uint256 private immutable MAX_PAYMENT_AMOUNT_WEI;
+    uint256 private immutable MAX_ROOT_AGE_SECONDS;
 
     mapping(bytes32 => bool) public usedOperationIds;
 
@@ -65,16 +65,20 @@ contract TrustNetPaymentsGuardModule {
         address endorser;
         address payable to;
         uint256 amountWei;
-        TrustPathVerifier.SmmProof proofDT;
-        TrustPathVerifier.SmmProof proofDE;
-        TrustPathVerifier.SmmProof proofET;
+        TrustPathVerifier.SmmProof proofDt;
+        TrustPathVerifier.SmmProof proofDe;
+        TrustPathVerifier.SmmProof proofEt;
     }
 
     modifier onlyOwner() {
+        _onlyOwner();
+        _;
+    }
+
+    function _onlyOwner() internal view {
         if (msg.sender != owner) {
             revert Unauthorized();
         }
-        _;
     }
 
     constructor(
@@ -97,19 +101,43 @@ contract TrustNetPaymentsGuardModule {
             revert InvalidThresholds(_allowThreshold, _askThreshold);
         }
 
-        rootRegistry = RootRegistry(_rootRegistry);
+        ROOT_REGISTRY = RootRegistry(_rootRegistry);
         owner = _owner;
         decider = _decider;
-        contextId = _contextId;
+        CONTEXT_ID = _contextId;
 
-        allowThreshold = _allowThreshold;
-        askThreshold = _askThreshold;
+        ALLOW_THRESHOLD = _allowThreshold;
+        ASK_THRESHOLD = _askThreshold;
 
-        maxPaymentAmountWei = _maxPaymentAmountWei;
-        maxRootAgeSeconds = _maxRootAgeSeconds;
+        MAX_PAYMENT_AMOUNT_WEI = _maxPaymentAmountWei;
+        MAX_ROOT_AGE_SECONDS = _maxRootAgeSeconds;
     }
 
     receive() external payable {}
+
+    function rootRegistry() public view returns (RootRegistry) {
+        return ROOT_REGISTRY;
+    }
+
+    function contextId() public view returns (bytes32) {
+        return CONTEXT_ID;
+    }
+
+    function allowThreshold() public view returns (int8) {
+        return ALLOW_THRESHOLD;
+    }
+
+    function askThreshold() public view returns (int8) {
+        return ASK_THRESHOLD;
+    }
+
+    function maxPaymentAmountWei() public view returns (uint256) {
+        return MAX_PAYMENT_AMOUNT_WEI;
+    }
+
+    function maxRootAgeSeconds() public view returns (uint256) {
+        return MAX_ROOT_AGE_SECONDS;
+    }
 
     function transferOwnership(address newOwner) external onlyOwner {
         if (newOwner == address(0)) {
@@ -138,36 +166,36 @@ contract TrustNetPaymentsGuardModule {
         if (block.timestamp > req.deadline) {
             revert DeadlineExpired(req.deadline, block.timestamp);
         }
-        if (req.amountWei > maxPaymentAmountWei) {
-            revert AmountExceedsPolicy(req.amountWei, maxPaymentAmountWei);
+        if (req.amountWei > MAX_PAYMENT_AMOUNT_WEI) {
+            revert AmountExceedsPolicy(req.amountWei, MAX_PAYMENT_AMOUNT_WEI);
         }
         if (usedOperationIds[req.operationId]) {
             revert OperationAlreadyUsed(req.operationId);
         }
 
-        bytes32 graphRoot = rootRegistry.getRootAt(req.epoch);
+        bytes32 graphRoot = ROOT_REGISTRY.getRootAt(req.epoch);
         if (graphRoot == bytes32(0)) {
             revert UnknownEpoch(req.epoch);
         }
 
-        if (maxRootAgeSeconds != 0) {
-            uint256 rootTs = rootRegistry.getEpochTimestamp(req.epoch);
-            if (rootTs == 0 || block.timestamp > rootTs + maxRootAgeSeconds) {
-                revert RootTooOld(req.epoch, rootTs, maxRootAgeSeconds);
+        if (MAX_ROOT_AGE_SECONDS != 0) {
+            uint256 rootTs = ROOT_REGISTRY.getEpochTimestamp(req.epoch);
+            if (rootTs == 0 || block.timestamp > rootTs + MAX_ROOT_AGE_SECONDS) {
+                revert RootTooOld(req.epoch, rootTs, MAX_ROOT_AGE_SECONDS);
             }
         }
 
         TrustPathVerifier.DecisionRequest memory decisionReq = TrustPathVerifier.DecisionRequest({
             graphRoot: graphRoot,
-            contextId: contextId,
+            contextId: CONTEXT_ID,
             decider: decider,
             target: req.target,
             endorser: req.endorser,
-            proofDT: req.proofDT,
-            proofDE: req.proofDE,
-            proofET: req.proofET,
-            allowThreshold: allowThreshold,
-            askThreshold: askThreshold
+            proofDt: req.proofDt,
+            proofDe: req.proofDe,
+            proofEt: req.proofEt,
+            allowThreshold: ALLOW_THRESHOLD,
+            askThreshold: ASK_THRESHOLD
         });
 
         TrustPathVerifier.DecisionResult memory result = TrustPathVerifier.verifyAndDecide(decisionReq);

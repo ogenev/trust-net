@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.26;
+pragma solidity 0.8.34;
 
 /**
  * @title TrustPathVerifier
@@ -55,9 +55,9 @@ library TrustPathVerifier {
     struct DecisionResult {
         Decision decision;
         int8 score;
-        LeafValueV1 edgeDE;
-        LeafValueV1 edgeET;
-        LeafValueV1 edgeDT;
+        LeafValueV1 edgeDe;
+        LeafValueV1 edgeEt;
+        LeafValueV1 edgeDt;
     }
 
     /// Inputs for `verifyAndDecide`.
@@ -69,9 +69,9 @@ library TrustPathVerifier {
         address decider;
         address target;
         address endorser;
-        SmmProof proofDT;
-        SmmProof proofDE;
-        SmmProof proofET;
+        SmmProof proofDt;
+        SmmProof proofDe;
+        SmmProof proofEt;
         int8 allowThreshold;
         int8 askThreshold;
     }
@@ -87,6 +87,12 @@ library TrustPathVerifier {
         }
     }
 
+    function _hashBytes(bytes memory data) private pure returns (bytes32 result) {
+        assembly ("memory-safe") {
+            result := keccak256(add(data, 0x20), mload(data))
+        }
+    }
+
     /// Convert an EVM address into a PrincipalId (left-padded to 32 bytes).
     function toPrincipalId(address a) internal pure returns (bytes32) {
         return bytes32(uint256(uint160(a)));
@@ -94,22 +100,22 @@ library TrustPathVerifier {
 
     /// Compute edgeKey = keccak256(raterPid32 || targetPid32 || contextId).
     function computeEdgeKey(address rater, address target, bytes32 contextId) internal pure returns (bytes32) {
-        return keccak256(abi.encodePacked(toPrincipalId(rater), toPrincipalId(target), contextId));
+        return _hashBytes(bytes.concat(toPrincipalId(rater), toPrincipalId(target), contextId));
     }
 
     /// Compute leafHash = keccak256(0x00 || edgeKey || leafValueBytes).
     function computeLeafHash(bytes32 edgeKey, bytes memory leafValue) internal pure returns (bytes32) {
-        return keccak256(abi.encodePacked(bytes1(0x00), edgeKey, leafValue));
+        return _hashBytes(bytes.concat(bytes1(0x00), edgeKey, leafValue));
     }
 
     /// Compute internalHash = keccak256(0x01 || left || right).
     function computeInternalHash(bytes32 left, bytes32 right) internal pure returns (bytes32) {
-        return keccak256(abi.encodePacked(bytes1(0x01), left, right));
+        return _hashBytes(bytes.concat(bytes1(0x01), left, right));
     }
 
     /// Compute the sparse-tree empty-subtree base hash.
     function computeEmptyHash() internal pure returns (bytes32) {
-        return keccak256(abi.encodePacked(bytes1(0x02)));
+        return _hashBytes(bytes.concat(bytes1(0x02)));
     }
 
     function _getBit(bytes32 key, uint256 index) private pure returns (uint8) {
@@ -128,7 +134,17 @@ library TrustPathVerifier {
         if (levelEnc > 4) {
             revert InvalidLevelEnc(levelEnc);
         }
-        v.level = int8(int256(uint256(levelEnc))) - 2;
+        if (levelEnc == 0) {
+            v.level = -2;
+        } else if (levelEnc == 1) {
+            v.level = -1;
+        } else if (levelEnc == 2) {
+            v.level = 0;
+        } else if (levelEnc == 3) {
+            v.level = 1;
+        } else {
+            v.level = 2;
+        }
     }
 
     /// Verify a single proof against a root, returning a decoded leaf value.
@@ -184,10 +200,10 @@ library TrustPathVerifier {
     }
 
     /// Compute TrustNet v1.1 spec score from decoded levels (no evidence gating).
-    function computeScore(int8 lDT, int8 lDE, int8 lET) internal pure returns (int8) {
-        int16 lDEpos = lDE > 0 ? int16(lDE) : int16(0);
-        int16 path = lDEpos * int16(lET);
-        int16 numerator = int16(2) * int16(lDT) + path;
+    function computeScore(int8 lDt, int8 lDe, int8 lEt) internal pure returns (int8) {
+        int16 lDePos = lDe > 0 ? int16(lDe) : int16(0);
+        int16 path = lDePos * int16(lEt);
+        int16 numerator = int16(2) * int16(lDt) + path;
         int16 raw = numerator / 2;
 
         if (raw > 2) {
@@ -196,7 +212,19 @@ library TrustPathVerifier {
         if (raw < -2) {
             return -2;
         }
-        return int8(raw);
+        if (raw == -2) {
+            return -2;
+        }
+        if (raw == -1) {
+            return -1;
+        }
+        if (raw == 0) {
+            return 0;
+        }
+        if (raw == 1) {
+            return 1;
+        }
+        return 2;
     }
 
     /// Map score + thresholds to a decision.
@@ -217,19 +245,19 @@ library TrustPathVerifier {
     ///
     /// If `endorser == address(0)`, DE/ET are treated as neutral and their proofs are ignored.
     function verifyAndDecide(DecisionRequest memory req) internal pure returns (DecisionResult memory result) {
-        bytes32 keyDT = computeEdgeKey(req.decider, req.target, req.contextId);
-        LeafValueV1 memory dt = verifyProof(req.graphRoot, keyDT, req.proofDT);
+        bytes32 keyDt = computeEdgeKey(req.decider, req.target, req.contextId);
+        LeafValueV1 memory dt = verifyProof(req.graphRoot, keyDt, req.proofDt);
 
         LeafValueV1 memory de = _defaultLeaf();
         LeafValueV1 memory et = _defaultLeaf();
         if (req.endorser != address(0)) {
-            if (req.proofDE.isAbsent || req.proofET.isAbsent) {
+            if (req.proofDe.isAbsent || req.proofEt.isAbsent) {
                 revert InvalidEndorserProof();
             }
-            bytes32 keyDE = computeEdgeKey(req.decider, req.endorser, req.contextId);
-            bytes32 keyET = computeEdgeKey(req.endorser, req.target, req.contextId);
-            de = verifyProof(req.graphRoot, keyDE, req.proofDE);
-            et = verifyProof(req.graphRoot, keyET, req.proofET);
+            bytes32 keyDe = computeEdgeKey(req.decider, req.endorser, req.contextId);
+            bytes32 keyEt = computeEdgeKey(req.endorser, req.target, req.contextId);
+            de = verifyProof(req.graphRoot, keyDe, req.proofDe);
+            et = verifyProof(req.graphRoot, keyEt, req.proofEt);
         }
 
         int8 score = computeScore(dt.level, de.level, et.level);
@@ -238,9 +266,9 @@ library TrustPathVerifier {
         result = DecisionResult({
             decision: d,
             score: score,
-            edgeDE: de,
-            edgeET: et,
-            edgeDT: dt
+            edgeDe: de,
+            edgeEt: et,
+            edgeDt: dt
         });
     }
 }

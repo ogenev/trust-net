@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.26;
+pragma solidity 0.8.34;
 
 /// @notice Minimal ERC-8004 identity registry harness for local chain smoke tests.
 contract MockErc8004IdentityRegistry {

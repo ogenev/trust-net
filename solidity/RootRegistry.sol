@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.26;
+pragma solidity 0.8.34;
 
 /**
  * @title RootRegistry
@@ -110,9 +110,7 @@ contract RootRegistry {
      * @dev Modifier to restrict function access to owner
      */
     modifier onlyOwner() {
-        if (msg.sender != owner) {
-            revert Unauthorized();
-        }
+        _onlyOwner();
         _;
     }
 
@@ -120,10 +118,20 @@ contract RootRegistry {
      * @dev Modifier to restrict function access to publisher
      */
     modifier onlyPublisher() {
+        _onlyPublisher();
+        _;
+    }
+
+    function _onlyOwner() internal view {
+        if (msg.sender != owner) {
+            revert Unauthorized();
+        }
+    }
+
+    function _onlyPublisher() internal view {
         if (msg.sender != publisher) {
             revert Unauthorized();
         }
-        _;
     }
 
     /**

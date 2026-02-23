@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.26;
+pragma solidity 0.8.34;
 
-import "forge-std/Test.sol";
+import {Test} from "forge-std/Test.sol";
 
-import "../RootRegistry.sol";
-import "../TrustNetContexts.sol";
-import "../TrustNetPaymentsGuardModule.sol";
-import "../TrustPathVerifier.sol";
+import {RootRegistry} from "../RootRegistry.sol";
+import {TrustNetContexts} from "../TrustNetContexts.sol";
+import {TrustNetPaymentsGuardModule} from "../TrustNetPaymentsGuardModule.sol";
+import {TrustPathVerifier} from "../TrustPathVerifier.sol";
 
 contract TrustNetPaymentsGuardModuleTest is Test {
     RootRegistry public registry;
@@ -41,7 +41,7 @@ contract TrustNetPaymentsGuardModuleTest is Test {
 
         vm.deal(address(module), 10 ether);
 
-        (TrustPathVerifier.SmmProof memory proofDT, bytes32 root) = _buildMembershipProof(
+        (TrustPathVerifier.SmmProof memory proofDt, bytes32 root) = _buildMembershipProof(
             decider,
             target,
             TrustNetContexts.PAYMENTS,
@@ -52,7 +52,7 @@ contract TrustNetPaymentsGuardModuleTest is Test {
 
         // Sanity check: the generated proof must validate against the published root.
         bytes32 edgeKey = TrustPathVerifier.computeEdgeKey(decider, target, TrustNetContexts.PAYMENTS);
-        TrustPathVerifier.LeafValueV1 memory leaf = TrustPathVerifier.verifyProof(root, edgeKey, proofDT);
+        TrustPathVerifier.LeafValueV1 memory leaf = TrustPathVerifier.verifyProof(root, edgeKey, proofDt);
         assertEq(leaf.level, 2);
     }
 
@@ -74,7 +74,7 @@ contract TrustNetPaymentsGuardModuleTest is Test {
     }
 
     function test_ExecutePayment_AllowsAndTransfersValue() public {
-        (TrustPathVerifier.SmmProof memory proofDT,) = _buildMembershipProof(
+        (TrustPathVerifier.SmmProof memory proofDt,) = _buildMembershipProof(
             decider,
             target,
             TrustNetContexts.PAYMENTS,
@@ -87,7 +87,7 @@ contract TrustNetPaymentsGuardModuleTest is Test {
             opId,
             0.25 ether,
             block.timestamp + 1 hours,
-            proofDT
+            proofDt
         );
 
         uint256 recipientBefore = recipient.balance;
@@ -100,7 +100,7 @@ contract TrustNetPaymentsGuardModuleTest is Test {
     }
 
     function test_ExecutePayment_RevertsOnReplay() public {
-        (TrustPathVerifier.SmmProof memory proofDT,) = _buildMembershipProof(
+        (TrustPathVerifier.SmmProof memory proofDt,) = _buildMembershipProof(
             decider,
             target,
             TrustNetContexts.PAYMENTS,
@@ -113,7 +113,7 @@ contract TrustNetPaymentsGuardModuleTest is Test {
             opId,
             0.1 ether,
             block.timestamp + 1 hours,
-            proofDT
+            proofDt
         );
 
         vm.startPrank(moduleOwner);
@@ -127,7 +127,7 @@ contract TrustNetPaymentsGuardModuleTest is Test {
     }
 
     function test_ExecutePayment_RevertsWhenAmountTooHigh() public {
-        (TrustPathVerifier.SmmProof memory proofDT,) = _buildMembershipProof(
+        (TrustPathVerifier.SmmProof memory proofDt,) = _buildMembershipProof(
             decider,
             target,
             TrustNetContexts.PAYMENTS,
@@ -140,7 +140,7 @@ contract TrustNetPaymentsGuardModuleTest is Test {
             keccak256("op-cap"),
             tooHigh,
             block.timestamp + 1 hours,
-            proofDT
+            proofDt
         );
 
         vm.prank(moduleOwner);
@@ -151,7 +151,7 @@ contract TrustNetPaymentsGuardModuleTest is Test {
     }
 
     function test_ExecutePayment_RevertsWhenDeadlineExpired() public {
-        (TrustPathVerifier.SmmProof memory proofDT,) = _buildMembershipProof(
+        (TrustPathVerifier.SmmProof memory proofDt,) = _buildMembershipProof(
             decider,
             target,
             TrustNetContexts.PAYMENTS,
@@ -164,7 +164,7 @@ contract TrustNetPaymentsGuardModuleTest is Test {
             keccak256("op-expired"),
             0.1 ether,
             deadline,
-            proofDT
+            proofDt
         );
 
         vm.prank(moduleOwner);
@@ -175,7 +175,7 @@ contract TrustNetPaymentsGuardModuleTest is Test {
     }
 
     function test_ExecutePayment_RevertsWhenEpochMissing() public {
-        (TrustPathVerifier.SmmProof memory proofDT,) = _buildMembershipProof(
+        (TrustPathVerifier.SmmProof memory proofDt,) = _buildMembershipProof(
             decider,
             target,
             TrustNetContexts.PAYMENTS,
@@ -188,7 +188,7 @@ contract TrustNetPaymentsGuardModuleTest is Test {
             keccak256("op-missing-epoch"),
             0.1 ether,
             block.timestamp + 1 hours,
-            proofDT
+            proofDt
         );
 
         vm.prank(moduleOwner);
@@ -199,7 +199,7 @@ contract TrustNetPaymentsGuardModuleTest is Test {
     }
 
     function test_ExecutePayment_RevertsWhenRootTooOld() public {
-        (TrustPathVerifier.SmmProof memory proofDT,) = _buildMembershipProof(
+        (TrustPathVerifier.SmmProof memory proofDt,) = _buildMembershipProof(
             decider,
             target,
             TrustNetContexts.PAYMENTS,
@@ -213,7 +213,7 @@ contract TrustNetPaymentsGuardModuleTest is Test {
             keccak256("op-stale-root"),
             0.1 ether,
             block.timestamp + 1 hours,
-            proofDT
+            proofDt
         );
 
         uint256 rootTs = registry.getEpochTimestamp(BASE_EPOCH);
@@ -318,7 +318,7 @@ contract TrustNetPaymentsGuardModuleTest is Test {
         bytes32 operationId,
         uint256 amountWei,
         uint256 deadline,
-        TrustPathVerifier.SmmProof memory proofDT
+        TrustPathVerifier.SmmProof memory proofDt
     )
         internal
         view
@@ -332,9 +332,9 @@ contract TrustNetPaymentsGuardModuleTest is Test {
             endorser: address(0),
             to: payable(recipient),
             amountWei: amountWei,
-            proofDT: proofDT,
-            proofDE: _emptyProof(),
-            proofET: _emptyProof()
+            proofDt: proofDt,
+            proofDe: _emptyProof(),
+            proofEt: _emptyProof()
         });
     }
 
@@ -393,7 +393,18 @@ contract TrustNetPaymentsGuardModuleTest is Test {
 
     function _encodeLeafValue(int8 level) internal pure returns (bytes memory) {
         require(level >= -2 && level <= 2, "level out of range");
-        uint8 levelEnc = uint8(uint256(int256(level + 2)));
+        uint8 levelEnc;
+        if (level == -2) {
+            levelEnc = 0;
+        } else if (level == -1) {
+            levelEnc = 1;
+        } else if (level == 0) {
+            levelEnc = 2;
+        } else if (level == 1) {
+            levelEnc = 3;
+        } else {
+            levelEnc = 4;
+        }
         return abi.encodePacked(bytes1(levelEnc));
     }
 

@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.26;
+pragma solidity 0.8.34;
 
-import "forge-std/Test.sol";
-import "../RootRegistry.sol";
+import {Test} from "forge-std/Test.sol";
+import {RootRegistry} from "../RootRegistry.sol";
 
 contract RootRegistryTest is Test {
     RootRegistry public registry;
@@ -128,4 +128,3 @@ contract RootRegistryTest is Test {
         assertEq(registry.owner(), newOwner);
     }
 }
-

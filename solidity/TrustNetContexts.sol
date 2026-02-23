@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.26;
+pragma solidity 0.8.34;
 
 /**
  * @title TrustNetContexts
@@ -10,6 +10,12 @@ pragma solidity ^0.8.26;
  * Spec: docs/TRUSTNET_v1.1.md §3.2
  */
 library TrustNetContexts {
+    function _hashBytes(bytes memory data) private pure returns (bytes32 result) {
+        assembly ("memory-safe") {
+            result := keccak256(add(data, 0x20), mload(data))
+        }
+    }
+
     /**
      * @notice Global context.
      * @dev keccak256("trustnet:ctx:global:v1")
@@ -61,14 +67,7 @@ library TrustNetContexts {
         string memory capability,
         string memory version
     ) internal pure returns (bytes32) {
-        return keccak256(
-            abi.encodePacked(
-                "trustnet:ctx:",
-                capability,
-                ":",
-                version
-            )
-        );
+        return _hashBytes(bytes(string.concat("trustnet:ctx:", capability, ":", version)));
     }
 
     /**

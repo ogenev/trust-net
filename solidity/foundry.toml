@@ -8,20 +8,33 @@ out = ".forge-out"
 cache_path = ".forge-cache"
 # Libs for dependencies if needed
 libs = ["lib"]
+skip = ["lib/**"]
 
 # Allow Solidity tests to load cross-language hashing vectors from the repo `docs/` folder.
 fs_permissions = [{ access = "read", path = "../docs" }]
 
 # Solidity configuration
-solc_version = "0.8.26"
+# Use locally installed solc (0.8.34).
+solc = "/opt/homebrew/bin/solc"
+# Suppress vendor-only solc warnings from forge-std under solc 0.8.34.
+ignored_error_codes = [2424, 4591]
+ignored_warnings_from = ["lib/**"]
 optimizer = true
 optimizer_runs = 200
 
 # Testing configuration
 verbosity = 2
-fuzz_runs = 256
-invariant_runs = 256
-invariant_depth = 15
 
 # Gas reports
 gas_reports = ["TrustGraph", "TrustNetContexts"]
+
+[fuzz]
+runs = 256
+
+[invariant]
+runs = 256
+depth = 15
+
+[lint]
+# Keep linting enabled for project code.
+lint_on_build = true

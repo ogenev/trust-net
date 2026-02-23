@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.23;
+pragma solidity 0.8.34;
 
-import "forge-std/Test.sol";
-import "../../TrustGraph.sol";
-import "../../TrustNetContexts.sol";
+import {Test, console} from "forge-std/Test.sol";
+import {TrustGraph} from "../../TrustGraph.sol";
+import {TrustNetContexts} from "../../TrustNetContexts.sol";
 
 /**
  * @title TestHelpers
@@ -11,6 +11,30 @@ import "../../TrustNetContexts.sol";
  */
 contract TestHelpers is Test {
     // ============ Test Data Generators ============
+
+    function _addressFromUint(uint256 value) private pure returns (address) {
+        // Test seeds are tiny and always fit into address width.
+        // forge-lint: disable-next-line(unsafe-typecast)
+        return address(uint160(value));
+    }
+
+    function _levelToIndex(int8 level) private pure returns (uint256) {
+        if (level == -2) return 0;
+        if (level == -1) return 1;
+        if (level == 0) return 2;
+        if (level == 1) return 3;
+        if (level == 2) return 4;
+        revert("invalid level");
+    }
+
+    function _levelLabel(int8 level) private pure returns (string memory) {
+        if (level == -2) return "-2";
+        if (level == -1) return "-1";
+        if (level == 0) return "0";
+        if (level == 1) return "1";
+        if (level == 2) return "2";
+        revert("invalid level");
+    }
 
     /**
      * @notice Generate an array of unique addresses
@@ -24,7 +48,7 @@ contract TestHelpers is Test {
     {
         address[] memory addresses = new address[](count);
         for (uint256 i = 0; i < count; i++) {
-            addresses[i] = address(uint160(seed + i));
+            addresses[i] = _addressFromUint(seed + i);
         }
         return addresses;
     }
@@ -40,17 +64,20 @@ contract TestHelpers is Test {
         returns (int8[] memory)
     {
         int8[] memory levels = new int8[](count);
+        int8[5] memory sequential = [int8(-2), -1, 0, 1, 2];
+        int8[2] memory positive = [int8(1), 2];
+        int8[2] memory negative = [int8(-1), -2];
 
         for (uint256 i = 0; i < count; i++) {
             if (pattern == 0) {
                 // Sequential pattern: cycles through -2, -1, 0, 1, 2
-                levels[i] = int8(int256(i % 5) - 2);
+                levels[i] = sequential[i % sequential.length];
             } else if (pattern == 1) {
                 // All positive: cycles through 1, 2
-                levels[i] = int8(int256((i % 2) + 1));
+                levels[i] = positive[i % positive.length];
             } else if (pattern == 2) {
                 // All negative: cycles through -1, -2
-                levels[i] = int8(-1 - int256(i % 2));
+                levels[i] = negative[i % negative.length];
             } else if (pattern == 3) {
                 // Alternating: 2, -2, 2, -2...
                 levels[i] = (i % 2 == 0) ? int8(2) : int8(-2);
@@ -282,8 +309,7 @@ contract TestHelpers is Test {
     {
         // counts[0] = -2, counts[1] = -1, counts[2] = 0, counts[3] = 1, counts[4] = 2
         for (uint256 i = 0; i < levels.length; i++) {
-            uint256 index = uint256(int256(levels[i]) + 2);
-            counts[index]++;
+            counts[_levelToIndex(levels[i])]++;
         }
     }
 
@@ -322,11 +348,11 @@ contract TestHelpers is Test {
         int8 level,
         bytes32 contextId,
         string memory label
-    ) public {
+    ) public pure {
         console.log("=== Trust Edge: %s ===", label);
         console.log("Rater: %s", rater);
         console.log("Target: %s", target);
-        console.log("Level: %d", uint256(int256(level)));
+        console.log("Level: %s", _levelLabel(level));
         console.log("Context: %s", TrustNetContexts.getContextName(contextId));
     }
 
@@ -337,16 +363,17 @@ contract TestHelpers is Test {
         address[] memory targets,
         int8[] memory levels,
         uint256 gasUsed
-    ) public {
+    ) public pure {
         console.log("=== Batch Operation Stats ===");
         console.log("Batch size: %d", targets.length);
         console.log("Total gas: %d", gasUsed);
         console.log("Gas per operation: %d", gasUsed / targets.length);
 
         uint256[5] memory levelCounts = countTrustLevels(levels);
+        int8[5] memory levelValues = [int8(-2), -1, 0, 1, 2];
         console.log("Trust levels distribution:");
-        for (int8 i = -2; i <= 2; i++) {
-            console.log("  Level %d: %d occurrences", uint256(int256(i)), levelCounts[uint256(int256(i + 2))]);
+        for (uint256 i = 0; i < levelValues.length; i++) {
+            console.log("  Level %s: %d occurrences", _levelLabel(levelValues[i]), levelCounts[i]);
         }
     }
 }

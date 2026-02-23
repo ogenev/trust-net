@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.23;
+pragma solidity 0.8.34;
 
-import "forge-std/Test.sol";
-import "../TrustNetContexts.sol";
+import {Test} from "forge-std/Test.sol";
+import {TrustNetContexts} from "../TrustNetContexts.sol";
 
 contract TrustNetContextsTest is Test {
-    function test_CanonicalContextIds() public {
+    function test_CanonicalContextIds() public pure {
         assertEq(
             TrustNetContexts.GLOBAL,
             keccak256(abi.encodePacked("trustnet:ctx:global:v1"))
@@ -28,7 +28,7 @@ contract TrustNetContextsTest is Test {
         );
     }
 
-    function test_CanonicalContextValues() public {
+    function test_CanonicalContextValues() public pure {
         assertEq(
             TrustNetContexts.GLOBAL,
             0x430faa5635b6f437d8b5a2d66333fe4fbcf75602232a76b67e94fd4a3275169b
@@ -51,7 +51,7 @@ contract TrustNetContextsTest is Test {
         );
     }
 
-    function test_CanonicalContextsAreUnique() public {
+    function test_CanonicalContextsAreUnique() public pure {
         bytes32[] memory contexts = new bytes32[](5);
         contexts[0] = TrustNetContexts.GLOBAL;
         contexts[1] = TrustNetContexts.PAYMENTS;
@@ -66,7 +66,7 @@ contract TrustNetContextsTest is Test {
         }
     }
 
-    function test_ComputeContextId_MatchesCanonical() public {
+    function test_ComputeContextId_MatchesCanonical() public pure {
         assertEq(
             TrustNetContexts.computeContextId("global", "v1"),
             TrustNetContexts.GLOBAL
@@ -89,14 +89,14 @@ contract TrustNetContextsTest is Test {
         );
     }
 
-    function testFuzz_ComputeContextId(string memory capability, string memory version) public {
+    function testFuzz_ComputeContextId(string memory capability, string memory version) public pure {
         bytes32 computed = TrustNetContexts.computeContextId(capability, version);
         bytes32 expected =
             keccak256(abi.encodePacked("trustnet:ctx:", capability, ":", version));
         assertEq(computed, expected);
     }
 
-    function test_IsCanonical_TrueForCanonicalContexts() public {
+    function test_IsCanonical_TrueForCanonicalContexts() public pure {
         assertTrue(TrustNetContexts.isCanonical(TrustNetContexts.GLOBAL));
         assertTrue(TrustNetContexts.isCanonical(TrustNetContexts.PAYMENTS));
         assertTrue(TrustNetContexts.isCanonical(TrustNetContexts.CODE_EXEC));
@@ -104,7 +104,7 @@ contract TrustNetContextsTest is Test {
         assertTrue(TrustNetContexts.isCanonical(TrustNetContexts.DEFI_EXEC));
     }
 
-    function test_IsCanonical_FalseForLegacyAgentCollabContextIds() public {
+    function test_IsCanonical_FalseForLegacyAgentCollabContextIds() public pure {
         assertFalse(
             TrustNetContexts.isCanonical(
                 keccak256(abi.encodePacked("trustnet:ctx:agent-collab:messaging:v1"))
@@ -132,7 +132,7 @@ contract TrustNetContextsTest is Test {
         );
     }
 
-    function test_GetContextName_CanonicalContexts() public {
+    function test_GetContextName_CanonicalContexts() public pure {
         assertEq(
             TrustNetContexts.getContextName(TrustNetContexts.GLOBAL),
             "global"
@@ -155,7 +155,7 @@ contract TrustNetContextsTest is Test {
         );
     }
 
-    function test_GetContextName_UnknownContext() public {
+    function test_GetContextName_UnknownContext() public pure {
         assertEq(TrustNetContexts.getContextName(bytes32(0)), "unknown");
         assertEq(TrustNetContexts.getContextName(keccak256("random")), "unknown");
     }

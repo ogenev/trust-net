@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.23;
+pragma solidity 0.8.34;
 
-import "forge-std/Test.sol";
-import "../TrustGraph.sol";
-import "../TrustNetContexts.sol";
+import {Test, console} from "forge-std/Test.sol";
+import {TrustGraph} from "../TrustGraph.sol";
+import {TrustNetContexts} from "../TrustNetContexts.sol";
 
 contract TrustGraphTest is Test {
     TrustGraph public trustGraph;
@@ -21,6 +21,17 @@ contract TrustGraphTest is Test {
         int8 level,
         bytes32 indexed contextId
     );
+
+    function _addressFromUint(uint256 value) private pure returns (address) {
+        // Test values are tiny and always fit into address width.
+        // forge-lint: disable-next-line(unsafe-typecast)
+        return address(uint160(value));
+    }
+
+    function _cycledTrustLevel(uint256 index) private pure returns (int8) {
+        int8[5] memory levels = [int8(-2), -1, 0, 1, 2];
+        return levels[index % levels.length];
+    }
 
     function setUp() public {
         trustGraph = new TrustGraph();
@@ -193,8 +204,8 @@ contract TrustGraphTest is Test {
         bytes32[] memory contexts = new bytes32[](batchSize);
 
         for (uint256 i = 0; i < batchSize; i++) {
-            targets[i] = address(uint160(i + 100));
-            levels[i] = int8(int256(i % 5) - 2); // Cycles through -2 to 2
+            targets[i] = _addressFromUint(i + 100);
+            levels[i] = _cycledTrustLevel(i);
             contexts[i] = TrustNetContexts.GLOBAL;
         }
 
@@ -318,7 +329,7 @@ contract TrustGraphTest is Test {
         bytes32[] memory contexts = new bytes32[](batchSize);
 
         for (uint256 i = 0; i < batchSize; i++) {
-            targets[i] = address(uint160(i + 1000));
+            targets[i] = _addressFromUint(i + 1000);
             levels[i] = baseTrustLevel;
             contexts[i] = TrustNetContexts.GLOBAL;
         }
@@ -346,7 +357,7 @@ contract TrustGraphTest is Test {
         for (uint i = 0; i < 5; i++) {
             vm.prank(alice);
             uint256 gas = gasleft();
-            trustGraph.rateEdge(address(uint160(i + 1)), 1, TrustNetContexts.GLOBAL);
+            trustGraph.rateEdge(_addressFromUint(i + 1), 1, TrustNetContexts.GLOBAL);
             singleGasTotal += gas - gasleft();
         }
 
@@ -356,7 +367,7 @@ contract TrustGraphTest is Test {
         bytes32[] memory contexts = new bytes32[](5);
 
         for (uint i = 0; i < 5; i++) {
-            targets[i] = address(uint160(i + 100));
+            targets[i] = _addressFromUint(i + 100);
             levels[i] = 1;
             contexts[i] = TrustNetContexts.GLOBAL;
         }
@@ -375,7 +386,7 @@ contract TrustGraphTest is Test {
 
     // ============ Invariant Tests ============
 
-    function invariant_NoStateStorage() public {
+    function invariant_NoStateStorage() public view {
         // Contract should have no storage variables
         // Check that slot 0 is empty (would contain first storage variable)
         bytes32 slot0 = vm.load(address(trustGraph), bytes32(uint256(0)));

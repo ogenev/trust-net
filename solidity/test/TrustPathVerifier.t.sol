@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.26;
+pragma solidity 0.8.34;
 
-import "forge-std/Test.sol";
-import "forge-std/StdJson.sol";
+import {Test} from "forge-std/Test.sol";
+import {stdJson} from "forge-std/StdJson.sol";
 
-import "../TrustNetContexts.sol";
-import "../TrustPathVerifier.sol";
+import {TrustNetContexts} from "../TrustNetContexts.sol";
+import {TrustPathVerifier} from "../TrustPathVerifier.sol";
 
 contract TrustPathVerifierTest is Test {
     using stdJson for string;
@@ -20,7 +20,7 @@ contract TrustPathVerifierTest is Test {
 
     function _callVerifyAndDecide(TrustPathVerifier.DecisionRequest memory req)
         external
-        view
+        pure
         returns (TrustPathVerifier.DecisionResult memory)
     {
         return TrustPathVerifier.verifyAndDecide(req);
@@ -32,12 +32,13 @@ contract TrustPathVerifierTest is Test {
     }
 
     function _loadVectors() private view returns (string memory json) {
+        // forge-lint: disable-next-line(unsafe-cheatcode)
         json = vm.readFile(_vectorsPath());
     }
 
     function _readMembershipProof(string memory json, string memory prefix)
         private
-        view
+        pure
         returns (bytes32 edgeKey, TrustPathVerifier.SmmProof memory proof)
     {
         edgeKey = json.readBytes32(string.concat(prefix, ".edgeKey"));
@@ -113,9 +114,9 @@ contract TrustPathVerifierTest is Test {
             decider: rater,
             target: target,
             endorser: address(0),
-            proofDT: dt,
-            proofDE: empty,
-            proofET: empty,
+            proofDt: dt,
+            proofDe: empty,
+            proofEt: empty,
             allowThreshold: 2,
             askThreshold: 1
         });
@@ -124,9 +125,9 @@ contract TrustPathVerifierTest is Test {
 
         assertEq(uint8(result.decision), uint8(TrustPathVerifier.Decision.Allow), "decision");
         assertEq(result.score, 2, "score");
-        assertEq(result.edgeDT.level, 2, "why DT");
-        assertEq(result.edgeDE.level, 0, "why DE");
-        assertEq(result.edgeET.level, 0, "why ET");
+        assertEq(result.edgeDt.level, 2, "why DT");
+        assertEq(result.edgeDe.level, 0, "why DE");
+        assertEq(result.edgeEt.level, 0, "why ET");
     }
 
     function test_ComputeScore_DirectNegativeCanBeOffset() public pure {
@@ -165,9 +166,9 @@ contract TrustPathVerifierTest is Test {
             decider: decider,
             target: target,
             endorser: address(0x1234),
-            proofDT: dt,
-            proofDE: empty,
-            proofET: empty,
+            proofDt: dt,
+            proofDe: empty,
+            proofEt: empty,
             allowThreshold: 2,
             askThreshold: 1
         });
