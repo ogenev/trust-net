@@ -46,7 +46,7 @@ sol! {
     event FeedbackRevoked(
         uint256 indexed agentId,
         address indexed clientAddress,
-        uint64 feedbackIndex
+        uint64 indexed feedbackIndex
     );
 
     /// TrustGraph EdgeRated event.
@@ -173,11 +173,14 @@ impl NewFeedbackEvent {
             .map(|registry| compute_subject_id(chain_id, &registry, &agent_id_bytes));
 
         // Whitepaper mapping:
-        // - preferred target: agentWallet(agentId)
-        // - fallback target: internal AgentKey(subjectId)
+        // - preferred stable target: AgentKey/SubjectId (agent identity)
+        // - fallback target: agentWallet(agentId)
+        //
+        // Using SubjectId when available preserves latest-effective semantics per
+        // (rater, agentId, contextTag) even if agentWallet rotates over time.
         let target = match (agent_wallet, subject_id) {
-            (Some(wallet), _) => PrincipalId::from_evm_address(wallet),
-            (None, Some(subject)) => PrincipalId::from(*subject.inner()),
+            (_, Some(subject)) => PrincipalId::from(*subject.inner()),
+            (Some(wallet), None) => PrincipalId::from_evm_address(wallet),
             (None, None) => return Ok(None),
         };
 
@@ -491,15 +494,8 @@ fn normalize_optional_string(value: String) -> Option<String> {
     }
 }
 
-fn is_canonical_context_string(value: &str) -> bool {
-    trustnet_core::is_canonical_context_string_v1(value)
-}
-
 fn parse_context_id(tag1: &str) -> Option<ContextId> {
-    is_canonical_context_string(tag1)
-        .then(|| trustnet_core::context_id_from_string_v1(tag1))
-        .flatten()
-        .map(ContextId::from)
+    trustnet_core::context_id_from_tag_v1(tag1).map(ContextId::from)
 }
 
 fn matches_trustnet_tag2_guard(tag2: &str) -> bool {
@@ -548,7 +544,7 @@ mod tests {
     }
 
     #[test]
-    fn test_to_edge_record() {
+    fn test_to_edge_record_prefers_subject_id_target() {
         let event = base_event();
 
         // Core quantizer uses [80, 60, 40, 20] buckets:
@@ -573,12 +569,12 @@ mod tests {
             edge.rater,
             PrincipalId::from_evm_address(event.client_address)
         );
-        assert_eq!(edge.target, PrincipalId::from_evm_address(agent_wallet));
         let expected_context = ContextId::from(keccak256(event.tag1.as_bytes()));
         assert_eq!(edge.context_id, expected_context);
         let expected_subject =
             compute_subject_id(chain_id, &identity_registry, &event.agent_id.to_be_bytes());
         assert_eq!(edge.subject_id, Some(expected_subject));
+        assert_eq!(edge.target, PrincipalId::from(*expected_subject.inner()));
         assert_eq!(edge.level, Level::strong_positive());
         assert_eq!(edge.chain_id, Some(chain_id));
         assert_eq!(edge.block_number, Some(100));
@@ -716,7 +712,7 @@ mod tests {
     }
 
     #[test]
-    fn test_to_edge_record_rejects_legacy_context_string() {
+    fn test_to_edge_record_accepts_custom_context_string_v1() {
         let mut event = base_event();
         event.tag1 = "trustnet:ctx:agent-collab:code-exec:v1".to_string();
 
@@ -732,7 +728,7 @@ mod tests {
                 Some(Address::repeat_byte(0x44)),
             )
             .unwrap()
-            .is_none());
+            .is_some());
     }
 
     #[test]
@@ -772,6 +768,22 @@ mod tests {
             compute_subject_id(chain_id, &identity_registry, &event.agent_id.to_be_bytes());
         assert_eq!(edge.subject_id, Some(expected_subject));
         assert_eq!(edge.target, PrincipalId::from(*expected_subject.inner()));
+    }
+
+    #[test]
+    fn test_to_edge_record_falls_back_to_wallet_without_subject_binding() {
+        let event = base_event();
+        let observed_at_u64 =
+            observed_at_for_chain(event.block_number, event.tx_index, event.log_index);
+        let agent_wallet = Address::repeat_byte(0x44);
+
+        let edge = event
+            .to_edge_record(1, 1, observed_at_u64, None, Some(agent_wallet))
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(edge.subject_id, None);
+        assert_eq!(edge.target, PrincipalId::from_evm_address(agent_wallet));
     }
 
     #[test]

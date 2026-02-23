@@ -325,30 +325,35 @@ fn verify_smm_proof_against_root(
     }
 }
 
-fn verify_edge_key_binding(proof: &SmmProofV1Json) -> anyhow::Result<()> {
-    let Some(rater) = proof.rater.as_deref() else {
-        return Ok(());
-    };
-    let Some(target) = proof.target.as_deref() else {
-        return Ok(());
-    };
-    let Some(context_id) = proof.context_id.as_deref() else {
-        return Ok(());
-    };
+fn verify_expected_edge_binding(
+    proof: &SmmProofV1Json,
+    expected_rater: &PrincipalId,
+    expected_target: &PrincipalId,
+    expected_context: &ContextId,
+) -> anyhow::Result<()> {
+    if let Some(rater) = proof.rater.as_deref() {
+        let got = rater
+            .parse::<PrincipalId>()
+            .context("invalid proof.rater")?;
+        anyhow::ensure!(got == *expected_rater, "proof.rater mismatch");
+    }
 
-    let rater = rater
-        .parse::<PrincipalId>()
-        .context("invalid proof.rater")?;
-    let target = target
-        .parse::<PrincipalId>()
-        .context("invalid proof.target")?;
-    let context_id = context_id
-        .parse::<ContextId>()
-        .context("invalid proof.contextId")?;
+    if let Some(target) = proof.target.as_deref() {
+        let got = target
+            .parse::<PrincipalId>()
+            .context("invalid proof.target")?;
+        anyhow::ensure!(got == *expected_target, "proof.target mismatch");
+    }
 
-    let expected = compute_edge_key(&rater, &target, &context_id);
+    if let Some(context_id) = proof.context_id.as_deref() {
+        let got = context_id
+            .parse::<ContextId>()
+            .context("invalid proof.contextId")?;
+        anyhow::ensure!(got == *expected_context, "proof.contextId mismatch");
+    }
+
+    let expected = compute_edge_key(expected_rater, expected_target, expected_context);
     let got = parse_b256(&proof.edge_key)?;
-
     anyhow::ensure!(expected == got, "edgeKey mismatch for proof");
     Ok(())
 }
@@ -406,10 +411,38 @@ pub fn verify_score_bundle(
         );
     }
 
+    let bundle_decider = bundle
+        .proof
+        .decider
+        .parse::<PrincipalId>()
+        .context("invalid bundle.proof.decider")?;
+    let bundle_target = bundle
+        .proof
+        .target
+        .parse::<PrincipalId>()
+        .context("invalid bundle.proof.target")?;
+    let bundle_context = bundle
+        .proof
+        .context_id
+        .parse::<ContextId>()
+        .context("invalid bundle.proof.contextId")?;
+
+    let context_from_tag = trustnet_core::context_id_from_tag_v1(&bundle.proof.context_tag)
+        .ok_or_else(|| anyhow::anyhow!("invalid bundle.proof.contextTag"))?;
+    anyhow::ensure!(
+        *bundle_context.inner() == context_from_tag,
+        "contextId/contextTag mismatch in score proof"
+    );
+
     let graph_root = parse_b256(&bundle.proof.graph_root)?;
 
-    // Verify proofs and edgeKey bindings (when proof includes rater/target/contextId).
-    verify_edge_key_binding(&bundle.proof.proofs.dt)?;
+    // DT must bind to (decider, target, context).
+    verify_expected_edge_binding(
+        &bundle.proof.proofs.dt,
+        &bundle_decider,
+        &bundle_target,
+        &bundle_context,
+    )?;
     let dt = verify_smm_proof_against_root(&bundle.proof.proofs.dt, &graph_root)?;
 
     let (de, et, endorser) = match (
@@ -418,13 +451,23 @@ pub fn verify_score_bundle(
         &bundle.proof.proofs.et,
     ) {
         (Some(endorser), Some(de), Some(et)) => {
-            verify_edge_key_binding(de)?;
-            verify_edge_key_binding(et)?;
-            let de_lv = verify_smm_proof_against_root(de, &graph_root)?;
-            let et_lv = verify_smm_proof_against_root(et, &graph_root)?;
             let endorser = endorser
                 .parse::<PrincipalId>()
                 .context("invalid bundle.endorser")?;
+            verify_expected_edge_binding(de, &bundle_decider, &endorser, &bundle_context)?;
+            verify_expected_edge_binding(et, &endorser, &bundle_target, &bundle_context)?;
+
+            anyhow::ensure!(
+                !de.is_absent,
+                "DE proof must be membership when endorser is present"
+            );
+            anyhow::ensure!(
+                !et.is_absent,
+                "ET proof must be membership when endorser is present"
+            );
+
+            let de_lv = verify_smm_proof_against_root(de, &graph_root)?;
+            let et_lv = verify_smm_proof_against_root(et, &graph_root)?;
             (de_lv, et_lv, Some(endorser))
         }
         (None, None, None) => (

@@ -9,7 +9,9 @@ use trustnet_core::hashing::{compute_edge_key, compute_root_signature_hash, kecc
 use trustnet_core::{LeafValueV1, B256};
 use trustnet_smm::SmmBuilder;
 
-use crate::root_manifest::{build_server_root_manifest_v1, canonicalize_manifest};
+use crate::root_manifest::{
+    build_server_root_manifest_v1, canonicalize_manifest, ServerManifestConfigV1,
+};
 use crate::storage::{DeploymentMode, EdgeRecord, EpochRecord, Storage};
 
 /// Input parameters for server-mode root building.
@@ -140,14 +142,18 @@ pub async fn build_server_root(input: &BuildServerRootInput) -> Result<BuildServ
     };
 
     let created_at = chrono::Utc::now().to_rfc3339();
+    let registered_contexts = storage.get_registered_context_tags().await?;
     let manifest = build_server_root_manifest_v1(
         epoch,
         &root,
-        input.stream_id.clone(),
-        from_seq,
-        to_seq,
-        stream_hash,
-        created_at,
+        ServerManifestConfigV1 {
+            stream_id: input.stream_id.clone(),
+            from_seq,
+            to_seq,
+            stream_hash,
+            registered_contexts,
+            created_at,
+        },
     );
 
     let canonical = canonicalize_manifest(&manifest);

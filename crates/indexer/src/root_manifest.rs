@@ -36,6 +36,23 @@ pub struct ChainManifestConfigV1 {
     pub confirmations: u64,
 }
 
+/// Server-mode manifest inputs.
+#[derive(Debug, Clone)]
+pub struct ServerManifestConfigV1 {
+    /// Logical stream identifier (implementation-defined).
+    pub stream_id: String,
+    /// Starting sequence number included in this root.
+    pub from_seq: u64,
+    /// Ending sequence number included in this root.
+    pub to_seq: u64,
+    /// Stream hash commitment (optional; defaults to zero hash).
+    pub stream_hash: Option<B256>,
+    /// Additional valid context tags discovered by the indexer.
+    pub registered_contexts: Vec<String>,
+    /// RFC3339 timestamp for when the manifest/root was built.
+    pub created_at: String,
+}
+
 /// Root Manifest (TrustNet v1.1 spec).
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -161,17 +178,39 @@ pub fn ttl_seconds_for_context_id(context_id: &ContextId) -> u64 {
     trustnet_core::ttl_seconds_for_context_id_v1(context_id.inner()).unwrap_or(0)
 }
 
+fn merged_context_tags(registered_contexts: &[String]) -> Vec<String> {
+    let mut contexts: Vec<String> = trustnet_core::CANONICAL_CONTEXTS_V1
+        .iter()
+        .map(|(name, _)| (*name).to_string())
+        .collect();
+
+    for tag in registered_contexts {
+        if !trustnet_core::is_valid_context_string_v1(tag) {
+            continue;
+        }
+        if !contexts.iter().any(|c| c == tag) {
+            contexts.push(tag.clone());
+        }
+    }
+
+    // Keep canonical contexts in their published order, sort only custom suffix.
+    let canonical_len = trustnet_core::CANONICAL_CONTEXTS_V1.len();
+    let mut custom = contexts.split_off(canonical_len);
+    custom.sort();
+    contexts.extend(custom);
+    contexts
+}
+
 /// Build a chain-mode Root Manifest (TrustNet v1.1 schema).
 pub fn build_chain_root_manifest_v1(
     config: &ChainManifestConfigV1,
     _epoch: u64,
     _graph_root: &B256,
     built_at_block: u64,
-    to_block_hash: Option<B256>,
+    to_block_hash: B256,
+    registered_contexts: Vec<String>,
     created_at: String,
 ) -> RootManifestV1 {
-    let to_block_hash = to_block_hash.unwrap_or(B256::ZERO);
-
     RootManifestV1 {
         version: "trustnet-v1.1".to_string(),
         chain_id: Some(config.chain_id),
@@ -191,10 +230,7 @@ pub fn build_chain_root_manifest_v1(
         server: None,
         trustnet: ManifestTrustnetV1 {
             tag2: "trustnet:v1".to_string(),
-            contexts: trustnet_core::CANONICAL_CONTEXTS_V1
-                .iter()
-                .map(|(name, _)| (*name).to_string())
-                .collect(),
+            contexts: merged_context_tags(&registered_contexts),
             quantizer: vec![80, 60, 40, 20],
             value_decimals: 0,
         },
@@ -215,13 +251,9 @@ pub fn build_chain_root_manifest_v1(
 pub fn build_server_root_manifest_v1(
     _epoch: u64,
     _graph_root: &B256,
-    stream_id: String,
-    from_seq: u64,
-    to_seq: u64,
-    stream_hash: Option<B256>,
-    created_at: String,
+    config: ServerManifestConfigV1,
 ) -> RootManifestV1 {
-    let stream_hash = stream_hash.unwrap_or(B256::ZERO);
+    let stream_hash = config.stream_hash.unwrap_or(B256::ZERO);
 
     RootManifestV1 {
         version: "trustnet-v1.1".to_string(),
@@ -229,17 +261,14 @@ pub fn build_server_root_manifest_v1(
         contracts: None,
         window: None,
         server: Some(ManifestServerV1 {
-            stream_id,
-            from_seq,
-            to_seq,
+            stream_id: config.stream_id,
+            from_seq: config.from_seq,
+            to_seq: config.to_seq,
             stream_hash: hex_b256(&stream_hash),
         }),
         trustnet: ManifestTrustnetV1 {
             tag2: "trustnet:v1".to_string(),
-            contexts: trustnet_core::CANONICAL_CONTEXTS_V1
-                .iter()
-                .map(|(name, _)| (*name).to_string())
-                .collect(),
+            contexts: merged_context_tags(&config.registered_contexts),
             quantizer: vec![80, 60, 40, 20],
             value_decimals: 0,
         },
@@ -251,7 +280,7 @@ pub fn build_server_root_manifest_v1(
         },
         software: Some(ManifestSoftwareV1 {
             version: format!("trustnet-server@{}", env!("CARGO_PKG_VERSION")),
-            created_at,
+            created_at: config.created_at,
         }),
     }
 }

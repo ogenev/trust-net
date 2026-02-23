@@ -407,7 +407,17 @@ impl EventDrivenPublisher {
         let to_block_hash = if needs_republish {
             None
         } else {
-            self.try_get_block_hash(smm_state.built_at_block).await
+            Some(
+                self.try_get_block_hash(smm_state.built_at_block)
+                    .await
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "Cannot publish epoch {}: missing toBlockHash for block {}",
+                            epoch_num,
+                            smm_state.built_at_block
+                        )
+                    })?,
+            )
         };
 
         let (manifest_json, manifest_hash, publisher_sig) = if let Some(stored_epoch) =
@@ -419,12 +429,14 @@ impl EventDrivenPublisher {
                 stored_epoch.publisher_sig.clone(),
             )
         } else {
+            let registered_contexts = self.storage.get_registered_context_tags().await?;
             let manifest = build_chain_root_manifest_v1(
                 &self.manifest_config,
                 epoch_num,
                 &root_to_publish,
                 smm_state.built_at_block,
-                to_block_hash,
+                to_block_hash.expect("checked above for non-republish path"),
+                registered_contexts,
                 created_at_rfc3339,
             );
             let canonical = canonicalize_manifest(&manifest);

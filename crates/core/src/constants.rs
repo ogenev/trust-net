@@ -2,7 +2,7 @@
 //!
 //! These constants MUST match the values in TrustNetContexts.sol exactly.
 
-use alloy_primitives::{b256, B256};
+use alloy_primitives::{b256, keccak256, B256};
 
 /// Tag for ERC-8004 feedback that should be ingested by TrustNet.
 /// Runtime ingestion must compare the literal `tag2` string (`"trustnet:v1"`).
@@ -63,6 +63,41 @@ pub fn context_id_from_string_v1(context: &str) -> Option<B256> {
     CANONICAL_CONTEXTS_V1
         .iter()
         .find_map(|(name, id)| (*name == context).then_some(*id))
+}
+
+/// Validate a TrustNet v1 context tag string.
+///
+/// Accepted format:
+/// - prefix: `trustnet:ctx:`
+/// - suffix: `:v1`
+/// - middle segment: one or more of `[a-z0-9-:]`
+pub fn is_valid_context_string_v1(context: &str) -> bool {
+    const PREFIX: &str = "trustnet:ctx:";
+    const SUFFIX: &str = ":v1";
+
+    if context.is_empty() || context.trim() != context {
+        return false;
+    }
+    if !context.starts_with(PREFIX) || !context.ends_with(SUFFIX) {
+        return false;
+    }
+
+    let middle = &context[PREFIX.len()..context.len() - SUFFIX.len()];
+    !middle.is_empty()
+        && middle
+            .bytes()
+            .all(|b| matches!(b, b'a'..=b'z' | b'0'..=b'9' | b'-' | b':'))
+}
+
+/// Resolve a TrustNet v1 context id from a context tag string.
+///
+/// - Canonical contexts return their fixed IDs.
+/// - Valid custom `trustnet:ctx:*:v1` tags return `keccak256(bytes(tag))`.
+pub fn context_id_from_tag_v1(context: &str) -> Option<B256> {
+    if let Some(id) = context_id_from_string_v1(context) {
+        return Some(id);
+    }
+    is_valid_context_string_v1(context).then(|| keccak256(context.as_bytes()))
 }
 
 /// Check whether a context string is canonical in v1.
@@ -165,6 +200,27 @@ mod tests {
             "trustnet:ctx:agent-collab:code-exec:v1"
         ));
         assert!(!is_canonical_context_string_v1("trustnet:ctx:messaging:v1"));
+    }
+
+    #[test]
+    fn test_context_tag_validation_and_hashing() {
+        let custom = "trustnet:ctx:agent-collab:code-exec:v1";
+        assert!(is_valid_context_string_v1(custom));
+        assert_eq!(
+            context_id_from_tag_v1(custom),
+            Some(keccak256(custom.as_bytes()))
+        );
+
+        assert!(is_valid_context_string_v1(CTX_STR_CODE_EXEC));
+        assert_eq!(
+            context_id_from_tag_v1(CTX_STR_CODE_EXEC),
+            Some(CTX_CODE_EXEC)
+        );
+
+        assert!(!is_valid_context_string_v1("trustnet:ctx::v1"));
+        assert!(!is_valid_context_string_v1("trustnet:ctx:custom:v2"));
+        assert!(!is_valid_context_string_v1(" TRUSTNET:ctx:custom:v1"));
+        assert_eq!(context_id_from_tag_v1("trustnet:ctx::v1"), None);
     }
 
     #[test]

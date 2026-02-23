@@ -46,7 +46,7 @@ contract MockErc8004Reputation {
     event FeedbackRevoked(
         uint256 indexed agentId,
         address indexed clientAddress,
-        uint64 feedbackIndex
+        uint64 indexed feedbackIndex
     );
 
     function emitTrustnetFeedback(

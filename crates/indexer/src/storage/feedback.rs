@@ -22,6 +22,24 @@ fn i128_to_bytes(value: i128) -> [u8; 32] {
 }
 
 impl Storage {
+    /// Fetch distinct TrustNet context tags observed in ERC-8004 feedback ingestion.
+    pub async fn get_registered_context_tags(&self) -> Result<Vec<String>> {
+        let mut tags = sqlx::query_scalar::<_, String>(
+            r#"
+            SELECT DISTINCT tag1
+            FROM feedback_raw
+            WHERE tag2 = 'trustnet:v1'
+            ORDER BY tag1 ASC
+            "#,
+        )
+        .fetch_all(&self.pool)
+        .await
+        .context("Failed to fetch registered context tags")?;
+
+        tags.retain(|tag| trustnet_core::is_valid_context_string_v1(tag));
+        Ok(tags)
+    }
+
     /// Append a raw ERC-8004 NewFeedback record.
     ///
     /// Returns the inserted row id (or existing id if idempotent).
@@ -434,7 +452,9 @@ impl Storage {
                  OR r.id IS NULL
               )
             ORDER BY
-                e.observed_at_u64 DESC,
+                COALESCE(e.block_number, 0) DESC,
+                COALESCE(e.tx_index, 0) DESC,
+                COALESCE(e.log_index, 0) DESC,
                 e.tx_hash DESC,
                 e.id DESC
             LIMIT 1

@@ -158,9 +158,23 @@ impl Storage {
                 log_index = excluded.log_index,
                 tx_hash = excluded.tx_hash,
                 server_seq = NULL
-            WHERE edges_latest.observed_at_u64 = 0
-               OR (excluded.observed_at_u64 > edges_latest.observed_at_u64)
-               OR (excluded.observed_at_u64 = edges_latest.observed_at_u64 AND (edges_latest.tx_hash IS NULL OR excluded.tx_hash > edges_latest.tx_hash))
+            WHERE edges_latest.block_number IS NULL
+               OR (excluded.block_number > edges_latest.block_number)
+               OR (
+                    excluded.block_number = edges_latest.block_number
+                AND excluded.tx_index > edges_latest.tx_index
+               )
+               OR (
+                    excluded.block_number = edges_latest.block_number
+                AND excluded.tx_index = edges_latest.tx_index
+                AND excluded.log_index > edges_latest.log_index
+               )
+               OR (
+                    excluded.block_number = edges_latest.block_number
+                AND excluded.tx_index = edges_latest.tx_index
+                AND excluded.log_index = edges_latest.log_index
+                AND (edges_latest.tx_hash IS NULL OR excluded.tx_hash > edges_latest.tx_hash)
+               )
             "#,
         )
         .bind(rater_pid)

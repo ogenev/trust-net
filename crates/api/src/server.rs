@@ -10,7 +10,12 @@ use ed25519_dalek::{Signature as Ed25519Signature, VerifyingKey};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use sqlx::{sqlite::SqliteConnectOptions, SqlitePool};
-use std::{collections::HashMap, net::SocketAddr, str::FromStr, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    net::SocketAddr,
+    str::FromStr,
+    sync::Arc,
+};
 use tower_http::cors::CorsLayer;
 use trustnet_core::{
     hashing::compute_edge_key, Address, ContextId, LeafValueV1, Level, PrincipalId, B256,
@@ -347,11 +352,17 @@ async fn health(State(_state): State<AppState>) -> &'static str {
 }
 
 fn is_allowlisted_context_id(context_id: &ContextId) -> bool {
-    trustnet_core::is_supported_context_id_v1(context_id.inner())
+    *context_id.inner() != B256::ZERO
 }
 
 fn normalize_context_id(context_id: &ContextId) -> Option<ContextId> {
-    trustnet_core::normalize_context_id_v1(context_id.inner()).map(ContextId::from)
+    if *context_id.inner() == B256::ZERO {
+        return None;
+    }
+
+    trustnet_core::normalize_context_id_v1(context_id.inner())
+        .map(ContextId::from)
+        .or(Some(*context_id))
 }
 
 const ERROR_CODE_INVALID_REQUEST: &str = "invalid_request";
@@ -714,36 +725,61 @@ struct ContextsResponse {
     contexts: Vec<ContextInfo>,
 }
 
-async fn get_contexts() -> Json<ContextsResponse> {
-    Json(ContextsResponse {
-        contexts: vec![
-            ContextInfo {
-                name: trustnet_core::CTX_STR_GLOBAL.to_string(),
-                context_id: hex_b256(&trustnet_core::CTX_GLOBAL),
-                description: "Global default trust context".to_string(),
-            },
-            ContextInfo {
-                name: trustnet_core::CTX_STR_PAYMENTS.to_string(),
-                context_id: hex_b256(&trustnet_core::CTX_PAYMENTS),
-                description: "Payment authorization context".to_string(),
-            },
-            ContextInfo {
-                name: trustnet_core::CTX_STR_CODE_EXEC.to_string(),
-                context_id: hex_b256(&trustnet_core::CTX_CODE_EXEC),
-                description: "Code execution context".to_string(),
-            },
-            ContextInfo {
-                name: trustnet_core::CTX_STR_WRITES.to_string(),
-                context_id: hex_b256(&trustnet_core::CTX_WRITES),
-                description: "Write/modify authority context".to_string(),
-            },
-            ContextInfo {
-                name: trustnet_core::CTX_STR_DEFI_EXEC.to_string(),
-                context_id: hex_b256(&trustnet_core::CTX_DEFI_EXEC),
-                description: "DeFi execution context".to_string(),
-            },
-        ],
-    })
+async fn get_contexts(
+    State(state): State<AppState>,
+) -> Result<Json<ContextsResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let mut contexts = vec![
+        ContextInfo {
+            name: trustnet_core::CTX_STR_GLOBAL.to_string(),
+            context_id: hex_b256(&trustnet_core::CTX_GLOBAL),
+            description: "Global default trust context".to_string(),
+        },
+        ContextInfo {
+            name: trustnet_core::CTX_STR_PAYMENTS.to_string(),
+            context_id: hex_b256(&trustnet_core::CTX_PAYMENTS),
+            description: "Payment authorization context".to_string(),
+        },
+        ContextInfo {
+            name: trustnet_core::CTX_STR_CODE_EXEC.to_string(),
+            context_id: hex_b256(&trustnet_core::CTX_CODE_EXEC),
+            description: "Code execution context".to_string(),
+        },
+        ContextInfo {
+            name: trustnet_core::CTX_STR_WRITES.to_string(),
+            context_id: hex_b256(&trustnet_core::CTX_WRITES),
+            description: "Write/modify authority context".to_string(),
+        },
+        ContextInfo {
+            name: trustnet_core::CTX_STR_DEFI_EXEC.to_string(),
+            context_id: hex_b256(&trustnet_core::CTX_DEFI_EXEC),
+            description: "DeFi execution context".to_string(),
+        },
+    ];
+
+    let mut seen: HashSet<String> = contexts.iter().map(|c| c.name.clone()).collect();
+    let mut custom = db::get_registered_context_tags(&state.db)
+        .await
+        .map_err(internal_error)?;
+    custom.sort();
+
+    for tag in custom {
+        if !trustnet_core::is_valid_context_string_v1(&tag) {
+            continue;
+        }
+        if trustnet_core::is_canonical_context_string_v1(&tag) || !seen.insert(tag.clone()) {
+            continue;
+        }
+        let Some(context_id) = trustnet_core::context_id_from_tag_v1(&tag) else {
+            continue;
+        };
+        contexts.push(ContextInfo {
+            name: tag,
+            context_id: hex_b256(&context_id),
+            description: "Registered custom trust context".to_string(),
+        });
+    }
+
+    Ok(Json(ContextsResponse { contexts }))
 }
 
 #[derive(Debug, Deserialize)]
@@ -957,7 +993,7 @@ async fn get_score(
     })?;
 
     let context_tag = query.context_tag.trim();
-    let context_id = trustnet_core::context_id_from_string_v1(context_tag)
+    let context_id = trustnet_core::context_id_from_tag_v1(context_tag)
         .map(ContextId::from)
         .ok_or_else(|| unknown_context("Unknown contextTag", "contextTag"))?;
 
@@ -1749,9 +1785,26 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_contexts() {
-        let response = get_contexts().await;
-        assert_eq!(response.0.contexts.len(), 5);
-        assert_eq!(response.0.contexts[0].name, "trustnet:ctx:global:v1");
+        let (state, _tmp, _decider, _endorser, _target, _context_id) = setup_state().await;
+        let app = Router::new()
+            .route("/v1/contexts", get(get_contexts))
+            .with_state(state);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/contexts")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["contexts"].as_array().unwrap().len(), 5);
+        assert_eq!(json["contexts"][0]["name"], "trustnet:ctx:global:v1");
     }
 
     #[tokio::test]
@@ -1913,7 +1966,7 @@ mod tests {
             .with_state(state);
 
         let uri = format!(
-            "/v1/score/{}/{}?contextTag=trustnet:ctx:legacy:v1",
+            "/v1/score/{}/{}?contextTag=legacy-context",
             hex_bytes(decider.as_bytes()),
             hex_bytes(target.as_bytes())
         );
@@ -1928,6 +1981,27 @@ mod tests {
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(json["error"]["code"], "unknown_context");
         assert_eq!(json["error"]["details"]["field"], "contextTag");
+    }
+
+    #[tokio::test]
+    async fn test_get_score_accepts_custom_context_tag_v1() {
+        let (state, _tmp, decider, _endorser, target, _context_id) = setup_state().await;
+        let app = Router::new()
+            .route("/v1/score/:decider/:target", get(get_score))
+            .with_state(state);
+
+        let uri = format!(
+            "/v1/score/{}/{}?contextTag=trustnet:ctx:agent-collab:code-exec:v1",
+            hex_bytes(decider.as_bytes()),
+            hex_bytes(target.as_bytes())
+        );
+
+        let response = app
+            .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
     }
 
     #[tokio::test]

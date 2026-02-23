@@ -176,6 +176,22 @@ pub async fn get_candidate_endorsers(
     Ok(rows)
 }
 
+/// Fetch distinct TrustNet-tagged context strings observed in feedback ingestion.
+pub async fn get_registered_context_tags(pool: &SqlitePool) -> anyhow::Result<Vec<String>> {
+    let rows = sqlx::query_scalar::<_, String>(
+        r#"
+        SELECT DISTINCT tag1
+        FROM feedback_raw
+        WHERE tag2 = 'trustnet:v1'
+        ORDER BY tag1 ASC
+        "#,
+    )
+    .fetch_all(pool)
+    .await?;
+
+    Ok(rows)
+}
+
 /// Check if an evidence hash corresponds to feedback with a verified stamp.
 pub async fn has_verified_feedback_for_hash(
     pool: &SqlitePool,
