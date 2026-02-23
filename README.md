@@ -7,8 +7,8 @@
 
 This repository targets **TrustNet v1.1**.
 
-- Spec: `docs/TRUSTNET_v1.1.md`
-- Test vectors: `docs/Test_Vectors_v1.1.json`
+- Spec: [docs/TRUSTNET_v1.1.md](docs/TRUSTNET_v1.1.md)
+- Test vectors: [docs/Test_Vectors_v1.1.json](docs/Test_Vectors_v1.1.json)
 
 Core v1.1 properties:
 
@@ -121,9 +121,9 @@ Current Base Sepolia (`chainId=84532`) deployment values:
 
 ## Validation Flows
 
-- Server-mode smoke guide: `docs/Server_Smoke_Test.md`
-- Chain-mode smoke guide (Anvil): `docs/Chain_Smoke_Test.md`
-- Base Sepolia public rehearsal guide: `docs/Base_Sepolia_Dress_Rehearsal.md`
+- Server-mode smoke guide: [docs/Server_Smoke_Test.md](docs/Server_Smoke_Test.md)
+- Chain-mode smoke guide (Anvil): [docs/Chain_Smoke_Test.md](docs/Chain_Smoke_Test.md)
+- Base Sepolia public rehearsal guide: [docs/Base_Sepolia_Dress_Rehearsal.md](docs/Base_Sepolia_Dress_Rehearsal.md)
 
 Automation:
 

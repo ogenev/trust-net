@@ -10,7 +10,7 @@ TrustNet provides verifiable, explainable trust-to-act scoring for AI agents usi
 - **2-hop proofs** with Sparse Merkle Maps
 - **Explainable** score bundles showing which edges contributed
 
-See `docs/TRUSTNET_v1.1.md` for the current specification.
+See [docs/TRUSTNET_v1.1.md](../docs/TRUSTNET_v1.1.md) for the current specification.
 
 ---
 
@@ -306,5 +306,5 @@ MIT - see [LICENSE](../LICENSE) for details.
 ## References
 
 - [ERC-8004 Specification](https://eips.ethereum.org/EIPS/eip-8004)
-- Spec v1.1: `docs/TRUSTNET_v1.1.md`
+- Spec v1.1: [docs/TRUSTNET_v1.1.md](../docs/TRUSTNET_v1.1.md)
 - [Sparse Merkle Trees](https://docs.iden3.io/publications/pdfs/Merkle-Tree.pdf)

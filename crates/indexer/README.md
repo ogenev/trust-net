@@ -128,9 +128,9 @@ For **server-mode** signed roots, use the unified CLI:
 cargo run -p trustnet-cli -- root --database-url sqlite://trustnet.db --publisher-key 0x...
 ```
 
-End-to-end server-mode flow is documented in `docs/Server_Smoke_Test.md`.
-End-to-end chain-mode (anvil) flow is documented in `docs/Chain_Smoke_Test.md`.
-Base Sepolia public-traffic release rehearsal flow is documented in `docs/Base_Sepolia_Dress_Rehearsal.md`.
+End-to-end server-mode flow is documented in [docs/Server_Smoke_Test.md](../../docs/Server_Smoke_Test.md).
+End-to-end chain-mode (anvil) flow is documented in [docs/Chain_Smoke_Test.md](../../docs/Chain_Smoke_Test.md).
+Base Sepolia public-traffic release rehearsal flow is documented in [docs/Base_Sepolia_Dress_Rehearsal.md](../../docs/Base_Sepolia_Dress_Rehearsal.md).
 
 ## Configuration
 
