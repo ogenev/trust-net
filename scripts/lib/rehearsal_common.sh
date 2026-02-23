@@ -105,4 +105,3 @@ deploy_contract() {
     --json \
     --create "${deployment_data}" | jq -r '.contractAddress'
 }
-

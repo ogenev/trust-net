@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/usr/bin/env -S NO_PROXY=* HTTPS_PROXY= HTTP_PROXY= ALL_PROXY= bash
 set -euo pipefail
 
 REPO_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
