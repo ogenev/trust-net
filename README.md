@@ -140,7 +140,25 @@ cargo test -p trustnet-api --test server_smoke
 
 ## OpenClaw Plugin
 
-`plugin-openclaw/` contains the OpenClaw plugin and integration tests and is intentionally outside the core v1.1 MVP migration scope.
+`plugin-openclaw/` contains the active OpenClaw enforcement runtime for TrustNet.
+
+Current implementation supports:
+
+- `local-lite` mode (default): local-only trust decisions from SQLite (`edges_latest`) with no required chain/RPC dependency.
+- `local-verifiable` mode: compatibility API flow (`/v1/root`, `/v1/decision`) plus anchored verification via `trustnet verify`.
+- ASK flow with one-time tickets and supported operator actions:
+  `allow_once`, `allow_ttl`, `allow_always`, `block`.
+- Runtime trust workflows (`trust`, `block`, `endorse`, `status`, `confirm`, `cancel`) with durable confirmation tickets.
+- Runtime Agent Card import/status (`openclaw.agentCard.v1`) with ed25519 verification and local owner trust policy.
+- High-risk interaction receipts (`trustnet.receipt.v1`) persisted in SQLite and optional JSON files.
+
+Plugin docs and examples:
+
+- [plugin-openclaw/README.md](plugin-openclaw/README.md)
+- [plugin-openclaw/config.example.json5](plugin-openclaw/config.example.json5)
+- [plugin-openclaw/tool_map.example.json](plugin-openclaw/tool_map.example.json)
+
+Validation:
 
 ```bash
 cd plugin-openclaw

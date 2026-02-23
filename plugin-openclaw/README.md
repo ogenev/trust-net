@@ -1,33 +1,40 @@
-# TrustNet OpenClaw Plugin (v0.7 Local-First Migration)
+# TrustNet OpenClaw Plugin
 
-This package is the OpenClaw enforcement surface for TrustNet.
+This package is the TrustNet enforcement runtime for OpenClaw.
 
-v0.7 default target:
-- `local-lite` (L0) local-first decisions with no mandatory chain dependency
-- `local-verifiable` optional proof/root verification path
+## Implemented behavior
 
-Current implementation status in this repo:
-- mode-based config is implemented (`local-lite`, `local-verifiable`)
-- `local-lite` is now the default and does not require chain RPC or RootRegistry config
-- local SQLite trust store is implemented (`edges_latest`, `receipts`, `agents`)
-- local decision engine module is implemented with Rust-equivalent scoring semantics (`TN-005`)
-- `before_tool_call` now computes decisions directly from local `edges_latest` in `local-lite` (`TN-006`)
-- ASK action flow is implemented with ticketed retries and edge writes (`allow_once`, `allow_ttl`, `allow_always`, `block`) (`TN-007`)
-- receipt persistence now emits `trustnet.receipt.v1` local receipts with decision/why snapshots for high-risk mappings (`TN-008`)
-- Trust Circles policy primitive is implemented for local-lite (`onlyMe`, `myContacts`, `openclawVerified`, `custom`) (`TN-010`)
-- runtime Agent Card import/verify/store is implemented (`openclaw.agentCard.v1`, `trustnetAgentCardAction: import|status`) (`TN-011`)
-- runtime trust management workflows are implemented (`trustnetTrustAction: trust|block|endorse|status|confirm|cancel`) with durable confirmation tickets (`TN-012`)
-- `local-verifiable` keeps API decision/root compatibility flow plus anchored verification until sidecar work (`TN-013+`)
+- Two modes are supported:
+  - `local-lite` (default): local-first decisions from SQLite with no required chain/RPC config.
+  - `local-verifiable`: compatibility API flow (`/v1/root`, `/v1/decision`) plus anchored verification via `trustnet verify`.
+- Local trust store is implemented with SQLite tables:
+  - `edges_latest` (latest-wins trust edges)
+  - `receipts` (high-risk interaction receipts)
+  - `agents` (runtime Agent Card imports and metadata)
+  - `workflow_tickets` (durable trust-workflow confirmations)
+- `before_tool_call` performs tool mapping, local/API decisioning, ASK handling, runtime trust workflows, and runtime Agent Card actions.
+- `after_tool_call` writes `trustnet.receipt.v1` for `riskTier: "high"` mappings.
+- `tool_result_persist` attaches TrustNet receipt summary metadata to persisted tool-result messages.
 
-The plugin uses OpenClaw lifecycle hooks:
-- `before_tool_call`: map tool -> context, compute local decision in `local-lite` (or fetch decision/root in `local-verifiable`), enforce ALLOW/ASK/DENY
-- `after_tool_call`: persist high-risk `trustnet.receipt.v1` metadata (with optional `trustnet receipt` attachment in `local-verifiable`)
-- `tool_result_persist`: attach TrustNet receipt metadata to persisted tool result messages
+Decision behavior in `local-lite`:
+
+- direct hard veto (`D->T = -2`) always denies.
+- otherwise score is computed from direct `D->T` plus best allowed `D->E->T` path.
+- thresholds by mapping risk tier:
+  - `riskTier: "low"` => allow `>=1`, ask `>=1`
+  - all other tiers => allow `>=2`, ask `>=1`
 
 ## Files
 
 - `index.ts`: production plugin runtime entrypoint
+- `src/internal.ts`: config parsing, API fetch helpers, verify/receipt CLI integration, receipt metadata helpers
 - `src/ask-actions.ts`: ASK ticket + action normalization utilities
+- `src/decision-engine.ts`: local TrustNet score/decision logic
+- `src/store.ts`: SQLite schema and persistence operations
+- `src/trust-circles.ts`: trust-circle policy parsing and endorser filtering
+- `src/agent-cards.ts`: Agent Card validation/verification and action parsing
+- `src/trust-workflows.ts`: runtime trust workflow action handling
+- `src/local-receipt.ts`: local receipt model and hashing helpers
 - `openclaw.plugin.json`: plugin manifest + config schema
 - `tool_map.example.json`: deterministic tool -> context mapping
 - `config.example.json5`: OpenClaw plugin config example
@@ -110,10 +117,13 @@ Do not use both install mode and local path mode at the same time.
 
 1. OpenClaw calls `before_tool_call`.
 2. Plugin resolves tool mapping (`tool_map.example.json`) to `contextId`.
-3. Decision source by mode:
+3. Plugin resolves target principal as:
+   - `config.targetPrincipalId` when set, otherwise
+   - `ctx.agentId` from hook context.
+4. Decision source by mode:
    - `local-lite`: compute decision from local SQLite `edges_latest` using TrustNet scoring semantics and trust-circle endorser filtering.
    - `local-verifiable`: call `GET /v1/root` and `GET /v1/decision?...` (compatibility flow).
-4. Plugin runs anchored verify only when `mode = local-verifiable`:
+5. Plugin runs anchored verify only when `mode = local-verifiable`:
 
 ```bash
 trustnet verify \
@@ -124,18 +134,20 @@ trustnet verify \
   --root-registry 0xROOTREGISTRY...
 ```
 
-5. Plugin enforces decision:
+6. Plugin enforces decision:
    - `allow`: execution proceeds
-   - `ask`: if `askMode: "block"` plugin returns `trustnetAsk` prompt metadata with a one-time `ticket`
+   - `ask` with `askMode: "allow"`: execution proceeds without operator prompt
+   - `ask` with `askMode: "block"`: plugin returns `trustnetAsk` prompt metadata with a one-time `ticket`
    - host retries same call with `trustnetAskAction` (`allow_once`, `allow_ttl`, `allow_always`, `block`) and the ticket
    - `allow_ttl`/`allow_always`/`block` write direct `D->T` edges; `allow_once` does not
+   - TTL grants are auto-ignored after expiry (based on edge `evidenceRef`)
    - reused/expired/mismatched tickets are rejected
    - `deny`: blocked
-6. OpenClaw calls `after_tool_call`.
-7. For `riskTier: "high"` mappings, plugin records `trustnet.receipt.v1` metadata in SQLite `receipts` and optional JSON at `receiptOutDir`:
+7. OpenClaw calls `after_tool_call`.
+8. For `riskTier: "high"` mappings, plugin records `trustnet.receipt.v1` metadata in SQLite `receipts` and optional JSON at `receiptOutDir`:
    - includes `argsHash`/`resultHash`, `decision`, `userApproved`, and decision/why snapshots
    - `local-verifiable` additionally runs `trustnet receipt` and embeds that output as optional verifiable metadata
-8. On `tool_result_persist`, plugin attaches receipt summary metadata to the transcript message.
+9. On `tool_result_persist`, plugin attaches receipt summary metadata to the transcript message.
 
 ## Runtime Agent Card workflow (TN-011)
 
