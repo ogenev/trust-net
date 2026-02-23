@@ -1,95 +1,150 @@
 # TrustNet
 
 > **Verifiable, explainable trust-to-act for AI agents (TrustNet v1.1).**
-> ERC-8004 ingestion + on-chain root anchoring with deterministic score proofs.
+> ERC-8004 ingestion + deterministic score proofs anchored by root commitments.
 
-## Spec Baseline (v1.1)
+## Spec Baseline
 
-This repo now tracks **TrustNet v1.1** as the implementation target:
-- Primary spec: `docs/TRUSTNET_v1.1.md`
+This repository targets **TrustNet v1.1**.
+
+- Spec: `docs/TRUSTNET_v1.1.md`
 - Test vectors: `docs/Test_Vectors_v1.1.json`
 
-TrustNet core properties remain:
-- **Context-scoped trust** (payments != code exec).
-- **Decider-relative trust** (no global score; policy chooses whose ratings count).
-- **Why-by-default** explainability (exact edges used to ALLOW/ASK/DENY).
+Core v1.1 properties:
 
-## Deployment Profiles
+- **Context-scoped trust** (`payments` is isolated from `code-exec`).
+- **Decider-relative trust** (no global score; score is "as seen by decider D").
+- **Why-by-default** explainability (`edgeDE`, `edgeET`, `edgeDT` + proofs).
 
-- **Server/Chain (default MVP):** deterministic indexer, rooted SMT commitments, `/v1/score` proof API.
-- **Server-only ingestion:** signed `POST /v1/ratings` + local root publishing via CLI.
-- **Anchored verification:** optional root cross-checks against `RootRegistry`.
+## Current Implementation (v1.1)
 
-Current codebase note:
-- `plugin-openclaw/` is intentionally out of scope for current MVP alignment work.
-- `docs/Server_Smoke_Test.md`, `docs/Chain_Smoke_Test.md`, and `docs/Base_Sepolia_Dress_Rehearsal.md` cover validation flows.
+- Chain ingestion for:
+  - `TrustGraph.EdgeRated`
+  - ERC-8004 `NewFeedback`
+  - ERC-8004 `FeedbackRevoked`
+  - ERC-8004 `ResponseAppended`
+- Latest-wins edge reduction with deterministic chain ordering.
+- Sparse Merkle Map (SMM) root building and proof serving.
+- Root manifest v1.1 hashing/signing and optional `RootRegistry` anchoring.
+- Server-mode private log ingestion via signed `trustnet.rating.v1` payloads.
+- Offline verification (`trustnet verify`) and signed action receipts.
+
+Scoring rule implemented by `trustnet-engine`:
+
+```text
+lDEpos = max(lDE, 0)
+path   = lDEpos * lET
+score  = clamp((2*lDT + path)/2, -2, +2)
+```
+
+## TrustNet v1.1 Ingestion Rules
+
+For ERC-8004 `NewFeedback -> TrustNet edge` mapping, current implementation enforces:
+
+- `tag2 == "trustnet:v1"` (literal string match).
+- `tag1` must be a valid `trustnet:ctx:*:v1` context tag.
+- `valueDecimals == 0`
+- `value in [0, 100]` (quantized to `level in [-2..+2]`).
+
+`feedback_raw` stores all observed ERC-8004 feedback events from the configured contract, while edge materialization into `edges_latest` only happens for TrustNet-compatible entries.
+
+## Components
+
+- `trustnet-indexer` (`crates/indexer`)
+  - Chain sync, ingestion, SMM rebuild, root publish.
+- `trustnet-api` (`crates/api`)
+  - Read API (`/v1/root`, `/v1/contexts`, `/v1/score`, `/v1/proof`)
+  - Optional write API (`POST /v1/ratings`) in server mode.
+- `trustnet` CLI (`crates/cli`)
+  - `root`, `rate`, `verify`, `receipt`, `verify-receipt`, `vectors`.
+
+## Deployment Modes
+
+- `chain` mode:
+  - Ingest on-chain events with `trustnet-indexer`.
+  - Serve queries from `trustnet-api` against the same DB.
+- `server` mode:
+  - Ingest signed private events with `POST /v1/ratings`.
+  - Build/insert roots via `trustnet root`.
+
+Important guardrail: a single DB is locked to one mode (`chain` or `server`); do not mix both in the same SQLite file.
+
+## HTTP API Surface
+
+- `GET /health` -> `"OK"`
+- `GET /v1/root` -> latest root bundle (`epoch`, `graphRoot`, `edgeCount`, `manifestHash`, `publisherSig`, plus `manifestUri`/`manifest` when present)
+- `GET /v1/contexts` -> canonical v1.1 contexts plus observed custom contexts
+- `GET /v1/score/:decider/:target?contextTag=<trustnet:ctx:*:v1>` -> score bundle (`score`, `epoch`, `why`, `proof`)
+- `GET /v1/proof?key=<0x-bytes32>` -> SMM proof payload
+- `POST /v1/ratings` -> append signed `trustnet.rating.v1` event (requires `TRUSTNET_API_WRITE_ENABLED=1`)
 
 ## Operator CLI
 
-Use the unified `trustnet` operator CLI (`crates/cli`):
-
-- `trustnet root` - build/insert root epochs from DB for shared/verifiable profiles
-- `trustnet rate` - sign `trustnet.rating.v1` payloads
-- `trustnet verify` - verify score bundles against roots (and optionally cross-check anchored roots via `--rpc-url --root-registry --epoch`)
-- `trustnet receipt` - build signed action receipts
-- `trustnet verify-receipt` - verify signed receipts
-
-Run with Cargo:
+Run help:
 
 ```bash
 cargo run -p trustnet-cli -- --help
 ```
 
-## HTTP API
+Common commands:
 
-The current API surface:
+```bash
+# Build/insert server-mode root epoch from DB
+cargo run -p trustnet-cli -- root --database-url sqlite://trustnet.db --publisher-key 0x...
 
-- `GET /v1/root` -> `{ epoch, graphRoot, manifest( or manifestUri ), manifestHash, publisherSig }`
-- `GET /v1/contexts` -> canonical v1.1 contexts
-- `GET /v1/score/:decider/:target?contextTag=<tag>` -> `{ score, epoch, why, proof }`
-- `GET /v1/proof?key=<edgeKey>` -> debug membership/non-membership proof
-- `POST /v1/ratings` -> append signed `trustnet.rating.v1` (server mode)
+# Sign trustnet.rating.v1 payload
+cargo run -p trustnet-cli -- rate --private-key 0x... --target 0x... --context trustnet:ctx:code-exec:v1 --level 2
+
+# Verify /v1/root + /v1/score bundle
+cargo run -p trustnet-cli -- verify --root /tmp/root.json --bundle /tmp/score.json
+```
 
 ## Contracts
 
-Contracts remain available for anchored/chain profiles:
+Anchored/chain profile contracts:
 
-- `TrustGraph` - emits `EdgeRated(rater, target, level, contextId)` events.
-- `RootRegistry` - anchors `{epoch, graphRoot, manifestHash (and optional manifestUri)}`.
-- `TrustPathVerifier` - on-chain proof + score verifier.
-- `TrustNetPaymentsGuardModule` - optional on-chain ETH payment guard module.
+- `TrustGraph` (emits `EdgeRated`)
+- `RootRegistry` (anchors epoch root + manifest hash/URI)
+- `TrustPathVerifier` (on-chain proof verification)
+- `TrustNetPaymentsGuardModule` (optional payment guard)
 
-## Smoke Tests And Rehearsals
+## Base Sepolia Deployment
 
-- Server-mode compatibility guide: `docs/Server_Smoke_Test.md`
-- Chain-mode compatibility guide (Anvil): `docs/Chain_Smoke_Test.md`
-- Base Sepolia compatibility dress rehearsal: `docs/Base_Sepolia_Dress_Rehearsal.md`
-- Automated server smoke test:
+Current Base Sepolia (`chainId=84532`) deployment values:
+
+- TrustNet contracts:
+  - `RootRegistry`: `0x91b1C12C2858E29243c89C9d1e006123d9751F6d`
+  - `TrustGraph`: `0x7589cBFa3D615A1fcdEE2005b6c00daca70901f9`
+- Official ERC-8004 public contracts used by rehearsal scripts:
+  - `IdentityRegistry`: `0x8004A818BFB912233c491871b3d84c89A494BD9e`
+  - `ReputationRegistry`: `0x8004B663056A597Dffe9eCcC1965A193B7388713`
+
+## Validation Flows
+
+- Server-mode smoke guide: `docs/Server_Smoke_Test.md`
+- Chain-mode smoke guide (Anvil): `docs/Chain_Smoke_Test.md`
+- Base Sepolia public rehearsal guide: `docs/Base_Sepolia_Dress_Rehearsal.md`
+
+Automation:
 
 ```bash
+# Server-mode integration smoke test
 cargo test -p trustnet-api --test server_smoke
-```
 
-- Automated chain smoke script:
-
-```bash
+# Chain-mode smoke script
 ./scripts/chain_smoke_anvil.sh
-```
 
-- Automated Base Sepolia rehearsal script:
-
-```bash
+# Base Sepolia public rehearsal script
 ./scripts/base_sepolia_public_rehearsal.sh
 ```
 
 ## OpenClaw Plugin
 
-`plugin-openclaw/` contains the OpenClaw enforcement plugin package and integration tests.
-It is intentionally not part of the v1.1 MVP migration scope.
-
-Run plugin integration tests:
+`plugin-openclaw/` contains the OpenClaw plugin and integration tests and is intentionally outside the core v1.1 MVP migration scope.
 
 ```bash
 cd plugin-openclaw
+npm run lint
+npm run typecheck
 npm test
 ```
