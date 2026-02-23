@@ -86,15 +86,158 @@ EOF
 send_tx_json() {
   local private_key="$1"
   shift
-  cast send --rpc-url "${RPC_URL}" --private-key "${private_key}" --json "$@"
+
+  local sender_addr
+  sender_addr="$(cast wallet address --private-key "${private_key}" | tr -d '[:space:]')"
+  require_nonempty "${sender_addr}" "sender address"
+
+  local nonce
+  nonce="$(cast nonce --rpc-url "${RPC_URL}" --block pending "${sender_addr}" | tr -d '[:space:]')"
+  require_nonempty "${nonce}" "pending nonce for ${sender_addr}"
+
+  local attempt=0
+  local max_attempts=4
+  while ((attempt < max_attempts)); do
+    attempt=$((attempt + 1))
+
+    local err_file
+    err_file="$(mktemp)"
+    local receipt_json
+    if receipt_json="$(cast send --rpc-url "${RPC_URL}" --private-key "${private_key}" --nonce "${nonce}" --json "$@" 2>"${err_file}")"; then
+      rm -f "${err_file}"
+      echo "${receipt_json}"
+      return 0
+    fi
+
+    local err_text
+    err_text="$(cat "${err_file}" 2>/dev/null || true)"
+    rm -f "${err_file}"
+
+    if [[ "${err_text}" == *"nonce too low"* ]] \
+      || [[ "${err_text}" == *"already known"* ]] \
+      || [[ "${err_text}" == *"replacement transaction underpriced"* ]] \
+      || [[ "${err_text}" == *"nonce too high"* ]]; then
+      nonce="$(cast nonce --rpc-url "${RPC_URL}" --block pending "${sender_addr}" | tr -d '[:space:]')"
+      require_nonempty "${nonce}" "retry pending nonce for ${sender_addr}"
+      sleep 1
+      continue
+    fi
+
+    echo "${err_text}" >&2
+    return 1
+  done
+
+  echo "failed to send transaction after ${max_attempts} attempts (sender=${sender_addr}, nonce=${nonce})" >&2
+  return 1
 }
 
 extract_tx_hash() {
   local receipt_json="$1"
   local tx_hash
-  tx_hash="$(jq -r '.transactionHash // empty' <<<"${receipt_json}")"
+  tx_hash="$(jq -r '.transactionHash // .txHash // .hash // empty' <<<"${receipt_json}")"
   require_nonempty "${tx_hash}" "transactionHash"
   echo "${tx_hash}"
+}
+
+hydrate_receipt_with_logs() {
+  local receipt_json="$1"
+  local tx_hash="$2"
+
+  local logs_len
+  logs_len="$(jq -r 'if (.logs | type) == "array" then (.logs | length) else 0 end' <<<"${receipt_json}" 2>/dev/null || echo 0)"
+  if [[ "${logs_len}" =~ ^[0-9]+$ ]] && ((logs_len > 0)); then
+    echo "${receipt_json}"
+    return
+  fi
+
+  local fetched_receipt
+  fetched_receipt="$(cast receipt --rpc-url "${RPC_URL}" --json "${tx_hash}" 2>/dev/null || true)"
+  if [[ -z "${fetched_receipt}" ]]; then
+    echo "${receipt_json}"
+    return
+  fi
+
+  echo "${fetched_receipt}"
+}
+
+extract_new_feedback_client_and_index() {
+  local receipt_json="$1"
+  local client_out_var="$2"
+  local index_out_var="$3"
+  local expected_agent_id="${4:-}"
+  local expected_client_address="${5:-}"
+
+  local tx_hash
+  tx_hash="$(extract_tx_hash "${receipt_json}")"
+  local hydrated_receipt
+  hydrated_receipt="$(hydrate_receipt_with_logs "${receipt_json}" "${tx_hash}")"
+
+  local expected_agent_topic=""
+  if [[ -n "${expected_agent_id}" ]]; then
+    expected_agent_topic="$(cast to-uint256 "${expected_agent_id}" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')"
+  fi
+
+  local expected_client_topic=""
+  if [[ -n "${expected_client_address}" ]]; then
+    expected_client_topic="$(cast to-uint256 "${expected_client_address}" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')"
+  fi
+
+  local feedback_log
+  feedback_log="$(jq -c \
+    --arg sig "${NEW_FEEDBACK_SIG}" \
+    --arg expected_agent_topic "${expected_agent_topic}" \
+    --arg expected_client_topic "${expected_client_topic}" '
+      .logs[]?
+      | select((.topics[0] | ascii_downcase) == $sig)
+      | select(($expected_agent_topic == "") or ((.topics[1] | ascii_downcase) == $expected_agent_topic))
+      | select(($expected_client_topic == "") or ((.topics[2] | ascii_downcase) == $expected_client_topic))
+    ' <<<"${hydrated_receipt}" | head -n1)"
+
+  if [[ -z "${feedback_log}" ]]; then
+    feedback_log="$(jq -c \
+      --arg rep "${ERC8004_REPUTATION}" \
+      --arg expected_agent_topic "${expected_agent_topic}" \
+      --arg expected_client_topic "${expected_client_topic}" '
+        .logs[]?
+        | select((.address | ascii_downcase) == ($rep | ascii_downcase))
+        | select((.topics | length) >= 3)
+        | select(($expected_agent_topic == "") or ((.topics[1] | ascii_downcase) == $expected_agent_topic))
+        | select(($expected_client_topic == "") or ((.topics[2] | ascii_downcase) == $expected_client_topic))
+      ' <<<"${hydrated_receipt}" | head -n1)"
+  fi
+  if [[ -z "${feedback_log}" ]]; then
+    echo "missing required value: NewFeedback log (tx=${tx_hash})" >&2
+    jq -r '.logs[]? | [.address, (.topics // [])] | @json' <<<"${hydrated_receipt}" >&2 || true
+    exit 1
+  fi
+
+  local client_topic
+  client_topic="$(jq -r '.topics[2] // empty' <<<"${feedback_log}" | tr -d '[:space:]')"
+  require_nonempty "${client_topic}" "NewFeedback clientAddress topic"
+
+  local client_address
+  client_address="0x${client_topic:26:40}"
+  validate_address "${client_address}" "NewFeedback clientAddress"
+
+  local data_hex
+  data_hex="$(jq -r '.data // empty' <<<"${feedback_log}" | tr -d '[:space:]')"
+  require_nonempty "${data_hex}" "NewFeedback data"
+  if [[ "${#data_hex}" -lt 66 ]]; then
+    echo "NewFeedback data too short to decode feedbackIndex: ${data_hex}" >&2
+    exit 1
+  fi
+
+  local feedback_index_word
+  feedback_index_word="0x${data_hex:2:64}"
+  local feedback_index
+  feedback_index="$(cast to-dec "${feedback_index_word}" | tr -d '[:space:]')"
+  if [[ ! "${feedback_index}" =~ ^[0-9]+$ ]] || ((feedback_index == 0)); then
+    echo "NewFeedback feedbackIndex must be > 0, got=${feedback_index}" >&2
+    exit 1
+  fi
+
+  printf -v "${client_out_var}" '%s' "${client_address}"
+  printf -v "${index_out_var}" '%s' "${feedback_index}"
 }
 
 register_agent_if_missing() {
@@ -114,6 +257,7 @@ register_agent_if_missing() {
   local tx_hash
   tx_hash="$(extract_tx_hash "${receipt}")"
   printf -v "${tx_hash_out_var}" '%s' "${tx_hash}"
+  receipt="$(hydrate_receipt_with_logs "${receipt}" "${tx_hash}")"
 
   local topic_agent_id
   topic_agent_id="$(jq -r --arg sig "${REGISTERED_SIG}" \
@@ -123,13 +267,41 @@ register_agent_if_missing() {
   cast to-dec "${topic_agent_id}" | tr -d '[:space:]'
 }
 
+compute_subject_id_for_agent() {
+  local agent_id="$1"
+  local encoded
+  encoded="$(cast abi-encode --packed "f(uint256,address,uint256)" "${CHAIN_ID}" "${ERC8004_IDENTITY}" "${agent_id}")"
+  local subject_id
+  subject_id="$(cast keccak "${encoded}" | tr -d '[:space:]')"
+  require_nonempty "${subject_id}" "subjectId(${agent_id})"
+  echo "${subject_id}"
+}
+
 ensure_agent_wallet_binding() {
   local agent_id="$1"
   local expected_wallet="$2"
+
+  local owner_wallet
+  if ! owner_wallet="$(cast call --rpc-url "${RPC_URL}" "${ERC8004_IDENTITY}" \
+    "ownerOf(uint256)(address)" "${agent_id}" 2>/dev/null | tr -d '[:space:]')"; then
+    echo "failed to resolve ownerOf(${agent_id}); ensure agent exists on IdentityRegistry" >&2
+    exit 1
+  fi
+  require_nonempty "${owner_wallet}" "ownerOf(${agent_id})"
+  if [[ "$(lower_hex "${owner_wallet}")" != "$(lower_hex "${expected_wallet}")" ]]; then
+    echo "agent ${agent_id} owner mismatch: expected=${expected_wallet}, got=${owner_wallet}" >&2
+    exit 1
+  fi
+
   local agent_wallet
   agent_wallet="$(cast call --rpc-url "${RPC_URL}" "${ERC8004_IDENTITY}" \
     "getAgentWallet(uint256)(address)" "${agent_id}" | tr -d '[:space:]')"
   require_nonempty "${agent_wallet}" "getAgentWallet(${agent_id})"
+
+  if [[ "$(lower_hex "${agent_wallet}")" == "$(lower_hex "0x0000000000000000000000000000000000000000")" ]]; then
+    echo "agent ${agent_id} has no explicit agentWallet set; continuing in subject-id mode" >&2
+    return
+  fi
 
   if [[ "$(lower_hex "${agent_wallet}")" != "$(lower_hex "${expected_wallet}")" ]]; then
     echo "agent ${agent_id} wallet mismatch: expected=${expected_wallet}, got=${agent_wallet}" >&2
@@ -143,8 +315,8 @@ cross_check_epoch_against_chain() {
   local db_graph
   local db_manifest_hash
   local db_manifest_uri
-  db_graph="$(sqlite3 "${DB_FILE}" "SELECT graph_root FROM epochs WHERE epoch = ${epoch};" | tr -d '[:space:]')"
-  db_manifest_hash="$(sqlite3 "${DB_FILE}" "SELECT manifest_hash FROM epochs WHERE epoch = ${epoch};" | tr -d '[:space:]')"
+  db_graph="$(sqlite3 "${DB_FILE}" "SELECT '0x' || lower(hex(graph_root)) FROM epochs WHERE epoch = ${epoch};" | tr -d '[:space:]')"
+  db_manifest_hash="$(sqlite3 "${DB_FILE}" "SELECT CASE WHEN manifest_hash IS NULL THEN '' ELSE '0x' || lower(hex(manifest_hash)) END FROM epochs WHERE epoch = ${epoch};" | tr -d '[:space:]')"
   db_manifest_uri="$(sqlite3 "${DB_FILE}" "SELECT manifest_uri FROM epochs WHERE epoch = ${epoch};" | tr -d '\r\n')"
 
   require_nonempty "${db_graph}" "epochs.graph_root for epoch ${epoch}"
@@ -184,6 +356,13 @@ emit_phase1_events() {
     "${CONTEXT_LABEL}" "${TAG2_LABEL}" "${ENDPOINT_LABEL}" "${FEEDBACK_URI_D_E}" "${FEEDBACK_HASH_D_E}")"
   TX_FEEDBACK_DE="$(extract_tx_hash "${de_receipt}")"
 
+  local dt_receipt
+  dt_receipt="$(send_tx_json "${DECIDER_PRIVATE_KEY}" "${ERC8004_REPUTATION}" \
+    "giveFeedback(uint256,int128,uint8,string,string,string,string,bytes32)" \
+    "${TARGET_AGENT_ID}" 90 0 \
+    "${CONTEXT_LABEL}" "${TAG2_LABEL}" "${ENDPOINT_LABEL}" "${FEEDBACK_URI_D_E}" "${FEEDBACK_HASH_D_E}")"
+  TX_FEEDBACK_DT_PHASE1="$(extract_tx_hash "${dt_receipt}")"
+
   local et_receipt
   et_receipt="$(send_tx_json "${ENDORSER_PRIVATE_KEY}" "${ERC8004_REPUTATION}" \
     "giveFeedback(uint256,int128,uint8,string,string,string,string,bytes32)" \
@@ -191,15 +370,15 @@ emit_phase1_events() {
     "${CONTEXT_LABEL}" "${TAG2_LABEL}" "${ENDPOINT_LABEL}" "${FEEDBACK_URI_E_T_PHASE1}" "${FEEDBACK_HASH_E_T_PHASE1}")"
   TX_FEEDBACK_ET_PHASE1="$(extract_tx_hash "${et_receipt}")"
 
+  local et_client_address
   local et_feedback_index
-  et_feedback_index="$(cast call --rpc-url "${RPC_URL}" "${ERC8004_REPUTATION}" \
-    "getLastIndex(uint256,address)(uint64)" "${TARGET_AGENT_ID}" "${ENDORSER_ADDR}" | tr -d '[:space:]')"
-  require_nonempty "${et_feedback_index}" "phase1 E->T feedback index"
+  extract_new_feedback_client_and_index "${et_receipt}" et_client_address et_feedback_index \
+    "${TARGET_AGENT_ID}" "${ENDORSER_ADDR}"
 
   local response_receipt
   response_receipt="$(send_tx_json "${PUBLISHER_PRIVATE_KEY}" "${ERC8004_REPUTATION}" \
     "appendResponse(uint256,address,uint64,string,bytes32)" \
-    "${TARGET_AGENT_ID}" "${ENDORSER_ADDR}" "${et_feedback_index}" "${RESPONSE_URI_PHASE1}" "${RESPONSE_HASH_PHASE1}")"
+    "${TARGET_AGENT_ID}" "${et_client_address}" "${et_feedback_index}" "${RESPONSE_URI_PHASE1}" "${RESPONSE_HASH_PHASE1}")"
   TX_RESPONSE_PHASE1="$(extract_tx_hash "${response_receipt}")"
 }
 
@@ -207,19 +386,18 @@ emit_phase2_events() {
   local et_receipt
   et_receipt="$(send_tx_json "${ENDORSER_PRIVATE_KEY}" "${ERC8004_REPUTATION}" \
     "giveFeedback(uint256,int128,uint8,string,string,string,string,bytes32)" \
-    "${TARGET_AGENT_ID}" 85 0 \
+    "${TARGET_AGENT_ID}" 65 0 \
     "${CONTEXT_LABEL}" "${TAG2_LABEL}" "${ENDPOINT_LABEL}" "${FEEDBACK_URI_E_T_PHASE2}" "${FEEDBACK_HASH_E_T_PHASE2}")"
   TX_FEEDBACK_ET_PHASE2="$(extract_tx_hash "${et_receipt}")"
 
+  local et_client_address
   local et_feedback_index
-  et_feedback_index="$(cast call --rpc-url "${RPC_URL}" "${ERC8004_REPUTATION}" \
-    "getLastIndex(uint256,address)(uint64)" "${TARGET_AGENT_ID}" "${ENDORSER_ADDR}" | tr -d '[:space:]')"
-  require_nonempty "${et_feedback_index}" "phase2 E->T feedback index"
+  extract_new_feedback_client_and_index "${et_receipt}" et_client_address et_feedback_index \
+    "${TARGET_AGENT_ID}" "${ENDORSER_ADDR}"
 
   local response_receipt
   response_receipt="$(send_tx_json "${PUBLISHER_PRIVATE_KEY}" "${ERC8004_REPUTATION}" \
     "appendResponse(uint256,address,uint64,string,bytes32)" \
-    "${TARGET_AGENT_ID}" "${ENDORSER_ADDR}" "${et_feedback_index}" "${RESPONSE_URI_PHASE2}" "${RESPONSE_HASH_PHASE2}")"
+    "${TARGET_AGENT_ID}" "${et_client_address}" "${et_feedback_index}" "${RESPONSE_URI_PHASE2}" "${RESPONSE_HASH_PHASE2}")"
   TX_RESPONSE_PHASE2="$(extract_tx_hash "${response_receipt}")"
 }
-

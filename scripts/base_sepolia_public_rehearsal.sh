@@ -1,5 +1,7 @@
 #!/usr/bin/env -S NO_PROXY=* HTTPS_PROXY= HTTP_PROXY= ALL_PROXY= bash
 set -euo pipefail
+export LC_ALL=C
+export LANG=C
 
 REPO_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -68,11 +70,11 @@ TARGET_AGENT_ID="${TRUSTNET_TARGET_AGENT_ID:-}"
 ENDORSER_AGENT_URI="${TRUSTNET_ENDORSER_AGENT_URI:-https://example.com/trustnet/rehearsal/${RUN_TS}/endorser.json}"
 TARGET_AGENT_URI="${TRUSTNET_TARGET_AGENT_URI:-https://example.com/trustnet/rehearsal/${RUN_TS}/target.json}"
 
-FEEDBACK_URI_D_E="${TRUSTNET_FEEDBACK_URI_DE:-}"
-FEEDBACK_URI_E_T_PHASE1="${TRUSTNET_FEEDBACK_URI_ET_PHASE1:-}"
-FEEDBACK_URI_E_T_PHASE2="${TRUSTNET_FEEDBACK_URI_ET_PHASE2:-}"
-RESPONSE_URI_PHASE1="${TRUSTNET_RESPONSE_URI_PHASE1:-}"
-RESPONSE_URI_PHASE2="${TRUSTNET_RESPONSE_URI_PHASE2:-}"
+FEEDBACK_URI_D_E="${TRUSTNET_FEEDBACK_URI_DE:-https://example.com/trustnet/rehearsal/${RUN_TS}/feedback-de.json}"
+FEEDBACK_URI_E_T_PHASE1="${TRUSTNET_FEEDBACK_URI_ET_PHASE1:-https://example.com/trustnet/rehearsal/${RUN_TS}/feedback-et-phase1.json}"
+FEEDBACK_URI_E_T_PHASE2="${TRUSTNET_FEEDBACK_URI_ET_PHASE2:-https://example.com/trustnet/rehearsal/${RUN_TS}/feedback-et-phase2.json}"
+RESPONSE_URI_PHASE1="${TRUSTNET_RESPONSE_URI_PHASE1:-https://example.com/trustnet/rehearsal/${RUN_TS}/response-phase1.json}"
+RESPONSE_URI_PHASE2="${TRUSTNET_RESPONSE_URI_PHASE2:-https://example.com/trustnet/rehearsal/${RUN_TS}/response-phase2.json}"
 
 FEEDBACK_HASH_D_E="${TRUSTNET_FEEDBACK_HASH_DE:-0x1111111111111111111111111111111111111111111111111111111111111111}"
 FEEDBACK_HASH_E_T_PHASE1="${TRUSTNET_FEEDBACK_HASH_ET_PHASE1:-0x2222222222222222222222222222222222222222222222222222222222222222}"
@@ -84,15 +86,19 @@ INDEXER_PID=""
 API_PID=""
 
 REGISTERED_SIG=""
+NEW_FEEDBACK_SIG=""
 
 DECIDER_ADDR=""
 ENDORSER_ADDR=""
 TARGET_ADDR=""
 PUBLISHER_ADDR=""
+ENDORSER_SUBJECT_ID=""
+TARGET_SUBJECT_ID=""
 
 TX_REGISTER_ENDORSER=""
 TX_REGISTER_TARGET=""
 TX_FEEDBACK_DE=""
+TX_FEEDBACK_DT_PHASE1=""
 TX_FEEDBACK_ET_PHASE1=""
 TX_RESPONSE_PHASE1=""
 TX_FEEDBACK_ET_PHASE2=""
@@ -130,6 +136,11 @@ require_nonempty "${PUBLISHER_PRIVATE_KEY}" "TRUSTNET_PUBLISHER_PRIVATE_KEY"
 require_nonempty "${DECIDER_PRIVATE_KEY}" "TRUSTNET_DECIDER_PRIVATE_KEY"
 require_nonempty "${ENDORSER_PRIVATE_KEY}" "TRUSTNET_ENDORSER_PRIVATE_KEY"
 require_nonempty "${TARGET_PRIVATE_KEY}" "TRUSTNET_TARGET_PRIVATE_KEY"
+require_nonempty "${FEEDBACK_URI_D_E}" "TRUSTNET_FEEDBACK_URI_DE"
+require_nonempty "${FEEDBACK_URI_E_T_PHASE1}" "TRUSTNET_FEEDBACK_URI_ET_PHASE1"
+require_nonempty "${FEEDBACK_URI_E_T_PHASE2}" "TRUSTNET_FEEDBACK_URI_ET_PHASE2"
+require_nonempty "${RESPONSE_URI_PHASE1}" "TRUSTNET_RESPONSE_URI_PHASE1"
+require_nonempty "${RESPONSE_URI_PHASE2}" "TRUSTNET_RESPONSE_URI_PHASE2"
 
 validate_address "${ROOT_REGISTRY}" "TRUSTNET_ROOT_REGISTRY"
 validate_address "${TRUST_GRAPH}" "TRUSTNET_TRUST_GRAPH"
@@ -147,6 +158,7 @@ if [[ "${CHAIN_ID}" != "84532" ]]; then
 fi
 
 REGISTERED_SIG="$(cast keccak "Registered(uint256,string,address)" | tr '[:upper:]' '[:lower:]')"
+NEW_FEEDBACK_SIG="$(cast keccak "NewFeedback(uint256,address,uint64,int128,uint8,string,string,string,string,bytes32)" | tr '[:upper:]' '[:lower:]')"
 PUBLISHER_ADDR="$(cast wallet address --private-key "${PUBLISHER_PRIVATE_KEY}")"
 DECIDER_ADDR="$(cast wallet address --private-key "${DECIDER_PRIVATE_KEY}")"
 ENDORSER_ADDR="$(cast wallet address --private-key "${ENDORSER_PRIVATE_KEY}")"
@@ -176,6 +188,8 @@ TARGET_AGENT_ID="$(register_agent_if_missing "${TARGET_AGENT_ID}" "${TARGET_PRIV
 
 ensure_agent_wallet_binding "${ENDORSER_AGENT_ID}" "${ENDORSER_ADDR}"
 ensure_agent_wallet_binding "${TARGET_AGENT_ID}" "${TARGET_ADDR}"
+ENDORSER_SUBJECT_ID="$(compute_subject_id_for_agent "${ENDORSER_AGENT_ID}")"
+TARGET_SUBJECT_ID="$(compute_subject_id_for_agent "${TARGET_AGENT_ID}")"
 
 echo "Emitting phase 1 real ERC-8004 traffic"
 emit_phase1_events
@@ -216,7 +230,7 @@ curl -fsS "http://127.0.0.1:${API_PORT}/v1/root" >"${ROOT_JSON}"
 score_attempts=0
 while true; do
   code="$(curl -sS -o "${SCORE_JSON}" -w "%{http_code}" \
-    "http://127.0.0.1:${API_PORT}/v1/score/${DECIDER_ADDR}/${TARGET_ADDR}?contextTag=${CONTEXT_LABEL}")"
+    "http://127.0.0.1:${API_PORT}/v1/score/${DECIDER_ADDR}/${TARGET_SUBJECT_ID}?contextTag=${CONTEXT_LABEL}")"
   if [[ "${code}" == "200" ]]; then
     break
   fi
@@ -264,16 +278,26 @@ cargo run -q -p trustnet-cli -- verify \
   --root-registry "${ROOT_REGISTRY}" \
   --epoch "${ROOT_EPOCH}" >/dev/null
 
-jq -e \
-  --arg expected_endorser_hex "$(lower_hex "${ENDORSER_ADDR#0x}")" \
+if ! jq -e \
+  --arg expected_endorser_pid "$(lower_hex "${ENDORSER_SUBJECT_ID}")" \
   --arg expected_root "$(lower_hex "${ROOT_GRAPH}")" \
   --argjson expected_epoch "${ROOT_EPOCH}" \
   '.score >= 1
-    and .proof.endorser != null
-    and (.proof.endorser | ascii_downcase | endswith($expected_endorser_hex))
     and (.proof.graphRoot | ascii_downcase) == $expected_root
-    and .epoch == $expected_epoch' \
-  "${SCORE_JSON}" >/dev/null
+    and .epoch == $expected_epoch
+    and (
+      ((.proof.endorser != null) and ((.proof.endorser | ascii_downcase) == $expected_endorser_pid))
+      or
+      ((.proof.endorser == null) and ((.why.edgeDT.level // 0) >= 1))
+    )' \
+  "${SCORE_JSON}" >/dev/null; then
+  echo "score bundle did not meet expected rehearsal shape" >&2
+  echo "  expected epoch: ${ROOT_EPOCH}" >&2
+  echo "  expected root:  ${ROOT_GRAPH}" >&2
+  echo "  score json:     ${SCORE_JSON}" >&2
+  jq -r '{score, epoch, endorser: .proof.endorser, graphRoot: .proof.graphRoot, edgeDT: .why.edgeDT, edgeDE: .why.edgeDE, edgeET: .why.edgeET}' "${SCORE_JSON}" >&2 || true
+  exit 1
+fi
 
 FEEDBACK_RAW_COUNT="$(sqlite3 "${DB_FILE}" "SELECT COUNT(*) FROM feedback_raw;" | tr -d '[:space:]')"
 RESPONSES_RAW_COUNT="$(sqlite3 "${DB_FILE}" "SELECT COUNT(*) FROM feedback_responses_raw;" | tr -d '[:space:]')"
@@ -293,7 +317,9 @@ cat >"${REPORT_JSON}" <<EOF
   "targetAddress": "${TARGET_ADDR}",
   "agents": {
     "endorserAgentId": ${ENDORSER_AGENT_ID},
-    "targetAgentId": ${TARGET_AGENT_ID}
+    "targetAgentId": ${TARGET_AGENT_ID},
+    "endorserSubjectId": "${ENDORSER_SUBJECT_ID}",
+    "targetSubjectId": "${TARGET_SUBJECT_ID}"
   },
   "contracts": {
     "rootRegistry": "${ROOT_REGISTRY}",
@@ -305,6 +331,7 @@ cat >"${REPORT_JSON}" <<EOF
     "registerEndorserAgent": "${TX_REGISTER_ENDORSER}",
     "registerTargetAgent": "${TX_REGISTER_TARGET}",
     "feedbackDeciderToEndorser": "${TX_FEEDBACK_DE}",
+    "feedbackDeciderToTargetPhase1": "${TX_FEEDBACK_DT_PHASE1}",
     "feedbackEndorserToTargetPhase1": "${TX_FEEDBACK_ET_PHASE1}",
     "appendResponsePhase1": "${TX_RESPONSE_PHASE1}",
     "feedbackEndorserToTargetPhase2": "${TX_FEEDBACK_ET_PHASE2}",
